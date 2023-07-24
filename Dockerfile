@@ -1,27 +1,21 @@
-# Start from the official Node.js LTS image
-FROM node:16
+# Dockerfile
+# Use an official Node.js runtime as the parent image
+FROM node:14
 
-# Set the working directory
+# Set the working directory in the container to /app
 WORKDIR /app
 
-# Add `/app/node_modules/.bin` to $PATH
-ENV PATH /app/node_modules/.bin:$PATH
-
-# Install application dependencies
-# A wildcard is used to ensure both package.json AND package-lock.json are copied
-# where available (npm@5+)
+# Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
 
+# Install project dependencies
 RUN npm install
 
-# Bundle app source
+# Copy the rest of the project files to the working directory
 COPY . .
 
-# Build the application
-RUN npm run build
-
-# Expose the listening port
+# Make port 3000 available outside this container
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "run", "start"]
+# Run the application when the container launches
+CMD ["npm", "run", "dev"]

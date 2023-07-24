@@ -1,9 +1,10 @@
-version: "3.8"
+# docker-compose.yml
+version: '3'
 services:
-  nextjs:
+  web:
     build: .
     ports:
-      - 3000:3000
+      - "3000:3000"
     volumes:
       - .:/app
       - /app/node_modules
