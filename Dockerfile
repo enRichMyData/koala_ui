@@ -1,5 +1,5 @@
 # Start from the official Node.js LTS image
-FROM node:14
+FROM node:16
 
 # Set the working directory
 WORKDIR /app
@@ -17,8 +17,11 @@ RUN npm install
 # Bundle app source
 COPY . .
 
+# Build the application
+RUN npm run build
+
 # Expose the listening port
 EXPOSE 3000
 
 # Start the application
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "start"]
