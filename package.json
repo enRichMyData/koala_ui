@@ -1,20 +1,17 @@
 {
-    "name": "my-next-app",
+    "name": "my-nextjs-app",
     "version": "1.0.0",
-    "description": "My Next.js App",
+    "description": "My Next.js Application",
     "main": "index.js",
     "scripts": {
       "dev": "next dev",
       "build": "next build",
       "start": "next start"
     },
-    "keywords": [],
-    "author": "",
-    "license": "ISC",
     "dependencies": {
-      "next": "11.1.0",
-      "react": "17.0.2",
-      "react-dom": "17.0.2"
+      "next": "latest",
+      "react": "latest",
+      "react-dom": "latest"
     }
   }
   

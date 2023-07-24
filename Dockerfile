@@ -1,24 +1,24 @@
-# Start with the official Node.js image
-FROM node:14-alpine
+# Start from the official Node.js LTS image
+FROM node:14
 
-# Set the working directory to /app
+# Set the working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json before other files
-# Utilize Docker cache to save re-installing dependencies if unchanged
+# Add `/app/node_modules/.bin` to $PATH
+ENV PATH /app/node_modules/.bin:$PATH
+
+# Install application dependencies
+# A wildcard is used to ensure both package.json AND package-lock.json are copied
+# where available (npm@5+)
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install --production
+RUN npm install
 
-# Copy the rest of your app's source code
+# Bundle app source
 COPY . .
 
-# Build the app
-RUN npm run build
-
-# Expose the port the app runs on
+# Expose the listening port
 EXPOSE 3000
 
-# Start the app
-CMD [ "npm", "start" ]
+# Start the application
+CMD ["npm", "run", "dev"]
