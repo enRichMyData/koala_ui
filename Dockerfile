@@ -1,24 +1,24 @@
-# Start from the official Node.js 14 image
-FROM node:14
+# Start with the official Node.js image
+FROM node:14-alpine
 
-# Set the working directory
-WORKDIR /usr/src/app
+# Set the working directory to /app
+WORKDIR /app
 
 # Copy package.json and package-lock.json before other files
 # Utilize Docker cache to save re-installing dependencies if unchanged
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm install --production
 
-# Copy all files
+# Copy the rest of your app's source code
 COPY . .
 
-# Build the Next.js app
+# Build the app
 RUN npm run build
 
-# Expose the listening port
+# Expose the port the app runs on
 EXPOSE 3000
 
-# Run npm start script
-CMD [ "npm", "run", "start" ]
+# Start the app
+CMD [ "npm", "start" ]
