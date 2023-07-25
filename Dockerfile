@@ -16,7 +16,7 @@ RUN npm install
 COPY . .
 
 # Build the Next.js app
-RUN npx create-next-app@latest
+RUN npx create-next-app@latest my-app --use-npm --example "https://github.com/vercel/next-learn-starter/tree/master/learn-starter"
 
 # Expose the port
 EXPOSE 3000
