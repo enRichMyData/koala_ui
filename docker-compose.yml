@@ -1,9 +1,37 @@
-version: '3'
+version: '3.8'
+
 services:
-  web:
-    build: .
+  frontend:
+    container_name: react-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     volumes:
-      - .:/app
+      - ./frontend:/app
       - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    stdin_open: true
+    tty: true
+  
+  backend:
+    container_name: flask-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - FLASK_ENV=development
+    depends_on:
+      - mongo
+
+  mongo:
+    container_name: mongodb
+    image: mongo:7.0.6
+    ports:
+      - "27017:27017"
