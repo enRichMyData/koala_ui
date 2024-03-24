@@ -1,46 +1,45 @@
 import React, { useState } from 'react';
-import axios from 'axios'; // Make sure to install axios with `npm install axios`
+import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import DatasetList from './components/DatasetList';
+import DatasetDetail from './components/DatasetDetail'; // Import the new detail component
+import Login from './components/Login';
+import './App.css';
 
 function App() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
 
-  const handleEmailChange = (event) => {
-    setEmail(event.target.value);
-  };
-
-  const handlePasswordChange = (event) => {
-    setPassword(event.target.value);
-  };
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    try {
-      const response = await axios.post('http://localhost:5001/login', {
-        email,
-        password
-      });
-      localStorage.setItem('token', response.data.access_token);
-      setIsLoggedIn(true);
-    } catch (error) {
-      console.error('Login failed:', error);
-      // Handle login failure (e.g., display an error message)
-    }
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setIsLoggedIn(false);
   };
 
   return (
-    <div className="App">
-      {!isLoggedIn ? (
-        <form onSubmit={handleSubmit}>
-          <input type="email" value={email} onChange={handleEmailChange} placeholder="Email" required />
-          <input type="password" value={password} onChange={handlePasswordChange} placeholder="Password" required />
-          <button type="submit">Login</button>
-        </form>
-      ) : (
-        <div>Welcome back!</div>
-      )}
-    </div>
+    <Router>
+      <div className="app-container">
+        <div className="app-header">
+          {isLoggedIn && (
+            <div className="profile">
+              <img src="https://via.placeholder.com/40" alt="Profile" className="profile-image" />
+              <span className="profile-name">John Doe</span>
+            </div>
+          )}
+          {isLoggedIn && (
+            <button onClick={handleLogout} className="logout-button">
+              Logout
+            </button>
+          )}
+        </div>
+        <div className="app-content">
+          <Routes>
+            <Route path="/" element={isLoggedIn ? <Navigate replace to="/datasets" /> : <Navigate replace to="/login" />} />
+            <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/datasets" />} />
+            <Route path="/datasets" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
+            <Route path="/datasets/:id" element={isLoggedIn ? <DatasetDetail /> : <Navigate replace to="/login" />} />
+            {/* Add other routes as needed */}
+          </Routes>
+        </div>
+      </div>
+    </Router>
   );
 }
 

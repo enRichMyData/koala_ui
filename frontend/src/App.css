@@ -1,38 +1,39 @@
-.App {
-  text-align: center;
+/* Header with a background color */
+.app-header {
+  background-color: #f8f9fa; /* A light grey background */
+  padding: 10px;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+/* Profile name with a larger font size */
+.profile-name {
+  font-size: 20px;
+  font-weight: 500;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+/* Content with a box-shadow */
+.app-content {
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  padding: 20px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+  margin-top: 20px; /* added margin-top */
 }
 
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
+/* Button with shadow and lighter hover effect */
+.logout-button {
+  padding: 8px 16px;
+  background-color: #007bff;
   color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.3s, box-shadow 0.3s;
+  max-width: 120px; /* constrains the width of the button */
+  text-align: center; /* ensures text is centered */
 }
 
-.App-link {
-  color: #61dafb;
+.logout-button:hover {
+  background-color: #0056b3;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2); /* adds a shadow for a 'lifted' effect */
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
