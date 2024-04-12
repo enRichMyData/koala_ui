@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import DatasetList from './components/DatasetList';
-import DatasetDetail from './components/DatasetDetail'; // Import the new detail component
+import TableList from './components/TableList'; // Import the new detail component
 import Login from './components/Login';
 import './App.css';
 
@@ -33,8 +33,8 @@ function App() {
           <Routes>
             <Route path="/" element={isLoggedIn ? <Navigate replace to="/datasets" /> : <Navigate replace to="/login" />} />
             <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/datasets" />} />
-            <Route path="/datasets" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
-            <Route path="/datasets/:id" element={isLoggedIn ? <DatasetDetail /> : <Navigate replace to="/login" />} />
+            <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
+            <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />
             {/* Add other routes as needed */}
           </Routes>
         </div>

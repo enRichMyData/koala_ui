@@ -31,7 +31,7 @@ const DatasetList = () => {
         <ul>
           {datasets.map((dataset, index) => (
             <li key={index}>
-              <Link to={`/dataset/${dataset.id}`}>{dataset.datasetName}</Link> 
+              <Link to={`/dataset/${dataset.datasetName}`}>{dataset.datasetName}</Link> 
             </li>
           ))}
         </ul>
