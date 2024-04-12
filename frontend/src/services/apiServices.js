@@ -1,14 +1,15 @@
 import axios from 'axios';
 
-const API_URL = 'https://alligator.hel.sintef.cloud'; // Replace with the actual URL of your API
-const API_TOKEN = 'alligator_demo_2023'; // Replace with your actual API token
+// Use environment variables
+const API_URL = process.env.REACT_APP_API_URL;
+const API_TOKEN = process.env.REACT_APP_API_TOKEN;
 
 const getDatasets = async (page = 1) => {
   try {
     const response = await axios.get(`${API_URL}/dataset`, {
       params: {
         page: page,
-        token: API_TOKEN  // Make sure to send the token as a query parameter
+        token: API_TOKEN  // The token is sent as a query parameter
       }
     });
     return response.data;  // Contains the list of datasets
@@ -19,5 +20,3 @@ const getDatasets = async (page = 1) => {
 };
 
 export { getDatasets };
-
-

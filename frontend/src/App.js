@@ -31,8 +31,8 @@ function App() {
         </div>
         <div className="app-content">
           <Routes>
-            <Route path="/" element={isLoggedIn ? <Navigate replace to="/datasets" /> : <Navigate replace to="/login" />} />
-            <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/datasets" />} />
+            <Route path="/" element={isLoggedIn ? <Navigate replace to="/dataset" /> : <Navigate replace to="/login" />} />
+            <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/dataset" />} />
             <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
             <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />
             {/* Add other routes as needed */}

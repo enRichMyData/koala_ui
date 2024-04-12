@@ -26,3 +26,4 @@ package-lock.json
 # Ignore yarn.lock for Yarn
 yarn.lock
 *.DS_Store
+frontend/.env
