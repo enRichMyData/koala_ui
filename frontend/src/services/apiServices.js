@@ -39,7 +39,7 @@ const getDatasets = async (page = 1) => {
 
 const getTables = async (datasetName) => {
   try {
-    const response = await apiClient.get(`/dataset/${datasetName}`);
+    const response = await apiClient.get(`/dataset/${datasetName}/table`);
     return response.data;
   } catch (error) {
     console.error('Error retrieving tables:', error);
@@ -47,4 +47,16 @@ const getTables = async (datasetName) => {
   }
 };
 
-export { getDatasets, getTables };
+const getTableData = async (datasetName, tableName, page = 1) => {
+  try {
+    const response = await apiClient.get(`/dataset/${datasetName}/table/${tableName}`, {
+      params: { page }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error retrieving table data:', error);
+    throw error;
+  }
+};
+
+export { getDatasets, getTables, getTableData };

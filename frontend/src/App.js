@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import DatasetList from './components/DatasetList';
 import TableList from './components/TableList'; // Import the new detail component
+import TableDataViewer from './components/TableDataViewer'; // Import the new detail component
 import Login from './components/Login';
 import './App.css';
 
@@ -35,6 +36,7 @@ function App() {
             <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/dataset" />} />
             <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
             <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />
+            <Route path="/dataset/:datasetName/table/:tableName" element={isLoggedIn ? <TableDataViewer /> : <Navigate replace to="/login" />} />
             {/* Add other routes as needed */}
           </Routes>
         </div>
