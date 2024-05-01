@@ -6,7 +6,7 @@ from flask_pymongo import PyMongo
 
 app = Flask(__name__)
 CORS(app)
-app.config['JWT_SECRET_KEY'] = 'your-secret-key'
+app.config['JWT_SECRET_KEY'] = 'mysecretkey'
 app.config['MONGO_URI'] = 'mongodb://mongo:27017/mydatabase'  # Example MongoDB URI
 mongo = PyMongo(app)
 bcrypt = Bcrypt(app)
@@ -30,6 +30,7 @@ def register():
 # Route to authenticate and generate access token (login)
 @app.route('/login', methods=['POST'])
 def login():
+    print("login!!", flush=True)
     email = request.json.get('email')
     password = request.json.get('password')
 

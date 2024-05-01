@@ -1,0 +1,14 @@
+.navigation-controls button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    margin: 5px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.navigation-controls button:hover {
+    background-color: #2980b9;
+}

@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import DatasetList from './components/DatasetList';
-import TableList from './components/TableList'; // Import the new detail component
-import TableDataViewer from './components/TableDataViewer'; // Import the new detail component
+import TableList from './components/TableList';
+import TableDataViewer from './components/TableDataViewer';
 import Login from './components/Login';
+import NavigationBar from './components/NavigationBar'; // Import the NavigationBar
 import './App.css';
 
 function App() {
@@ -17,17 +18,13 @@ function App() {
   return (
     <Router>
       <div className="app-container">
+        {isLoggedIn && <NavigationBar onLogout={handleLogout} />}
         <div className="app-header">
           {isLoggedIn && (
             <div className="profile">
               <img src="https://via.placeholder.com/40" alt="Profile" className="profile-image" />
               <span className="profile-name">John Doe</span>
             </div>
-          )}
-          {isLoggedIn && (
-            <button onClick={handleLogout} className="logout-button">
-              Logout
-            </button>
           )}
         </div>
         <div className="app-content">
@@ -37,7 +34,6 @@ function App() {
             <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
             <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />
             <Route path="/dataset/:datasetName/table/:tableName" element={isLoggedIn ? <TableDataViewer /> : <Navigate replace to="/login" />} />
-            {/* Add other routes as needed */}
           </Routes>
         </div>
       </div>
