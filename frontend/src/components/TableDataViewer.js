@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
-import Modal from './Modal'; // Assume this is your modal component
+import Modal from './Modal';
+import './TableDataViewer.css'; // Make sure this file is correctly imported
 
 function TableDataViewer() {
     const { datasetName, tableName } = useParams();
     const [tableData, setTableData] = useState(null);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(0);
     const [modalData, setModalData] = useState(null);
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'ascending' });
 
     useEffect(() => {
         const fetchData = async () => {
@@ -17,6 +20,7 @@ function TableDataViewer() {
             try {
                 const data = await getTableData(datasetName, tableName, currentPage);
                 setTableData(data);
+                setTotalPages(data.totalPages); // Assuming API provides total pages
             } catch (err) {
                 setError(err.message);
                 console.error("Failed to fetch table data:", err);
@@ -25,7 +29,7 @@ function TableDataViewer() {
         };
 
         fetchData();
-    }, [datasetName, tableName, currentPage]);
+    }, [datasetName, tableName, currentPage, sortConfig]);
 
     const handleCellClick = (rowId, colId) => {
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
@@ -34,11 +38,19 @@ function TableDataViewer() {
         }
     };
 
+    const handleSort = (key) => {
+        let direction = 'ascending';
+        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+            direction = 'descending';
+        }
+        setSortConfig({ key, direction });
+    };
+
     const hasAnnotations = (rowId, colId) => {
         return tableData.semanticAnnotations.cea.some(ann => ann.idRow === rowId && ann.idColumn === colId);
     };
 
-    if (loading) return <p>Loading...</p>;
+    if (loading) return <div className="loader">Loading...</div>;
     if (error) return <p>Error loading table data: {error}</p>;
 
     return (
@@ -50,7 +62,7 @@ function TableDataViewer() {
                         <thead>
                             <tr>
                                 {tableData.header.map((header, index) => (
-                                    <th key={index}>{header}</th>
+                                    <th key={index} onClick={() => handleSort(header)}>{header}</th>
                                 ))}
                             </tr>
                         </thead>
@@ -59,7 +71,7 @@ function TableDataViewer() {
                                 <tr key={idx}>
                                     {row.data.map((cell, colIdx) => (
                                         <td key={colIdx} onClick={() => handleCellClick(row.idRow, colIdx)}
-                                            style={{ backgroundColor: hasAnnotations(row.idRow, colIdx) ? 'lightgreen' : '' }}>
+                                            className={hasAnnotations(row.idRow, colIdx) ? 'annotated' : ''}>
                                             {cell}
                                         </td>
                                     ))}
@@ -67,9 +79,11 @@ function TableDataViewer() {
                             ))}
                         </tbody>
                     </table>
-                    {/* Pagination controls */}
-                    <button onClick={() => setCurrentPage(currentPage - 1)} disabled={currentPage === 1}>Previous</button>
-                    <button onClick={() => setCurrentPage(currentPage + 1)}>Next</button>
+                    <div className="pagination">
+                        <button onClick={() => setCurrentPage(currentPage - 1)} disabled={currentPage === 1}>Previous</button>
+                        <span>Page {currentPage} of {totalPages}</span>
+                        <button onClick={() => setCurrentPage(currentPage + 1)} disabled={currentPage === totalPages}>Next</button>
+                    </div>
                 </div>
             )}
             {modalData && <Modal data={modalData} onClose={() => setModalData(null)} />}
