@@ -25,11 +25,13 @@ apiClient.interceptors.response.use(null, async (error) => {
   return Promise.reject(error);
 });
 
+
 const getDatasets = async (page = 1) => {
   try {
     const response = await apiClient.get('/dataset', {
       params: { page }
     });
+    console.log("API Response:", response.data); // This will help ensure the response is as expected
     return response.data;
   } catch (error) {
     console.error('Error retrieving datasets:', error);
@@ -37,15 +39,19 @@ const getDatasets = async (page = 1) => {
   }
 };
 
-const getTables = async (datasetName) => {
+
+const getTables = async (datasetName, page = 1) => {
   try {
-    const response = await apiClient.get(`/dataset/${datasetName}/table`);
-    return response.data;
+    const response = await apiClient.get(`/dataset/${datasetName}/table`, {
+      params: { page } // Include the page parameter in the API request
+    });
+    return response.data; // Assuming the API returns the data directly
   } catch (error) {
     console.error('Error retrieving tables:', error);
     throw error;
   }
 };
+
 
 const getTableData = async (datasetName, tableName, page = 1) => {
   try {
