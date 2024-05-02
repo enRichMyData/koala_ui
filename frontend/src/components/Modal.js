@@ -2,23 +2,20 @@ import React, { useEffect, useState } from 'react';
 import './Modal.css'; // Make sure to import the CSS file
 
 function Modal({ data, onClose }) {
-    // State to keep track of the selected winner, initialized based on 'match'
     const [selectedWinnerIndex, setSelectedWinnerIndex] = useState(null);
 
     useEffect(() => {
-        // Find index of the initial winner based on 'match'
         let foundWinner = false;
         data.forEach((ann, index) => {
             ann.entity.forEach((ent, idx) => {
                 if (ent.match && !foundWinner) {
                     setSelectedWinnerIndex(`${index}-${idx}`);
-                    foundWinner = true;  // Ensure only the first match is set as winner initially
+                    foundWinner = true;
                 }
             });
         });
     }, [data]);
 
-    // Prevent scrolling on the background when modal is open
     useEffect(() => {
         document.body.style.overflow = 'hidden';
         return () => {
@@ -26,7 +23,6 @@ function Modal({ data, onClose }) {
         };
     }, []);
 
-    // Function to toggle the winner status
     const toggleWinner = (id) => {
         setSelectedWinnerIndex(selectedWinnerIndex === id ? null : id);
     };
@@ -51,7 +47,8 @@ function Modal({ data, onClose }) {
                         {data.map((ann, index) => ann.entity.map((ent, idx) => (
                             <tr key={`${index}-${idx}`}>
                                 <td>{index + 1}</td>
-                                <td>{ent.name}</td>
+                                {/* Check for QID and render link if available */}
+                                <td>{ent.id ? <a href={`https://www.wikidata.org/wiki/${ent.id}`} target="_blank" rel="noopener noreferrer">{ent.name}</a> : ent.name}</td>
                                 <td>{ent.type ? ent.type.map(t => t.name).join(', ') : 'N/A'}</td>
                                 <td>{ent.description}</td>
                                 <td>{ent.score}</td>
