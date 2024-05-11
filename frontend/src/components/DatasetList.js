@@ -1,45 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { getDatasets } from '../services/apiServices';
+import Pagination from './Pagination';  // Import the Pagination component
 
 const DatasetList = () => {
   const [datasets, setDatasets] = useState([]);
   const [error, setError] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [hasMorePages, setHasMorePages] = useState(true); // Assume more pages initially
+  const [totalPages, setTotalPages] = useState(0);
 
   useEffect(() => {
     const fetchDatasets = async () => {
       try {
-        const data = await getDatasets(currentPage);
-        if (data && data.length > 0) {  // If data is returned and not empty
-          setDatasets(data);
-          setHasMorePages(true); // Assume there might be more pages
-        } else if (data && data.length === 0) { // If data is empty, no more pages
-          setHasMorePages(false);
-          setError('No more datasets available'); // Optionally set an error or info message
+        const response = await getDatasets(currentPage);
+        if (response.data && response.data.length > 0) {
+          setDatasets(response.data);
+          setError('');
         } else {
-          setError('No data returned from API');
+          setDatasets([]);
         }
+        setTotalPages(response.pagination.totalPages);
+        setCurrentPage(response.pagination.currentPage);
       } catch (error) {
         setError(`Failed to fetch datasets: ${error.message}`);
+        setDatasets([]);
       }
     };
 
     fetchDatasets();
   }, [currentPage]);
 
-  const handlePrevious = () => {
-    if (currentPage > 1) {
-      setCurrentPage(prev => prev - 1);
-      setHasMorePages(true); // Resetting in case it was set to false
-    }
-  };
-
-  const handleNext = () => {
-    if (hasMorePages) {
-      setCurrentPage(prev => prev + 1);
-    }
+  const onPageChange = (page) => {
+    setCurrentPage(page);
   };
 
   if (error) {
@@ -60,11 +52,7 @@ const DatasetList = () => {
       ) : (
         <p>No datasets found</p>
       )}
-      <div>
-        <button onClick={handlePrevious} disabled={currentPage === 1}>Previous</button>
-        <span>Page {currentPage} {hasMorePages ? "" : " (Last Page)"}</span>
-        <button onClick={handleNext} disabled={!hasMorePages}>Next</button>
-      </div>
+      <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={onPageChange} />
     </div>
   );
 };

@@ -1,25 +1,25 @@
 import React from 'react';
 
-const Pagination = ({ itemsPerPage, totalItems, paginate, currentPage }) => {
-    const pageNumbers = [];
-
-    for (let i = 1; i <= Math.ceil(totalItems / itemsPerPage); i++) {
-        pageNumbers.push(i);
+const Pagination = ({ currentPage, totalPages, onPageChange }) => {
+  const handlePrevious = () => {
+    if (currentPage > 1) {
+      onPageChange(currentPage - 1);
     }
+  };
 
-    return (
-        <nav>
-            <ul className='pagination'>
-                {pageNumbers.map(number => (
-                    <li key={number} className='page-item'>
-                        <a onClick={() => paginate(number)} href="#!" className={`page-link ${currentPage === number ? 'active' : ''}`}>
-                            {number}
-                        </a>
-                    </li>
-                ))}
-            </ul>
-        </nav>
-    );
+  const handleNext = () => {
+    if (currentPage < totalPages) {
+      onPageChange(currentPage + 1);
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={handlePrevious} disabled={currentPage === 1}>Previous</button>
+      <span>Page {currentPage} of {totalPages}</span>
+      <button onClick={handleNext} disabled={currentPage >= totalPages}>Next</button>
+    </div>
+  );
 };
 
 export default Pagination;

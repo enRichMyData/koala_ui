@@ -1,28 +1,28 @@
+// TableList.js
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTables } from '../services/apiServices'; 
+import { getTables } from '../services/apiServices';
+import Pagination from './Pagination'; // Make sure to import the Pagination component
 
 const TableList = () => {
   const { datasetName } = useParams();
   const [tables, setTables] = useState([]);
   const [error, setError] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [hasMorePages, setHasMorePages] = useState(true); // Assume there might be more pages initially
+  const [totalPages, setTotalPages] = useState(0); // You need to manage total pages
 
   useEffect(() => {
     const fetchTables = async () => {
       try {
         const encodedName = encodeURIComponent(datasetName);
-        const data = await getTables(encodedName, currentPage); // Assumes getTables accepts dataset name and page number
-        if (data && data.length > 0) {
-          setTables(data);
-        } else if (data && data.length === 0) {
-          setHasMorePages(false); // No more data available
-          if (currentPage > 1) {
-            setError('No more tables available on this page.');
-          } else {
-            setError('No tables found for this dataset.');
-          }
+        const response = await getTables(encodedName, currentPage); // Update API to return response with data and pagination info
+        if (response.data && response.data.length > 0) {
+          setTables(response.data);
+          setTotalPages(response.pagination.totalPages); // Assume pagination info is part of the response
+          setError('');
+        } else {
+          setTables([]);
+          setError('No tables found for this dataset.');
         }
       } catch (error) {
         console.error('Failed to fetch tables:', error);
@@ -33,19 +33,8 @@ const TableList = () => {
     fetchTables();
   }, [datasetName, currentPage]);
 
-  const handlePrevious = () => {
-    if (currentPage > 1) {
-      setCurrentPage(prev => prev - 1);
-      setHasMorePages(true); // Assume there might be more data until confirmed otherwise
-      setError(''); // Clear any error messages
-    }
-  };
-
-  const handleNext = () => {
-    if (hasMorePages) {
-      setCurrentPage(prev => prev + 1);
-      setError(''); // Clear any error messages
-    }
+  const onPageChange = (page) => {
+    setCurrentPage(page);
   };
 
   if (error) {
@@ -66,13 +55,9 @@ const TableList = () => {
           ))}
         </ul>
       ) : (
-        <p>{error}</p> // Show an error or a no data message depending on the state
+        <p>No tables found</p>
       )}
-      <div>
-        <button onClick={handlePrevious} disabled={currentPage === 1}>Previous</button>
-        <span>Page {currentPage} {hasMorePages ? "" : " (Last Page)"}</span>
-        <button onClick={handleNext} disabled={!hasMorePages}>Next</button>
-      </div>
+      <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={onPageChange} />
     </div>
   );
 };

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import Modal from './Modal';
-import './TableDataViewer.css'; // Make sure this file is correctly imported
+import Pagination from './Pagination'; // Import the Pagination component
+import './TableDataViewer.css'; 
 
 function TableDataViewer() {
     const { datasetName, tableName } = useParams();
@@ -18,9 +19,9 @@ function TableDataViewer() {
         const fetchData = async () => {
             setLoading(true);
             try {
-                const data = await getTableData(datasetName, tableName, currentPage);
-                setTableData(data);
-                setTotalPages(data.totalPages); // Assuming API provides total pages
+                const response = await getTableData(datasetName, tableName, currentPage);
+                setTableData(response.data);
+                setTotalPages(response.pagination.totalPages); // Assuming API provides total pages
             } catch (err) {
                 setError(err.message);
                 console.error("Failed to fetch table data:", err);
@@ -79,11 +80,7 @@ function TableDataViewer() {
                             ))}
                         </tbody>
                     </table>
-                    <div className="pagination">
-                        <button onClick={() => setCurrentPage(currentPage - 1)} disabled={currentPage === 1}>Previous</button>
-                        <span>Page {currentPage} of {totalPages}</span>
-                        <button onClick={() => setCurrentPage(currentPage + 1)} disabled={currentPage === totalPages}>Next</button>
-                    </div>
+                    <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
                 </div>
             )}
             {modalData && <Modal data={modalData} onClose={() => setModalData(null)} />}
