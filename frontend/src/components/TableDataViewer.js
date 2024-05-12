@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Dialog, DialogTitle, DialogContent, DialogActions, Button, Pagination } from '@mui/material';
+import EntityDetailsModal from './EntityDetailsModal';
 
 function TableDataViewer() {
     const { datasetName, tableName } = useParams();
@@ -76,17 +77,7 @@ function TableDataViewer() {
                 </Table>
             </TableContainer>
             <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
-            {modalOpen && (
-                <Dialog open={modalOpen} onClose={handleModalClose}>
-                    <DialogTitle>Semantic Details</DialogTitle>
-                    <DialogContent>
-                        <Typography>{JSON.stringify(modalData, null, 2)}</Typography>
-                    </DialogContent>
-                    <DialogActions>
-                        <Button onClick={handleModalClose} color="primary">Close</Button>
-                    </DialogActions>
-                </Dialog>
-            )}
+            {modalOpen && <EntityDetailsModal data={modalData} onClose={handleModalClose} />}
         </Box>
     );
 }
