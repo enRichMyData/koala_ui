@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
-import Modal from './Modal';
-import Pagination from './Pagination'; // Import the Pagination component
-import './TableDataViewer.css'; 
+import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Dialog, DialogTitle, DialogContent, DialogActions, Button, Pagination } from '@mui/material';
 
 function TableDataViewer() {
     const { datasetName, tableName } = useParams();
@@ -12,8 +10,8 @@ function TableDataViewer() {
     const [error, setError] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(0);
+    const [modalOpen, setModalOpen] = useState(false);
     const [modalData, setModalData] = useState(null);
-    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'ascending' });
 
     useEffect(() => {
         const fetchData = async () => {
@@ -21,70 +19,75 @@ function TableDataViewer() {
             try {
                 const response = await getTableData(datasetName, tableName, currentPage);
                 setTableData(response.data);
-                setTotalPages(response.pagination.totalPages); // Assuming API provides total pages
+                setTotalPages(response.pagination.totalPages);
+                setLoading(false);
+                setError(null);
             } catch (err) {
                 setError(err.message);
-                console.error("Failed to fetch table data:", err);
+                setLoading(false);
             }
-            setLoading(false);
         };
 
         fetchData();
-    }, [datasetName, tableName, currentPage, sortConfig]);
+    }, [datasetName, tableName, currentPage]);
 
     const handleCellClick = (rowId, colId) => {
+        // Finding the annotations for the clicked cell based on rowId and colId
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
         if (annotations.length > 0) {
-            setModalData(annotations);
+            setModalData(annotations[0].entity); // Assume the first matching entity is what we want to display
+            setModalOpen(true);
         }
     };
 
-    const handleSort = (key) => {
-        let direction = 'ascending';
-        if (sortConfig.key === key && sortConfig.direction === 'ascending') {
-            direction = 'descending';
-        }
-        setSortConfig({ key, direction });
+    const handleModalClose = () => {
+        setModalOpen(false);
+        setModalData(null);
     };
 
-    const hasAnnotations = (rowId, colId) => {
-        return tableData.semanticAnnotations.cea.some(ann => ann.idRow === rowId && ann.idColumn === colId);
-    };
-
-    if (loading) return <div className="loader">Loading...</div>;
-    if (error) return <p>Error loading table data: {error}</p>;
+    if (loading) return <CircularProgress />;
+    if (error) return <Typography color="error">Error loading table data: {error}</Typography>;
 
     return (
-        <div>
-            <h1>Table Data: {tableName}</h1>
-            {tableData && (
-                <div>
-                    <table>
-                        <thead>
-                            <tr>
-                                {tableData.header.map((header, index) => (
-                                    <th key={index} onClick={() => handleSort(header)}>{header}</th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {tableData.rows.map((row, idx) => (
-                                <tr key={idx}>
-                                    {row.data.map((cell, colIdx) => (
-                                        <td key={colIdx} onClick={() => handleCellClick(row.idRow, colIdx)}
-                                            className={hasAnnotations(row.idRow, colIdx) ? 'annotated' : ''}>
-                                            {cell}
-                                        </td>
-                                    ))}
-                                </tr>
+        <Box sx={{ width: '100%', p: 2 }}>
+            <Typography variant="h6" gutterBottom>
+                Table Data: {tableName}
+            </Typography>
+            <TableContainer component={Paper}>
+                <Table>
+                    <TableHead>
+                        <TableRow>
+                            {tableData.header.map((header, index) => (
+                                <TableCell key={index}>{header}</TableCell>
                             ))}
-                        </tbody>
-                    </table>
-                    <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
-                </div>
+                        </TableRow>
+                    </TableHead>
+                    <TableBody>
+                        {tableData.rows.map((row, idx) => (
+                            <TableRow key={idx}>
+                                {row.data.map((cell, colIdx) => (
+                                    <TableCell key={colIdx} onClick={() => handleCellClick(row.idRow, colIdx)}>
+                                        {cell}
+                                    </TableCell>
+                                ))}
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </TableContainer>
+            <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
+            {modalOpen && (
+                <Dialog open={modalOpen} onClose={handleModalClose}>
+                    <DialogTitle>Semantic Details</DialogTitle>
+                    <DialogContent>
+                        <Typography>{JSON.stringify(modalData, null, 2)}</Typography>
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={handleModalClose} color="primary">Close</Button>
+                    </DialogActions>
+                </Dialog>
             )}
-            {modalData && <Modal data={modalData} onClose={() => setModalData(null)} />}
-        </div>
+        </Box>
     );
 }
 

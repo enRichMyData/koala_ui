@@ -4,11 +4,12 @@ import DatasetList from './components/DatasetList';
 import TableList from './components/TableList';
 import TableDataViewer from './components/TableDataViewer';
 import Login from './components/Login';
-import NavigationBar from './components/NavigationBar'; // Import the NavigationBar
-import './App.css';
+import NavigationBar from './components/NavigationBar'; // Import the updated NavigationBar
+import { CssBaseline } from '@mui/material';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
+  const profileName = "John Doe"; // Assuming the profile name is static for demonstration
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -17,26 +18,15 @@ function App() {
 
   return (
     <Router>
-      <div className="app-container">
-        {isLoggedIn && <NavigationBar onLogout={handleLogout} />}
-        <div className="app-header">
-          {isLoggedIn && (
-            <div className="profile">
-              <img src="https://via.placeholder.com/40" alt="Profile" className="profile-image" />
-              <span className="profile-name">John Doe</span>
-            </div>
-          )}
-        </div>
-        <div className="app-content">
-          <Routes>
-            <Route path="/" element={isLoggedIn ? <Navigate replace to="/dataset" /> : <Navigate replace to="/login" />} />
-            <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/dataset" />} />
-            <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
-            <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />
-            <Route path="/dataset/:datasetName/table/:tableName" element={isLoggedIn ? <TableDataViewer /> : <Navigate replace to="/login" />} />
-          </Routes>
-        </div>
-      </div>
+      <CssBaseline />  
+      {isLoggedIn && <NavigationBar onLogout={handleLogout} profileName={profileName} />}
+      <Routes>
+        <Route path="/" element={isLoggedIn ? <Navigate replace to="/dataset" /> : <Navigate replace to="/login" />} />
+        <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/dataset" />} />
+        <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
+        <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />
+        <Route path="/dataset/:datasetName/table/:tableName" element={isLoggedIn ? <TableDataViewer /> : <Navigate replace to="/login" />} />
+      </Routes>
     </Router>
   );
 }
