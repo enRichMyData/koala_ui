@@ -33,7 +33,6 @@ function TableDataViewer() {
     }, [datasetName, tableName, currentPage]);
 
     const handleCellClick = (rowId, colId) => {
-        // Finding the annotations for the clicked cell based on rowId and colId
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
         if (annotations.length > 0) {
             setModalData(annotations[0].entity); // Assume the first matching entity is what we want to display
@@ -66,11 +65,20 @@ function TableDataViewer() {
                     <TableBody>
                         {tableData.rows.map((row, idx) => (
                             <TableRow key={idx}>
-                                {row.data.map((cell, colIdx) => (
-                                    <TableCell key={colIdx} onClick={() => handleCellClick(row.idRow, colIdx)}>
-                                        {cell}
-                                    </TableCell>
-                                ))}
+                                {row.data.map((cell, colIdx) => {
+                                    const hasAnnotation = tableData.semanticAnnotations.cea.some(ann => ann.idRow === row.idRow && ann.idColumn === colIdx && ann.entity.length > 0);
+                                    //console.log(hasAnnotation, row.idRow, colIdx, cell);
+                                    console.log(tableData.semanticAnnotations.cea);
+                                    return (
+                                        <TableCell
+                                            key={colIdx}
+                                            onClick={hasAnnotation ? () => handleCellClick(row.idRow, colIdx) : undefined}
+                                            style={{ backgroundColor: hasAnnotation ? '#f0f8ff' : 'inherit', cursor: hasAnnotation ? 'pointer' : 'inherit' }}
+                                        >
+                                            {cell}
+                                        </TableCell>
+                                    );
+                                })}
                             </TableRow>
                         ))}
                     </TableBody>
