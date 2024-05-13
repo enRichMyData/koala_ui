@@ -1,9 +1,9 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { AppBar, Toolbar, IconButton, Button, Typography, Avatar } from '@mui/material';
+import { AppBar, Toolbar, IconButton, Button, Typography, Avatar, Box } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import Box from '@mui/material/Box';
+import logo from '../assets/images/new.webp';  // Make sure the path to your logo is correct
 
 const NavigationBar = ({ onLogout, profileName }) => {
     const navigate = useNavigate();
@@ -20,7 +20,7 @@ const NavigationBar = ({ onLogout, profileName }) => {
                     </IconButton>
                 </Box>
                 <Typography variant="h6" style={{ flexGrow: 1, textAlign: 'center' }}>
-                    My Application
+                    <img src={logo} alt="Alligator UI" style={{ height: '80px', width: '90px' }} />
                 </Typography>
                 <Box style={{ display: 'flex', alignItems: 'center' }}>
                     <NavLink to="/dataset" style={{ color: 'inherit', textDecoration: 'none' }}>

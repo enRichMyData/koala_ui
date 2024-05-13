@@ -46,7 +46,7 @@ const DatasetList = () => {
   }
 
   return (
-    <Box sx={{ width: '100%', maxWidth: 600, bgcolor: 'background.paper', margin: 'auto', p: 2 }}>
+    <Box sx={{ width: '100%', maxWidth: 1000, bgcolor: 'background.paper', margin: 'auto', p: 2 }}>
       <Typography variant="h6" component="div">
         Dataset List
       </Typography>

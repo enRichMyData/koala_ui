@@ -11,26 +11,31 @@ function TableDataViewer() {
     const [error, setError] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(0);
+    const [status, setStatus] = useState(''); // State to track the status of the table data
     const [modalOpen, setModalOpen] = useState(false);
     const [modalData, setModalData] = useState(null);
 
     useEffect(() => {
         const fetchData = async () => {
-            setLoading(true);
             try {
                 const response = await getTableData(datasetName, tableName, currentPage);
                 setTableData(response.data);
+                setStatus(response.data.status); // Assuming status is part of your API response
                 setTotalPages(response.pagination.totalPages);
-                setLoading(false);
-                setError(null);
             } catch (err) {
                 setError(err.message);
+            } finally {
                 setLoading(false);
             }
         };
 
         fetchData();
-    }, [datasetName, tableName, currentPage]);
+        const intervalId = status === 'DOING' ? setInterval(fetchData, 5000) : null;
+
+        return () => {
+            if (intervalId) clearInterval(intervalId); // Clean up the interval on component unmount or status change
+        };
+    }, [datasetName, tableName, currentPage, status]);
 
     const handleCellClick = (rowId, colId) => {
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
@@ -53,6 +58,12 @@ function TableDataViewer() {
             <Typography variant="h6" gutterBottom>
                 Table Data: {tableName}
             </Typography>
+            {status === 'DOING' && (
+                <Box sx={{ display: 'flex', alignItems: 'center', color: 'primary.main' }}>
+                    <CircularProgress size={24} sx={{ mr: 2 }} />
+                    <Typography variant="subtitle1">Processing table data...</Typography>
+                </Box>
+            )}
             <TableContainer component={Paper}>
                 <Table>
                     <TableHead>
