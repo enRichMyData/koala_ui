@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTables } from '../services/apiServices';
-import { List, ListItem, ListItemIcon, ListItemText, ListItemSecondaryAction, IconButton, Typography, CircularProgress, Pagination, Alert, Box } from '@mui/material';
+import { getTables, deleteTable } from '../services/apiServices'; // Import deleteTable
+import { List, ListItem, ListItemIcon, ListItemText, ListItemSecondaryAction, IconButton, Typography, CircularProgress, Pagination, Alert, Box, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';  // Icon representing tables
 import DeleteIcon from '@mui/icons-material/Delete';  // Placeholder for delete functionality
 
@@ -12,6 +12,8 @@ const TableList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [selectedTable, setSelectedTable] = useState(null);
 
   useEffect(() => {
     const fetchTables = async () => {
@@ -43,6 +45,30 @@ const TableList = () => {
     setCurrentPage(page);
   };
 
+  const handleOpenDialog = (tableName) => {
+    setSelectedTable(tableName);
+    setOpen(true);
+  };
+
+  const handleCloseDialog = () => {
+    setOpen(false);
+    setSelectedTable(null);
+  };
+
+  const confirmDeleteTable = async () => {
+    if (!selectedTable) return;
+    try {
+      const encodedName = encodeURIComponent(datasetName);
+      await deleteTable(encodedName, selectedTable);
+      setTables(tables.filter(table => table.tableName !== selectedTable));
+      setError('');
+    } catch (error) {
+      setError(`Failed to delete table: ${error.message}`);
+    } finally {
+      handleCloseDialog();
+    }
+  };
+
   if (loading) {
     return <CircularProgress />;
   }
@@ -65,8 +91,8 @@ const TableList = () => {
               </ListItemIcon>
               <ListItemText primary={table.tableName} />
               <ListItemSecondaryAction>
-                <IconButton edge="end" aria-label="delete">
-                  <DeleteIcon /> 
+                <IconButton edge="end" aria-label="delete" onClick={() => handleOpenDialog(table.tableName)}>
+                  <DeleteIcon />
                 </IconButton>
               </ListItemSecondaryAction>
             </ListItem>
@@ -78,6 +104,26 @@ const TableList = () => {
         )}
       </List>
       <Pagination count={totalPages} page={currentPage} onChange={onPageChange} color="primary" />
+      
+      <Dialog
+        open={open}
+        onClose={handleCloseDialog}
+      >
+        <DialogTitle>{"Confirm Delete"}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete the table "{selectedTable}"? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={confirmDeleteTable} color="secondary">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -25,7 +25,6 @@ apiClient.interceptors.response.use(null, async (error) => {
   return Promise.reject(error);
 });
 
-
 const getDatasets = async (page = 1) => {
   try {
     const response = await apiClient.get('/dataset', {
@@ -39,7 +38,6 @@ const getDatasets = async (page = 1) => {
   }
 };
 
-
 const getTables = async (datasetName, page = 1) => {
   try {
     const response = await apiClient.get(`/dataset/${datasetName}/table`, {
@@ -51,7 +49,6 @@ const getTables = async (datasetName, page = 1) => {
     throw error;
   }
 };
-
 
 const getTableData = async (datasetName, tableName, page = 1) => {
   try {
@@ -65,4 +62,26 @@ const getTableData = async (datasetName, tableName, page = 1) => {
   }
 };
 
-export { getDatasets, getTables, getTableData };
+// Function to delete a dataset
+const deleteDataset = async (datasetName) => {
+  try {
+    const response = await apiClient.delete(`/dataset/${datasetName}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting dataset:', error);
+    throw error;
+  }
+};
+
+// Function to delete a table
+const deleteTable = async (datasetName, tableName) => {
+  try {
+    const response = await apiClient.delete(`/dataset/${datasetName}/table/${tableName}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting table:', error);
+    throw error;
+  }
+};
+
+export { getDatasets, getTables, getTableData, deleteDataset, deleteTable };

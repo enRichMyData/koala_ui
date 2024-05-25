@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { AppBar, Toolbar, IconButton, Button, Typography, Avatar, Box } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import logo from '../assets/images/new.webp';  // Make sure the path to your logo is correct
+import logo from '../assets/images/alligator_logo.webp';  // Make sure the path to your logo is correct
 
 const NavigationBar = ({ onLogout, profileName }) => {
     const navigate = useNavigate();

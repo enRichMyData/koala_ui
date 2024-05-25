@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getDatasets } from '../services/apiServices';
-import { List, ListItem, ListItemIcon, ListItemText, ListItemSecondaryAction, IconButton, Typography, CircularProgress, Pagination, Alert, Box } from '@mui/material';
+import { getDatasets, deleteDataset } from '../services/apiServices'; // Import deleteDataset
+import { List, ListItem, ListItemIcon, ListItemText, ListItemSecondaryAction, IconButton, Typography, CircularProgress, Pagination, Alert, Box, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import FolderIcon from '@mui/icons-material/Folder';
-
 
 const DatasetList = () => {
   const [datasets, setDatasets] = useState([]);
@@ -12,6 +11,8 @@ const DatasetList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [selectedDataset, setSelectedDataset] = useState(null);
 
   useEffect(() => {
     const fetchDatasets = async () => {
@@ -37,6 +38,29 @@ const DatasetList = () => {
     setCurrentPage(page);
   };
 
+  const handleOpenDialog = (datasetName) => {
+    setSelectedDataset(datasetName);
+    setOpen(true);
+  };
+
+  const handleCloseDialog = () => {
+    setOpen(false);
+    setSelectedDataset(null);
+  };
+
+  const confirmDeleteDataset = async () => {
+    if (!selectedDataset) return;
+    try {
+      await deleteDataset(selectedDataset);
+      setDatasets(datasets.filter(dataset => dataset.datasetName !== selectedDataset));
+      setError('');
+    } catch (error) {
+      setError(`Failed to delete dataset: ${error.message}`);
+    } finally {
+      handleCloseDialog();
+    }
+  };
+
   if (loading) {
     return <CircularProgress />;
   }
@@ -59,8 +83,8 @@ const DatasetList = () => {
               </ListItemIcon>
               <ListItemText primary={dataset.datasetName} />
               <ListItemSecondaryAction>
-                <IconButton edge="end" aria-label="delete">
-                  <DeleteIcon /> {/* Placeholder for delete functionality */}
+                <IconButton edge="end" aria-label="delete" onClick={() => handleOpenDialog(dataset.datasetName)}>
+                  <DeleteIcon />
                 </IconButton>
               </ListItemSecondaryAction>
             </ListItem>
@@ -72,6 +96,26 @@ const DatasetList = () => {
         )}
       </List>
       <Pagination count={totalPages} page={currentPage} onChange={onPageChange} color="primary" />
+      
+      <Dialog
+        open={open}
+        onClose={handleCloseDialog}
+      >
+        <DialogTitle>{"Confirm Delete"}</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete the dataset "{selectedDataset}"? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={confirmDeleteDataset} color="secondary">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
