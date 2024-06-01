@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
-import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Dialog, DialogTitle, DialogContent, DialogActions, Button, Pagination } from '@mui/material';
+import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Pagination } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
 
 function TableDataViewer() {
