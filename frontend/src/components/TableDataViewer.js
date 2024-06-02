@@ -48,7 +48,7 @@ function TableDataViewer() {
         };
 
         fetchData();
-        const intervalId = status === 'DOING' ? setInterval(fetchData, 5000) : null;
+        const intervalId = (status === 'DOING' || status === 'TODO') ? setInterval(fetchData, 5000) : null;
 
         return () => {
             if (intervalId) clearInterval(intervalId); // Clean up the interval on component unmount or status change
@@ -99,7 +99,7 @@ function TableDataViewer() {
             <Typography variant="h6" gutterBottom>
                 Table Data: {tableName}
             </Typography>
-            {status === 'DOING' && (
+            {(status === 'TODO' || status === 'DOING') && (
                 <Box sx={{ display: 'flex', alignItems: 'center', color: 'primary.main' }}>
                     <CircularProgress size={24} sx={{ mr: 2 }} />
                     <Typography variant="subtitle1">Processing table data...</Typography>
