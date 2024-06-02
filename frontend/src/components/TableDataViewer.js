@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
-import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Pagination } from '@mui/material';
+import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Button, IconButton, Pagination } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
+import SortIcon from '@mui/icons-material/Sort';
+import CompressIcon from '@mui/icons-material/Compress';
+import ExpandIcon from '@mui/icons-material/Expand';
 
 function TableDataViewer() {
     const { datasetName, tableName } = useParams();
@@ -14,14 +17,29 @@ function TableDataViewer() {
     const [status, setStatus] = useState(''); // State to track the status of the table data
     const [modalOpen, setModalOpen] = useState(false);
     const [modalData, setModalData] = useState(null);
+    const [sortColumn, setSortColumn] = useState(null);
+    const [sortOrder, setSortOrder] = useState(null);
+    const [sortableColumns, setSortableColumns] = useState([]);
+    const [compact, setCompact] = useState(false);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const response = await getTableData(datasetName, tableName, currentPage);
+                const response = await getTableData(datasetName, tableName, currentPage, 10, sortColumn, sortOrder);
                 setTableData(response.data);
                 setStatus(response.data.status); // Assuming status is part of your API response
                 setTotalPages(response.pagination.totalPages);
+
+                // Determine sortable columns
+                const sortableCols = [];
+                response.data.header.forEach((header, index) => {
+                    if (response.data.semanticAnnotations.cea.some(ann => ann.idColumn === index && ann.entity.length > 0)) {
+                        sortableCols.push(index);
+                    }
+                });
+                console.log('Sortable columns:', sortableCols);
+                setSortableColumns(sortableCols);
+
             } catch (err) {
                 setError(err.message);
             } finally {
@@ -35,7 +53,7 @@ function TableDataViewer() {
         return () => {
             if (intervalId) clearInterval(intervalId); // Clean up the interval on component unmount or status change
         };
-    }, [datasetName, tableName, currentPage, status]);
+    }, [datasetName, tableName, currentPage, status, sortColumn, sortOrder]);
 
     const handleCellClick = (rowId, colId) => {
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
@@ -48,6 +66,29 @@ function TableDataViewer() {
     const handleModalClose = () => {
         setModalOpen(false);
         setModalData(null);
+    };
+
+    const handleSort = (column) => {
+        if (sortableColumns.includes(column)) {
+            const newSortOrder = sortColumn === column && sortOrder === 'asc' ? 'desc' : 'asc';
+            setSortColumn(column);
+            setSortOrder(newSortOrder);
+        }
+    };
+
+    const resetSort = () => {
+        setSortColumn(null);
+        setSortOrder(null);
+    };
+
+    const toggleCompact = () => {
+        setCompact(!compact);
+    };
+
+    const getCellColor = (confidenceScore) => {
+        if (confidenceScore > 0.8) return 'green'; // Green
+        if (confidenceScore >= 0.5) return 'yellow'; // Yellow
+        return 'red'; // Red
     };
 
     if (loading) return <CircularProgress />;
@@ -64,13 +105,30 @@ function TableDataViewer() {
                     <Typography variant="subtitle1">Processing table data...</Typography>
                 </Box>
             )}
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                <Button onClick={toggleCompact} color="primary" startIcon={compact ? <ExpandIcon /> : <CompressIcon />}>
+                    {compact ? 'Expand Table' : 'Compact Table'}
+                </Button>
+                <Button onClick={resetSort} color="primary" startIcon={<SortIcon />}>
+                    Reset Sort
+                </Button>
+            </Box>
             <TableContainer component={Paper}>
-                <Table>
+                <Table size={compact ? 'small' : 'medium'}>
                     <TableHead>
                         <TableRow>
-                            {tableData.header.map((header, index) => (
-                                <TableCell key={index}>{header}</TableCell>
-                            ))}
+                            {tableData.header.map((header, index) => {
+                                const isSortable = sortableColumns.includes(index);
+                                return (
+                                    <TableCell 
+                                        key={index} 
+                                        onClick={isSortable ? () => handleSort(index) : undefined}
+                                        style={{ cursor: isSortable ? 'pointer' : 'default' }}
+                                    >
+                                        {header} {sortColumn === index && (sortOrder === 'asc' ? '↑' : '↓')}
+                                    </TableCell>
+                                );
+                            })}
                         </TableRow>
                     </TableHead>
                     <TableBody>
@@ -78,15 +136,37 @@ function TableDataViewer() {
                             <TableRow key={idx}>
                                 {row.data.map((cell, colIdx) => {
                                     const hasAnnotation = tableData.semanticAnnotations.cea.some(ann => ann.idRow === row.idRow && ann.idColumn === colIdx && ann.entity.length > 0);
-                                    //console.log(hasAnnotation, row.idRow, colIdx, cell);
-                                    console.log(tableData.semanticAnnotations.cea);
+                                    const annotation = tableData.semanticAnnotations.cea.find(ann => ann.idRow === row.idRow && ann.idColumn === colIdx);
+                                    const confidenceScore = annotation?.entity[0]?.score ?? null;
+                                    console.log('annotation:', annotation, 'confidenceScore:', confidenceScore)
+                                    const cellColor = hasAnnotation ? getCellColor(confidenceScore) : 'inherit';
+
                                     return (
                                         <TableCell
                                             key={colIdx}
                                             onClick={hasAnnotation ? () => handleCellClick(row.idRow, colIdx) : undefined}
-                                            style={{ backgroundColor: hasAnnotation ? '#f0f8ff' : 'inherit', cursor: hasAnnotation ? 'pointer' : 'inherit' }}
+                                            style={{ cursor: hasAnnotation ? 'pointer' : 'inherit' }}
+                                            title={confidenceScore ? `Confidence: ${confidenceScore}` : ''}
                                         >
                                             {cell}
+                                            {hasAnnotation && (
+                                                <Box
+                                                    component="span"
+                                                    sx={{
+                                                        display: 'inline-block',
+                                                        width: 8,
+                                                        height: 8,
+                                                        borderRadius: '50%',
+                                                        backgroundColor: cellColor,
+                                                        ml: 1,
+                                                    }}
+                                                />
+                                            )}
+                                            {confidenceScore !== null && (
+                                                <Typography variant="caption" display="block" sx={{ color: 'grey', marginLeft: '4px' }}>
+                                                    {confidenceScore === 0 ? `(0.00)` : `(${confidenceScore.toFixed(2)})`}
+                                                </Typography>
+                                            )}
                                         </TableCell>
                                     );
                                 })}

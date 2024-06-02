@@ -4,7 +4,7 @@ const API_URL = process.env.REACT_APP_API_URL;
 const API_TOKEN = process.env.REACT_APP_API_TOKEN;
 
 const apiClient = axios.create({
-  baseURL: API_URL
+  baseURL: API_URL,
 });
 
 // Attach token to every request
@@ -16,46 +16,68 @@ apiClient.interceptors.request.use(config => {
 
 // Simple retry interceptor for specific status codes
 apiClient.interceptors.response.use(null, async (error) => {
-  const { config, response: { status } } = error;
+  const { config, response } = error;
   const maxRetries = 3;
-  if (status >= 500 && config.retryCount < maxRetries) {
+  if (response && response.status >= 500 && config.retryCount < maxRetries) {
     config.retryCount = config.retryCount ? config.retryCount + 1 : 1;
     return apiClient(config);  // Retry the request with the updated config
   }
   return Promise.reject(error);
 });
 
-const getDatasets = async (page = 1) => {
+const getDatasets = async (page = 1, perPage = 10) => {
   try {
     const response = await apiClient.get('/dataset', {
-      params: { page }
+      params: {
+        page,
+        per_page: perPage,
+      },
     });
-    console.log("API Response:", response.data); // This will help ensure the response is as expected
-    return response.data;
+    console.log('API Response:', response.data); // This will help ensure the response is as expected
+    return {
+      data: response.data.data,
+      pagination: response.data.pagination
+    };
   } catch (error) {
     console.error('Error retrieving datasets:', error);
     throw error;
   }
 };
 
-const getTables = async (datasetName, page = 1) => {
+const getTables = async (datasetName, page = 1, perPage = 10) => {
   try {
     const response = await apiClient.get(`/dataset/${datasetName}/table`, {
-      params: { page } // Include the page parameter in the API request
+      params: {
+        page,
+        per_page: perPage,
+      },
     });
-    return response.data; // Assuming the API returns the data directly
+    console.log('API Response:', response.data);
+    return {
+      data: response.data.data,
+      pagination: response.data.pagination
+    };
   } catch (error) {
     console.error('Error retrieving tables:', error);
     throw error;
   }
 };
 
-const getTableData = async (datasetName, tableName, page = 1) => {
+const getTableData = async (datasetName, tableName, page = 1, perPage = 10, column = null, sort = null) => {
   try {
     const response = await apiClient.get(`/dataset/${datasetName}/table/${tableName}`, {
-      params: { page }
+      params: {
+        page,
+        per_page: perPage,
+        column,
+        sort,
+      },
     });
-    return response.data;
+    console.log('API Response:', response.data);
+    return {
+      data: response.data.data,
+      pagination: response.data.pagination
+    };
   } catch (error) {
     console.error('Error retrieving table data:', error);
     throw error;
