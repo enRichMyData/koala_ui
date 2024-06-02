@@ -1,33 +1,49 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL;
-const API_TOKEN = process.env.REACT_APP_API_TOKEN;
+const ALLIGATOR_API_URL = process.env.REACT_APP_ALLIGATOR_URL;
+const ALLIGATOR_API_TOKEN = process.env.REACT_APP_ALLIGATOR_TOKEN;
+const LAMAPI_URL = process.env.REACT_APP_LAMAPI_URL;
+const LAMAPI_TOKEN = process.env.REACT_APP_LAMAPI_TOKEN;
 
-const apiClient = axios.create({
-  baseURL: API_URL,
+// Alligator API Client
+const alligatorApiClient = axios.create({
+  baseURL: ALLIGATOR_API_URL,
 });
 
-// Attach token to every request
-apiClient.interceptors.request.use(config => {
+// Attach token to every request for Alligator API
+alligatorApiClient.interceptors.request.use(config => {
   config.params = config.params || {};
-  config.params['token'] = API_TOKEN;
+  config.params['token'] = ALLIGATOR_API_TOKEN;
   return config;
 });
 
-// Simple retry interceptor for specific status codes
-apiClient.interceptors.response.use(null, async (error) => {
+// Simple retry interceptor for specific status codes for Alligator API
+alligatorApiClient.interceptors.response.use(null, async (error) => {
   const { config, response } = error;
   const maxRetries = 3;
   if (response && response.status >= 500 && config.retryCount < maxRetries) {
     config.retryCount = config.retryCount ? config.retryCount + 1 : 1;
-    return apiClient(config);  // Retry the request with the updated config
+    return alligatorApiClient(config);  // Retry the request with the updated config
   }
   return Promise.reject(error);
 });
 
+// LamAPI Client
+const lamapiClient = axios.create({
+  baseURL: LAMAPI_URL,
+});
+
+// Attach token to every request for LamAPI
+lamapiClient.interceptors.request.use(config => {
+  config.params = config.params || {};
+  config.params['token'] = LAMAPI_TOKEN;
+  return config;
+});
+
+// Alligator API functions
 const getDatasets = async (page = 1, perPage = 10) => {
   try {
-    const response = await apiClient.get('/dataset', {
+    const response = await alligatorApiClient.get('/dataset', {
       params: {
         page,
         per_page: perPage,
@@ -46,7 +62,7 @@ const getDatasets = async (page = 1, perPage = 10) => {
 
 const getTables = async (datasetName, page = 1, perPage = 10) => {
   try {
-    const response = await apiClient.get(`/dataset/${datasetName}/table`, {
+    const response = await alligatorApiClient.get(`/dataset/${datasetName}/table`, {
       params: {
         page,
         per_page: perPage,
@@ -65,7 +81,7 @@ const getTables = async (datasetName, page = 1, perPage = 10) => {
 
 const getTableData = async (datasetName, tableName, page = 1, perPage = 10, column = null, sort = null) => {
   try {
-    const response = await apiClient.get(`/dataset/${datasetName}/table/${tableName}`, {
+    const response = await alligatorApiClient.get(`/dataset/${datasetName}/table/${tableName}`, {
       params: {
         page,
         per_page: perPage,
@@ -84,10 +100,9 @@ const getTableData = async (datasetName, tableName, page = 1, perPage = 10, colu
   }
 };
 
-// Function to delete a dataset
 const deleteDataset = async (datasetName) => {
   try {
-    const response = await apiClient.delete(`/dataset/${datasetName}`);
+    const response = await alligatorApiClient.delete(`/dataset/${datasetName}`);
     return response.data;
   } catch (error) {
     console.error('Error deleting dataset:', error);
@@ -95,10 +110,9 @@ const deleteDataset = async (datasetName) => {
   }
 };
 
-// Function to delete a table
 const deleteTable = async (datasetName, tableName) => {
   try {
-    const response = await apiClient.delete(`/dataset/${datasetName}/table/${tableName}`);
+    const response = await alligatorApiClient.delete(`/dataset/${datasetName}/table/${tableName}`);
     return response.data;
   } catch (error) {
     console.error('Error deleting table:', error);
@@ -106,4 +120,29 @@ const deleteTable = async (datasetName, tableName) => {
   }
 };
 
-export { getDatasets, getTables, getTableData, deleteDataset, deleteTable };
+// LamAPI function
+const fetchCandidates = async (query) => {
+  try {
+    const response = await lamapiClient.get('/lookup/entity-retrieval', {
+      params: {
+        name: query,
+        limit: 100,
+        kg: 'wikidata',
+        query: JSON.stringify({
+          query: {
+            match: {
+              name: query,
+            }
+          }
+        }),
+      }
+    });
+    console.log('LamAPI Response:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching candidates:', error);
+    throw error;
+  }
+};
+
+export { getDatasets, getTables, getTableData, deleteDataset, deleteTable, fetchCandidates };

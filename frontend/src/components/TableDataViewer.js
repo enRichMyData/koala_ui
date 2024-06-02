@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
-import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Button, IconButton, Pagination } from '@mui/material';
+import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Button, Pagination } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
 import SortIcon from '@mui/icons-material/Sort';
 import CompressIcon from '@mui/icons-material/Compress';
