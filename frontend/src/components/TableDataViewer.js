@@ -33,11 +33,11 @@ function TableDataViewer() {
                 // Determine sortable columns
                 const sortableCols = [];
                 response.data.header.forEach((header, index) => {
-                    if (response.data.semanticAnnotations.cea.some(ann => ann.idColumn === index && ann.entity.length > 0)) {
+                    if (response.data.metadata.column.some(item => item.idColumn === index && (item.tag === 'NE' || item.tag == 'SUBJ') )) {
                         sortableCols.push(index);
                     }
                 });
-                console.log('Sortable columns:', sortableCols);
+                //console.log('Sortable columns:', sortableCols);
                 setSortableColumns(sortableCols);
 
             } catch (err) {
@@ -138,7 +138,7 @@ function TableDataViewer() {
                                     const hasAnnotation = tableData.semanticAnnotations.cea.some(ann => ann.idRow === row.idRow && ann.idColumn === colIdx && ann.entity.length > 0);
                                     const annotation = tableData.semanticAnnotations.cea.find(ann => ann.idRow === row.idRow && ann.idColumn === colIdx);
                                     const confidenceScore = annotation?.entity[0]?.score ?? null;
-                                    console.log('annotation:', annotation, 'confidenceScore:', confidenceScore)
+                                    //console.log('annotation:', annotation, 'confidenceScore:', confidenceScore)
                                     const cellColor = hasAnnotation ? getCellColor(confidenceScore) : 'inherit';
 
                                     return (
