@@ -33,7 +33,7 @@ function TableDataViewer() {
                 // Determine sortable columns
                 const sortableCols = [];
                 response.data.header.forEach((header, index) => {
-                    if (response.data.metadata.column.some(item => item.idColumn === index && (item.tag === 'NE' || item.tag == 'SUBJ') )) {
+                    if (response.data.metadata.column.some(item => item.idColumn === index && (item.tag === 'NE' || item.tag === 'SUBJ') )) {
                         sortableCols.push(index);
                     }
                 });

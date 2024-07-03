@@ -1,0 +1,34 @@
+.splash-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #f0f0f0; /* Light background color */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000; /* Ensure it's on top of other elements */
+    overflow: hidden;
+  }
+  
+  .splash-content {
+    text-align: center;
+  }
+  
+  .koala-logo {
+    max-width: 150px; /* Adjust size as needed */
+    height: auto;
+    margin-bottom: 20px;
+  }
+  
+  .splash-title {
+    font-size: 2.5em;
+    color: #333; /* Text color */
+    margin-bottom: 20px;
+  }
+  
+  .app-screenshot {
+    max-width: 80%;
+    height: auto;
+  }
