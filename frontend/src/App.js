@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import DatasetList from './components/DatasetList';
 import TableList from './components/TableList';
@@ -12,6 +12,12 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [showSplash, setShowSplash] = useState(true); // State for splash screen visibility
   const profileName = "John Doe"; // Assuming the profile name is static for demonstration
+
+  useEffect(() => {
+    if (window.location.hostname !== 'localhost' || window.location.pathname !== '/') {
+      setShowSplash(false);
+    }
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -31,7 +37,7 @@ function App() {
       <CssBaseline />  
       {isLoggedIn && <NavigationBar onLogout={handleLogout} profileName={profileName} />}
       <Routes>
-        <Route path="/" element={isLoggedIn ? <Navigate replace to="/dataset" /> : <Navigate replace to="/login" />} />
+        <Route path="/" element={isLoggedIn ? <Navigate replace to="/dataset" /> : <Login setLoggedIn={setIsLoggedIn} />} />
         <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/dataset" />} />
         <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
         <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />

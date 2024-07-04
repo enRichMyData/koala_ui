@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getDatasets, deleteDataset } from '../services/apiServices'; // Import deleteDataset
-import { List, ListItem, ListItemIcon, ListItemText, ListItemSecondaryAction, IconButton, Typography, CircularProgress, Pagination, Alert, Box, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button } from '@mui/material';
+import { getDatasets, deleteDataset, createDataset } from '../services/apiServices';
+import { 
+  List, ListItem, ListItemIcon, ListItemText, ListItemSecondaryAction, IconButton, 
+  Typography, CircularProgress, Pagination, Alert, Box, Dialog, DialogActions, 
+  DialogContent, DialogContentText, DialogTitle, Button, TextField 
+} from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import FolderIcon from '@mui/icons-material/Folder';
 
@@ -13,6 +17,7 @@ const DatasetList = () => {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [selectedDataset, setSelectedDataset] = useState(null);
+  const [newDatasetName, setNewDatasetName] = useState('');
 
   useEffect(() => {
     const fetchDatasets = async () => {
@@ -61,6 +66,18 @@ const DatasetList = () => {
     }
   };
 
+  const handleCreateDataset = async (e) => {
+    e.preventDefault();
+    try {
+      const newDataset = await createDataset(newDatasetName);
+      setDatasets([...datasets, newDataset]);
+      setNewDatasetName('');
+      setError('');
+    } catch (error) {
+      setError(`Failed to create dataset: ${error.message}`);
+    }
+  };
+
   if (loading) {
     return <CircularProgress />;
   }
@@ -74,6 +91,20 @@ const DatasetList = () => {
       <Typography variant="h6" component="div">
         Dataset List
       </Typography>
+      <form onSubmit={handleCreateDataset}>
+        <TextField
+          label="New Dataset Name"
+          value={newDatasetName}
+          onChange={(e) => setNewDatasetName(e.target.value)}
+          required
+          variant="outlined"
+          fullWidth
+          margin="normal"
+        />
+        <Button type="submit" variant="contained" color="primary">
+          Create Dataset
+        </Button>
+      </form>
       <List>
         {datasets.length > 0 ? (
           datasets.map((dataset, index) => (

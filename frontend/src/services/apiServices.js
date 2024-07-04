@@ -41,6 +41,20 @@ lamapiClient.interceptors.request.use(config => {
 });
 
 // Alligator API functions
+const createDataset = async (datasetName) => {
+  try {
+    const response = await alligatorApiClient.post('/dataset', null, {
+      params: {
+        datasetName: datasetName,
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error creating dataset:', error);
+    throw error;
+  }
+};
+
 const getDatasets = async (page = 1, perPage = 10) => {
   try {
     const response = await alligatorApiClient.get('/dataset', {
@@ -56,6 +70,24 @@ const getDatasets = async (page = 1, perPage = 10) => {
     };
   } catch (error) {
     console.error('Error retrieving datasets:', error);
+    throw error;
+  }
+};
+
+const uploadTable = async (datasetName, file, kgReference="wikidata") => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('kgReference', kgReference);
+
+  try {
+    const response = await alligatorApiClient.post(`/dataset/${datasetName}/table`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error uploading table:', error);
     throw error;
   }
 };
@@ -145,4 +177,4 @@ const fetchCandidates = async (query) => {
   }
 };
 
-export { getDatasets, getTables, getTableData, deleteDataset, deleteTable, fetchCandidates };
+export { getDatasets, getTables, getTableData, deleteDataset, deleteTable, fetchCandidates, createDataset, uploadTable };

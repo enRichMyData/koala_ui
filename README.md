@@ -64,7 +64,7 @@ Once the server is running, you can access the application at `http://localhost:
 
 ## Screenshots
 
-![Main Interface](./frontend/src/assets/images/app_screenshot.png)
+![Main Interface](./frontend/src/assets/images/combined_splash_screen.png)
 
 ## Contributing
 

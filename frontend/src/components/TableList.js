@@ -1,9 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTables, deleteTable } from '../services/apiServices'; // Import deleteTable
-import { List, ListItem, ListItemIcon, ListItemText, ListItemSecondaryAction, IconButton, Typography, CircularProgress, Pagination, Alert, Box, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button } from '@mui/material';
-import TableChartIcon from '@mui/icons-material/TableChart';  // Icon representing tables
-import DeleteIcon from '@mui/icons-material/Delete';  // Placeholder for delete functionality
+import { getTables, deleteTable, uploadTable } from '../services/apiServices';
+import {
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  ListItemSecondaryAction,
+  IconButton,
+  Typography,
+  CircularProgress,
+  Pagination,
+  Alert,
+  Box,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Button,
+} from '@mui/material';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add'; // Icon for adding a new table
 
 const TableList = () => {
   const { datasetName } = useParams();
@@ -12,8 +31,11 @@ const TableList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const [openUploadDialog, setOpenUploadDialog] = useState(false);
   const [selectedTable, setSelectedTable] = useState(null);
+  const [file, setFile] = useState(null);
+  const [kgReference, setKgReference] = useState('');
 
   useEffect(() => {
     const fetchTables = async () => {
@@ -45,27 +67,55 @@ const TableList = () => {
     setCurrentPage(page);
   };
 
-  const handleOpenDialog = (tableName) => {
+  const handleOpenDeleteDialog = (tableName) => {
     setSelectedTable(tableName);
-    setOpen(true);
+    setOpenDeleteDialog(true);
   };
 
-  const handleCloseDialog = () => {
-    setOpen(false);
+  const handleCloseDeleteDialog = () => {
+    setOpenDeleteDialog(false);
     setSelectedTable(null);
   };
 
   const confirmDeleteTable = async () => {
-    if (!selectedTable) return;
     try {
-      const encodedName = encodeURIComponent(datasetName);
-      await deleteTable(encodedName, selectedTable);
-      setTables(tables.filter(table => table.tableName !== selectedTable));
+      await deleteTable(datasetName, selectedTable);
+      setTables(tables.filter((table) => table.tableName !== selectedTable));
+    } catch (error) {
+      console.error('Failed to delete table:', error);
+      setError('Failed to delete table');
+    } finally {
+      handleCloseDeleteDialog();
+    }
+  };
+
+  const handleOpenUploadDialog = () => {
+    setOpenUploadDialog(true);
+  };
+
+  const handleCloseUploadDialog = () => {
+    setOpenUploadDialog(false);
+    setFile(null);
+    setKgReference('');
+  };
+
+  const handleFileChange = (event) => {
+    setFile(event.target.files[0]);
+  };
+
+  const handleUploadTable = async (event) => {
+    event.preventDefault();
+    try {
+      await uploadTable(datasetName, file, kgReference);
+      // Refresh the table list after uploading
+      const response = await getTables(datasetName, currentPage);
+      setTables(response.data);
       setError('');
     } catch (error) {
-      setError(`Failed to delete table: ${error.message}`);
+      console.error('Failed to upload table:', error);
+      setError('Failed to upload table');
     } finally {
-      handleCloseDialog();
+      handleCloseUploadDialog();
     }
   };
 
@@ -73,25 +123,25 @@ const TableList = () => {
     return <CircularProgress />;
   }
 
-  if (error) {
-    return <Alert severity="error">{error}</Alert>;
-  }
-
   return (
     <Box sx={{ width: '100%', maxWidth: 1000, bgcolor: 'background.paper', margin: 'auto', p: 2 }}>
       <Typography variant="h6" component="div">
         Tables in Dataset: {datasetName}
       </Typography>
+      <Button variant="contained" color="primary" startIcon={<AddIcon />} onClick={handleOpenUploadDialog}>
+        Upload New Table
+      </Button>
+      {error && <Alert severity="error">{error}</Alert>}
       <List>
         {tables.length > 0 ? (
           tables.map((table, index) => (
             <ListItem key={index} button component={Link} to={`/dataset/${encodeURIComponent(datasetName)}/table/${table.tableName}`}>
               <ListItemIcon>
-                <TableChartIcon /> 
+                <TableChartIcon />
               </ListItemIcon>
               <ListItemText primary={table.tableName} />
               <ListItemSecondaryAction>
-                <IconButton edge="end" aria-label="delete" onClick={() => handleOpenDialog(table.tableName)}>
+                <IconButton edge="end" aria-label="delete" onClick={() => handleOpenDeleteDialog(table.tableName)}>
                   <DeleteIcon />
                 </IconButton>
               </ListItemSecondaryAction>
@@ -105,10 +155,7 @@ const TableList = () => {
       </List>
       <Pagination count={totalPages} page={currentPage} onChange={onPageChange} color="primary" />
       
-      <Dialog
-        open={open}
-        onClose={handleCloseDialog}
-      >
+      <Dialog open={openDeleteDialog} onClose={handleCloseDeleteDialog}>
         <DialogTitle>{"Confirm Delete"}</DialogTitle>
         <DialogContent>
           <DialogContentText>
@@ -116,13 +163,30 @@ const TableList = () => {
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog} color="primary">
+          <Button onClick={handleCloseDeleteDialog} color="primary">
             Cancel
           </Button>
           <Button onClick={confirmDeleteTable} color="secondary">
             Delete
           </Button>
         </DialogActions>
+      </Dialog>
+
+      <Dialog open={openUploadDialog} onClose={handleCloseUploadDialog}>
+        <DialogTitle>Upload New Table</DialogTitle>
+        <DialogContent>
+          <form onSubmit={handleUploadTable}>
+            <input type="file" onChange={handleFileChange} required />
+            <DialogActions>
+              <Button onClick={handleCloseUploadDialog} color="primary">
+                Cancel
+              </Button>
+              <Button type="submit" color="primary">
+                Upload
+              </Button>
+            </DialogActions>
+          </form>
+        </DialogContent>
       </Dialog>
     </Box>
   );

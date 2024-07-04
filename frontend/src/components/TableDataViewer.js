@@ -33,9 +33,11 @@ function TableDataViewer() {
                 // Determine sortable columns
                 const sortableCols = [];
                 response.data.header.forEach((header, index) => {
-                    if (response.data.metadata.column.some(item => item.idColumn === index && (item.tag === 'NE' || item.tag === 'SUBJ') )) {
-                        sortableCols.push(index);
-                    }
+                    if (response.data.metadata && response.data.metadata.column) {
+                        if (response.data.metadata.column.some(item => item.idColumn === index && (item.tag === 'NE' || item.tag === 'SUBJ') )) {
+                            sortableCols.push(index);
+                        }
+                    }    
                 });
                 //console.log('Sortable columns:', sortableCols);
                 setSortableColumns(sortableCols);
