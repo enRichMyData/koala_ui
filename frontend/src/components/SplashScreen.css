@@ -1,34 +1,50 @@
 .splash-screen {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: #f0f0f0; /* Light background color */
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000; /* Ensure it's on top of other elements */
-    overflow: hidden;
-  }
-  
-  .splash-content {
-    text-align: center;
-  }
-  
-  .koala-logo {
-    max-width: 150px; /* Adjust size as needed */
-    height: auto;
-    margin-bottom: 20px;
-  }
-  
-  .splash-title {
-    font-size: 2.5em;
-    color: #333; /* Text color */
-    margin-bottom: 20px;
-  }
-  
-  .app-screenshot {
-    max-width: 80%;
-    height: auto;
-  }
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #f0f0f0; /* Light background color */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000; /* Ensure it's on top of other elements */
+  overflow: hidden;
+}
+
+.splash-content {
+  text-align: center;
+  color: #333; /* Text color */
+}
+
+.koala-image {
+  width: 700px; /* Adjust size as needed */
+  height: auto;
+  margin: 20px 0;
+}
+
+.splash-title {
+  font-size: 3em;
+  font-weight: bold;
+  margin-bottom: 20px;
+}
+
+.splash-description {
+  font-size: 1.2em;
+  margin-bottom: 20px;
+}
+
+.explore-button {
+  padding: 10px 20px;
+  font-size: 1em;
+  color: #fff;
+  background-color: #007bff; /* Button color */
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.explore-button:hover {
+  background-color: #0056b3; /* Button hover color */
+}

@@ -1,17 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import './SplashScreen.css';
-import splashImage from '../assets/images/combined_splash_screen.png';
+import koalaImage from '../assets/images/combined_splash_screen.png'; // Ensure the path to your image is correct
 
-const SplashScreen = () => {
+const SplashScreen = ({ onProceed }) => {
   const [isVisible, setIsVisible] = useState(true);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsVisible(false);
-    }, 3000); // Display splash screen for 3 seconds
-
-    return () => clearTimeout(timer);
-  }, []);
+  const handleProceed = () => {
+    setIsVisible(false);
+    onProceed();
+  };
 
   if (!isVisible) return null;
 
@@ -19,7 +16,11 @@ const SplashScreen = () => {
     <div className="splash-screen">
       <div className="splash-content">
         <h1 className="splash-title">Koala UI</h1>
-        <img src={splashImage} alt="App Screenshot" className="app-screenshot" />
+        <p className="splash-description">
+          Welcome to Koala UI, your go-to tool for exploring and visualizing entity linking results. Click the button below to start your journey!
+        </p>
+        <img src={koalaImage} alt="Koala" className="koala-image" />
+        <button className="explore-button" onClick={handleProceed}>Explore It</button>
       </div>
     </div>
   );
