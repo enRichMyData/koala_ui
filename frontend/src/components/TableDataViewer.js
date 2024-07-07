@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
-import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Button, Pagination } from '@mui/material';
+import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Button, Pagination, Tooltip } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
 import SortIcon from '@mui/icons-material/Sort';
 import CompressIcon from '@mui/icons-material/Compress';
@@ -14,34 +14,40 @@ function TableDataViewer() {
     const [error, setError] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(0);
-    const [status, setStatus] = useState(''); // State to track the status of the table data
+    const [status, setStatus] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
     const [modalData, setModalData] = useState(null);
     const [sortColumn, setSortColumn] = useState(null);
     const [sortOrder, setSortOrder] = useState(null);
     const [sortableColumns, setSortableColumns] = useState([]);
     const [compact, setCompact] = useState(false);
+    const [columnTypes, setColumnTypes] = useState([]);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
                 const response = await getTableData(datasetName, tableName, currentPage, 10, sortColumn, sortOrder);
                 setTableData(response.data);
-                setStatus(response.data.status); // Assuming status is part of your API response
+                setStatus(response.data.status);
                 setTotalPages(response.pagination.totalPages);
 
-                // Determine sortable columns
                 const sortableCols = [];
+                const colTypes = [];
                 response.data.header.forEach((header, index) => {
                     if (response.data.metadata && response.data.metadata.column) {
-                        if (response.data.metadata.column.some(item => item.idColumn === index && (item.tag === 'NE' || item.tag === 'SUBJ') )) {
-                            sortableCols.push(index);
+                        const columnMetadata = response.data.metadata.column.find(item => item.idColumn === index);
+                        if (columnMetadata) {
+                            if (columnMetadata.tag === 'NE' || columnMetadata.tag === 'SUBJ') {
+                                sortableCols.push(index);
+                                colTypes[index] = 'NE';
+                            } else {
+                                colTypes[index] = 'LIT';
+                            }
                         }
-                    }    
+                    } 
                 });
-                //console.log('Sortable columns:', sortableCols);
                 setSortableColumns(sortableCols);
-
+                setColumnTypes(colTypes);
             } catch (err) {
                 setError(err.message);
             } finally {
@@ -53,14 +59,14 @@ function TableDataViewer() {
         const intervalId = (status === 'DOING' || status === 'TODO') ? setInterval(fetchData, 5000) : null;
 
         return () => {
-            if (intervalId) clearInterval(intervalId); // Clean up the interval on component unmount or status change
+            if (intervalId) clearInterval(intervalId);
         };
     }, [datasetName, tableName, currentPage, status, sortColumn, sortOrder]);
 
     const handleCellClick = (rowId, colId) => {
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
         if (annotations.length > 0) {
-            setModalData(annotations[0].entity); // Assume the first matching entity is what we want to display
+            setModalData(annotations[0].entity);
             setModalOpen(true);
         }
     };
@@ -88,9 +94,9 @@ function TableDataViewer() {
     };
 
     const getCellColor = (confidenceScore) => {
-        if (confidenceScore > 0.8) return 'green'; // Green
-        if (confidenceScore >= 0.5) return 'yellow'; // Yellow
-        return 'red'; // Red
+        if (confidenceScore > 0.8) return 'green';
+        if (confidenceScore >= 0.5) return 'yellow';
+        return 'red';
     };
 
     if (loading) return <CircularProgress />;
@@ -121,13 +127,25 @@ function TableDataViewer() {
                         <TableRow>
                             {tableData.header.map((header, index) => {
                                 const isSortable = sortableColumns.includes(index);
+                                const columnType = columnTypes[index];
+                                const backgroundColor = columnType === 'NE' ? '#d0f0c0' : '#f0e68c';
+                                const headerTooltip = columnType === 'NE' ? 'Named Entity (NE)' : 'Literal (LIT)';
+
                                 return (
                                     <TableCell 
                                         key={index} 
                                         onClick={isSortable ? () => handleSort(index) : undefined}
-                                        style={{ cursor: isSortable ? 'pointer' : 'default' }}
+                                        style={{ 
+                                            cursor: isSortable ? 'pointer' : 'default',
+                                            backgroundColor,
+                                            border: sortColumn === index ? '2px solid #3f51b5' : 'none' 
+                                        }}
                                     >
-                                        {header} {sortColumn === index && (sortOrder === 'asc' ? '↑' : '↓')}
+                                        <Tooltip title={headerTooltip} arrow>
+                                            <span>
+                                                {header} {columnType ? `(${columnType})` : ''} {sortColumn === index && (sortOrder === 'asc' ? '↑' : '↓')}
+                                            </span>
+                                        </Tooltip>
                                     </TableCell>
                                 );
                             })}
@@ -140,7 +158,6 @@ function TableDataViewer() {
                                     const hasAnnotation = tableData.semanticAnnotations.cea.some(ann => ann.idRow === row.idRow && ann.idColumn === colIdx && ann.entity.length > 0);
                                     const annotation = tableData.semanticAnnotations.cea.find(ann => ann.idRow === row.idRow && ann.idColumn === colIdx);
                                     const confidenceScore = annotation?.entity[0]?.score ?? null;
-                                    //console.log('annotation:', annotation, 'confidenceScore:', confidenceScore)
                                     const cellColor = hasAnnotation ? getCellColor(confidenceScore) : 'inherit';
 
                                     return (
