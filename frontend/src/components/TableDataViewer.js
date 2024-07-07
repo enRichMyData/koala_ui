@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
-import { CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, Button, Pagination, Tooltip } from '@mui/material';
+import {
+    CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box,
+    Button, Pagination, Tooltip, Chip, IconButton
+} from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
+import TypeDetailsModal from './TypeDetailsModal';
 import SortIcon from '@mui/icons-material/Sort';
 import CompressIcon from '@mui/icons-material/Compress';
 import ExpandIcon from '@mui/icons-material/Expand';
+import InfoIcon from '@mui/icons-material/Info';
 
 function TableDataViewer() {
     const { datasetName, tableName } = useParams();
@@ -15,13 +20,16 @@ function TableDataViewer() {
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(0);
     const [status, setStatus] = useState('');
-    const [modalOpen, setModalOpen] = useState(false);
-    const [modalData, setModalData] = useState(null);
+    const [entityModalOpen, setEntityModalOpen] = useState(false);
+    const [entityModalData, setEntityModalData] = useState(null);
+    const [typeModalOpen, setTypeModalOpen] = useState(false);
+    const [typeModalData, setTypeModalData] = useState(null);
     const [sortColumn, setSortColumn] = useState(null);
     const [sortOrder, setSortOrder] = useState(null);
     const [sortableColumns, setSortableColumns] = useState([]);
     const [compact, setCompact] = useState(false);
     const [columnTypes, setColumnTypes] = useState([]);
+    const [ctaData, setCtaData] = useState({});
 
     useEffect(() => {
         const fetchData = async () => {
@@ -33,6 +41,8 @@ function TableDataViewer() {
 
                 const sortableCols = [];
                 const colTypes = [];
+                const cta = {};
+
                 response.data.header.forEach((header, index) => {
                     if (response.data.metadata && response.data.metadata.column) {
                         const columnMetadata = response.data.metadata.column.find(item => item.idColumn === index);
@@ -44,10 +54,16 @@ function TableDataViewer() {
                                 colTypes[index] = 'LIT';
                             }
                         }
-                    } 
+                    }
+                    const ctaColumn = response.data.semanticAnnotations.cta.find(cta => cta.idColumn === index);
+                    if (ctaColumn) {
+                        cta[index] = ctaColumn.types;
+                    }
                 });
+
                 setSortableColumns(sortableCols);
                 setColumnTypes(colTypes);
+                setCtaData(cta);
             } catch (err) {
                 setError(err.message);
             } finally {
@@ -66,14 +82,19 @@ function TableDataViewer() {
     const handleCellClick = (rowId, colId) => {
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
         if (annotations.length > 0) {
-            setModalData(annotations[0].entity);
-            setModalOpen(true);
+            setEntityModalData(annotations[0].entity);
+            setEntityModalOpen(true);
         }
     };
 
-    const handleModalClose = () => {
-        setModalOpen(false);
-        setModalData(null);
+    const handleEntityModalClose = () => {
+        setEntityModalOpen(false);
+        setEntityModalData(null);
+    };
+
+    const handleTypeModalClose = () => {
+        setTypeModalOpen(false);
+        setTypeModalData(null);
     };
 
     const handleSort = (column) => {
@@ -91,6 +112,11 @@ function TableDataViewer() {
 
     const toggleCompact = () => {
         setCompact(!compact);
+    };
+
+    const handleHeaderClick = (ctaTypes) => {
+        setTypeModalData(ctaTypes);
+        setTypeModalOpen(true);
     };
 
     const getCellColor = (confidenceScore) => {
@@ -130,6 +156,8 @@ function TableDataViewer() {
                                 const columnType = columnTypes[index];
                                 const backgroundColor = columnType === 'NE' ? '#d0f0c0' : '#f0e68c';
                                 const headerTooltip = columnType === 'NE' ? 'Named Entity (NE)' : 'Literal (LIT)';
+                                const ctaTypes = ctaData[index] || [];
+                                const mainType = ctaTypes.length > 0 ? ctaTypes[0] : null;
 
                                 return (
                                     <TableCell 
@@ -146,6 +174,33 @@ function TableDataViewer() {
                                                 {header} {columnType ? `(${columnType})` : ''} {sortColumn === index && (sortOrder === 'asc' ? '↑' : '↓')}
                                             </span>
                                         </Tooltip>
+                                        {mainType && (
+                                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
+                                                <Tooltip title={`ID: ${mainType.id} | Score: ${mainType.score}`} arrow>
+                                                    <Chip
+                                                        label={mainType.name}
+                                                        component="a"
+                                                        href={`https://www.wikidata.org/wiki/${mainType.id}`}
+                                                        target="_blank"
+                                                        clickable
+                                                        color="primary"
+                                                        size="small"
+                                                        sx={{ ml: 1 }}
+                                                    />
+                                                </Tooltip>
+                                                {ctaTypes.length > 1 && (
+                                                    <Tooltip title="Show more details" arrow>
+                                                        <IconButton
+                                                            size="small"
+                                                            onClick={() => handleHeaderClick(ctaTypes)}
+                                                            sx={{ ml: 1 }}
+                                                        >
+                                                            <InfoIcon />
+                                                        </IconButton>
+                                                    </Tooltip>
+                                                )}
+                                            </Box>
+                                        )}
                                     </TableCell>
                                 );
                             })}
@@ -166,38 +221,40 @@ function TableDataViewer() {
                                             onClick={hasAnnotation ? () => handleCellClick(row.idRow, colIdx) : undefined}
                                             style={{ cursor: hasAnnotation ? 'pointer' : 'inherit' }}
                                             title={confidenceScore ? `Confidence: ${confidenceScore}` : ''}
-                                        >
-                                            {cell}
-                                            {hasAnnotation && (
-                                                <Box
-                                                    component="span"
-                                                    sx={{
-                                                        display: 'inline-block',
-                                                        width: 8,
-                                                        height: 8,
-                                                        borderRadius: '50%',
-                                                        backgroundColor: cellColor,
-                                                        ml: 1,
-                                                    }}
-                                                />
-                                            )}
-                                            {confidenceScore !== null && (
-                                                <Typography variant="caption" display="block" sx={{ color: 'grey', marginLeft: '4px' }}>
-                                                    {confidenceScore === 0 ? `(0.00)` : `(${confidenceScore.toFixed(2)})`}
-                                                </Typography>
-                                            )}
-                                        </TableCell>
-                                    );
-                                })}
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
-            </TableContainer>
-            <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
-            {modalOpen && <EntityDetailsModal data={modalData} onClose={handleModalClose} />}
-        </Box>
-    );
-}
-
+                                            >
+                                                {cell}
+                                                {hasAnnotation && (
+                                                    <Box
+                                                        component="span"
+                                                        sx={{
+                                                            display: 'inline-block',
+                                                            width: 8,
+                                                            height: 8,
+                                                            borderRadius: '50%',
+                                                            backgroundColor: cellColor,
+                                                            ml: 1,
+                                                        }}
+                                                    />
+                                                )}
+                                                {confidenceScore !== null && (
+                                                    <Typography variant="caption" display="block" sx={{ color: 'grey', marginLeft: '4px' }}>
+                                                        {confidenceScore === 0 ? `(0.00)` : `(${confidenceScore.toFixed(2)})`}
+                                                    </Typography>
+                                                )}
+                                            </TableCell>
+                                        );
+                                    })}
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+                <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
+                {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
+                {typeModalOpen && <TypeDetailsModal data={typeModalData} open={typeModalOpen} onClose={handleTypeModalClose} />}
+            </Box>
+        );
+    }
+    
 export default TableDataViewer;
+  
