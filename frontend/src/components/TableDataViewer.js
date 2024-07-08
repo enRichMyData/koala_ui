@@ -2,15 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import {
-    CircularProgress, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box,
-    Button, Pagination, Tooltip, Chip, IconButton
+    CircularProgress, Table, TableBody, TableContainer, Paper, Typography, Box,
+    Button, Pagination, TableHead
 } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
 import TypeDetailsModal from './TypeDetailsModal';
 import SortIcon from '@mui/icons-material/Sort';
 import CompressIcon from '@mui/icons-material/Compress';
 import ExpandIcon from '@mui/icons-material/Expand';
-import InfoIcon from '@mui/icons-material/Info';
+
+import TableHeader from './TableHeader';
+import TableRowComponent from './TableRow';
 
 function TableDataViewer() {
     const { datasetName, tableName } = useParams();
@@ -119,12 +121,6 @@ function TableDataViewer() {
         setTypeModalOpen(true);
     };
 
-    const getCellColor = (confidenceScore) => {
-        if (confidenceScore > 0.8) return 'green';
-        if (confidenceScore >= 0.5) return 'yellow';
-        return 'red';
-    };
-
     if (loading) return <CircularProgress />;
     if (error) return <Typography color="error">Error loading table data: {error}</Typography>;
 
@@ -147,114 +143,37 @@ function TableDataViewer() {
                     Reset Sort
                 </Button>
             </Box>
-            <TableContainer component={Paper}>
+            <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
                 <Table size={compact ? 'small' : 'medium'}>
                     <TableHead>
-                        <TableRow>
-                            {tableData.header.map((header, index) => {
-                                const isSortable = sortableColumns.includes(index);
-                                const columnType = columnTypes[index];
-                                const backgroundColor = columnType === 'NE' ? '#d0f0c0' : '#f0e68c';
-                                const headerTooltip = columnType === 'NE' ? 'Named Entity (NE)' : 'Literal (LIT)';
-                                const ctaTypes = ctaData[index] || [];
-                                const mainType = ctaTypes.length > 0 ? ctaTypes[0] : null;
-
-                                return (
-                                    <TableCell 
-                                        key={index} 
-                                        onClick={isSortable ? () => handleSort(index) : undefined}
-                                        style={{ 
-                                            cursor: isSortable ? 'pointer' : 'default',
-                                            backgroundColor,
-                                            border: sortColumn === index ? '2px solid #3f51b5' : 'none' 
-                                        }}
-                                    >
-                                        <Tooltip title={headerTooltip} arrow>
-                                            <span>
-                                                {header} {columnType ? `(${columnType})` : ''} {sortColumn === index && (sortOrder === 'asc' ? '↑' : '↓')}
-                                            </span>
-                                        </Tooltip>
-                                        {mainType && (
-                                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
-                                                <Tooltip title={`ID: ${mainType.id} | Score: ${mainType.score}`} arrow>
-                                                    <Chip
-                                                        label={mainType.name}
-                                                        component="a"
-                                                        href={`https://www.wikidata.org/wiki/${mainType.id}`}
-                                                        target="_blank"
-                                                        clickable
-                                                        color="primary"
-                                                        size="small"
-                                                        sx={{ ml: 1 }}
-                                                    />
-                                                </Tooltip>
-                                                {ctaTypes.length > 1 && (
-                                                    <Tooltip title="Show more details" arrow>
-                                                        <IconButton
-                                                            size="small"
-                                                            onClick={() => handleHeaderClick(ctaTypes)}
-                                                            sx={{ ml: 1 }}
-                                                        >
-                                                            <InfoIcon />
-                                                        </IconButton>
-                                                    </Tooltip>
-                                                )}
-                                            </Box>
-                                        )}
-                                    </TableCell>
-                                );
-                            })}
-                        </TableRow>
+                        <TableHeader
+                            headers={tableData.header}
+                            sortableColumns={sortableColumns}
+                            sortColumn={sortColumn}
+                            sortOrder={sortOrder}
+                            handleSort={handleSort}
+                            columnTypes={columnTypes}
+                            ctaData={ctaData}
+                            handleHeaderClick={handleHeaderClick}
+                        />
                     </TableHead>
                     <TableBody>
                         {tableData.rows.map((row, idx) => (
-                            <TableRow key={idx}>
-                                {row.data.map((cell, colIdx) => {
-                                    const hasAnnotation = tableData.semanticAnnotations.cea.some(ann => ann.idRow === row.idRow && ann.idColumn === colIdx && ann.entity.length > 0);
-                                    const annotation = tableData.semanticAnnotations.cea.find(ann => ann.idRow === row.idRow && ann.idColumn === colIdx);
-                                    const confidenceScore = annotation?.entity[0]?.score ?? null;
-                                    const cellColor = hasAnnotation ? getCellColor(confidenceScore) : 'inherit';
+                            <TableRowComponent
+                                key={idx}
+                                row={row}
+                                tableData={tableData}
+                                handleCellClick={handleCellClick}
+                            />
+                        ))}
+                    </TableBody>
+                </Table>
+            </TableContainer>
+            <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
+            {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
+            {typeModalOpen && <TypeDetailsModal data={typeModalData} open={typeModalOpen} onClose={handleTypeModalClose} />}
+        </Box>
+    );
+}
 
-                                    return (
-                                        <TableCell
-                                            key={colIdx}
-                                            onClick={hasAnnotation ? () => handleCellClick(row.idRow, colIdx) : undefined}
-                                            style={{ cursor: hasAnnotation ? 'pointer' : 'inherit' }}
-                                            title={confidenceScore ? `Confidence: ${confidenceScore}` : ''}
-                                            >
-                                                {cell}
-                                                {hasAnnotation && (
-                                                    <Box
-                                                        component="span"
-                                                        sx={{
-                                                            display: 'inline-block',
-                                                            width: 8,
-                                                            height: 8,
-                                                            borderRadius: '50%',
-                                                            backgroundColor: cellColor,
-                                                            ml: 1,
-                                                        }}
-                                                    />
-                                                )}
-                                                {confidenceScore !== null && (
-                                                    <Typography variant="caption" display="block" sx={{ color: 'grey', marginLeft: '4px' }}>
-                                                        {confidenceScore === 0 ? `(0.00)` : `(${confidenceScore.toFixed(2)})`}
-                                                    </Typography>
-                                                )}
-                                            </TableCell>
-                                        );
-                                    })}
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
-                </TableContainer>
-                <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
-                {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
-                {typeModalOpen && <TypeDetailsModal data={typeModalData} open={typeModalOpen} onClose={handleTypeModalClose} />}
-            </Box>
-        );
-    }
-    
 export default TableDataViewer;
-  
