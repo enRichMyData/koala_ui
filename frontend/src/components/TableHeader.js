@@ -66,7 +66,7 @@ const TableHeader = ({ headers, sortableColumns, sortColumn, sortOrder, handleSo
                                     <Tooltip title="Show more details" arrow>
                                         <IconButton
                                             size="small"
-                                            onClick={() => handleHeaderClick(ctaTypes)}
+                                            onClick={() => handleHeaderClick(ctaTypes, index)}
                                             sx={{ ml: 1 }}
                                         >
                                             <InfoIcon />

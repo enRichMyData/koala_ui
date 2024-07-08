@@ -3,13 +3,14 @@ import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import {
     CircularProgress, Table, TableBody, TableContainer, Paper, Typography, Box,
-    Button, Pagination, TableHead
+    Button, Pagination, TableHead, Chip
 } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
-import TypeDetailsModal from './TypeDetailsModal';
+import FilterModal from './FilterModal';
 import SortIcon from '@mui/icons-material/Sort';
 import CompressIcon from '@mui/icons-material/Compress';
 import ExpandIcon from '@mui/icons-material/Expand';
+import ClearAllIcon from '@mui/icons-material/ClearAll';
 
 import TableHeader from './TableHeader';
 import TableRowComponent from './TableRow';
@@ -32,6 +33,7 @@ function TableDataViewer() {
     const [compact, setCompact] = useState(false);
     const [columnTypes, setColumnTypes] = useState([]);
     const [ctaData, setCtaData] = useState({});
+    const [filter, setFilter] = useState(null); // Single filter state for one column
 
     useEffect(() => {
         const fetchData = async () => {
@@ -116,9 +118,31 @@ function TableDataViewer() {
         setCompact(!compact);
     };
 
-    const handleHeaderClick = (ctaTypes) => {
-        setTypeModalData(ctaTypes);
+    const handleHeaderClick = (ctaTypes, columnIndex) => {
+        setTypeModalData({ ctaTypes, columnIndex });
         setTypeModalOpen(true);
+    };
+
+    const applyFilter = (columnIndex, selectedTypes, mode) => {
+        // Placeholder for filter logic
+        // This function will call the backend API to apply filters
+        // Params to use: datasetName, tableName, columnIndex, selectedTypes, mode
+
+        console.log('Applying filter with params:', {
+            datasetName,
+            tableName,
+            columnIndex,
+            selectedTypes,
+            mode,
+            currentPage
+        });
+
+        // Update the filter state
+        setFilter({ columnIndex, selectedTypes, mode });
+    };
+
+    const resetFilters = () => {
+        setFilter(null);
     };
 
     if (loading) return <CircularProgress />;
@@ -142,7 +166,23 @@ function TableDataViewer() {
                 <Button onClick={resetSort} color="primary" startIcon={<SortIcon />}>
                     Reset Sort
                 </Button>
+                <Button onClick={resetFilters} color="secondary" startIcon={<ClearAllIcon />}>
+                    Reset Filters
+                </Button>
             </Box>
+            {filter && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', mb: 2 }}>
+                    {Object.keys(filter.selectedTypes).map((type) => (
+                        filter.selectedTypes[type] && (
+                            <Chip
+                                key={type}
+                                label={`Column ${filter.columnIndex}: ${type} (${filter.mode})`}
+                                sx={{ m: 0.5 }}
+                            />
+                        )
+                    ))}
+                </Box>
+            )}
             <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
                 <Table size={compact ? 'small' : 'medium'}>
                     <TableHead>
@@ -171,7 +211,15 @@ function TableDataViewer() {
             </TableContainer>
             <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
             {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
-            {typeModalOpen && <TypeDetailsModal data={typeModalData} open={typeModalOpen} onClose={handleTypeModalClose} />}
+            {typeModalOpen && (
+                <FilterModal
+                    open={typeModalOpen}
+                    onClose={handleTypeModalClose}
+                    ctaTypes={typeModalData.ctaTypes}
+                    columnIndex={typeModalData.columnIndex}
+                    applyFilter={applyFilter}
+                />
+            )}
         </Box>
     );
 }
