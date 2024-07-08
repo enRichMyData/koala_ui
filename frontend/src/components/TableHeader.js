@@ -1,6 +1,8 @@
 import React from 'react';
 import { TableCell, TableRow, Tooltip, Chip, IconButton, Box } from '@mui/material';
 import SortIcon from '@mui/icons-material/Sort';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
+import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
 import InfoIcon from '@mui/icons-material/Info';
 
 const TableHeader = ({ headers, sortableColumns, sortColumn, sortOrder, handleSort, columnTypes, ctaData, handleHeaderClick }) => {
@@ -19,25 +21,35 @@ const TableHeader = ({ headers, sortableColumns, sortColumn, sortOrder, handleSo
                         key={index}
                         style={{ 
                             backgroundColor,
-                            border: sortColumn === index ? '2px solid #3f51b5' : 'none' 
+                            border: sortColumn === index ? '2px solid #3f51b5' : 'none',
+                            padding: '8px 16px',
+                            position: 'relative'
                         }}
                     >
-                        <Tooltip title={headerTooltip} arrow>
-                            <span>
-                                {header} {columnType ? `(${columnType})` : ''}
-                            </span>
-                        </Tooltip>
-                        {isSortable && (
-                            <IconButton
-                                size="small"
-                                onClick={() => handleSort(index)}
-                                sx={{ ml: 1 }}
-                            >
-                                <SortIcon />
-                            </IconButton>
-                        )}
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                            <Tooltip title={headerTooltip} arrow>
+                                <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0, flexGrow: 1 }}>
+                                    <span style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {header} {columnType ? `(${columnType})` : ''}
+                                    </span>
+                                </Box>
+                            </Tooltip>
+                            {isSortable && (
+                                <IconButton
+                                    size="small"
+                                    onClick={() => handleSort(index)}
+                                    sx={{ ml: 1 }}
+                                >
+                                    {sortColumn === index ? (
+                                        sortOrder === 'asc' ? <ArrowDropUpIcon /> : <ArrowDropDownIcon />
+                                    ) : (
+                                        <SortIcon />
+                                    )}
+                                </IconButton>
+                            )}
+                        </Box>
                         {mainType && (
-                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
+                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
                                 <Tooltip title={`ID: ${mainType.id} | Score: ${mainType.score}`} arrow>
                                     <Chip
                                         label={mainType.name}
@@ -47,7 +59,7 @@ const TableHeader = ({ headers, sortableColumns, sortColumn, sortOrder, handleSo
                                         clickable
                                         color="primary"
                                         size="small"
-                                        sx={{ ml: 1 }}
+                                        sx={{ ml: 1, maxWidth: '100px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                                     />
                                 </Tooltip>
                                 {ctaTypes.length > 1 && (
