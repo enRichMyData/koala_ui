@@ -33,7 +33,7 @@ function TableDataViewer() {
     const [compact, setCompact] = useState(false);
     const [columnTypes, setColumnTypes] = useState([]);
     const [ctaData, setCtaData] = useState({});
-    const [filter, setFilter] = useState(null); // Single filter state for one column
+    const [filter, setFilter] = useState(null);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -43,7 +43,7 @@ function TableDataViewer() {
                     tableName,
                     currentPage,
                     10,
-                    sortColumn || filter?.columnIndex, // Use sortColumn for sorting or filter.columnIndex for filtering
+                    sortColumn || filter?.columnIndex,
                     sortOrder,
                     filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null,
                     filter?.mode
@@ -182,7 +182,7 @@ function TableDataViewer() {
                 <Button onClick={resetSort} color="primary" startIcon={<SortIcon />}>
                     Reset Sort
                 </Button>
-                <Button onClick={resetFilters} color="secondary" startIcon={<ClearAllIcon />}>
+                <Button onClick={resetFilters} color="primary" startIcon={<ClearAllIcon />}>
                     Reset Filters
                 </Button>
             </Box>
@@ -199,32 +199,38 @@ function TableDataViewer() {
                     ))}
                 </Box>
             )}
-            <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
-                <Table size={compact ? 'small' : 'medium'}>
-                    <TableHead>
-                        <TableHeader
-                            headers={tableData.header}
-                            sortableColumns={sortableColumns}
-                            sortColumn={sortColumn}
-                            sortOrder={sortOrder}
-                            handleSort={handleSort}
-                            columnTypes={columnTypes}
-                            ctaData={ctaData}
-                            handleHeaderClick={handleHeaderClick}
-                        />
-                    </TableHead>
-                    <TableBody>
-                        {tableData.rows.map((row, idx) => (
-                            <TableRowComponent
-                                key={idx}
-                                row={row}
-                                tableData={tableData}
-                                handleCellClick={handleCellClick}
+            {tableData.rows.length === 0 ? (
+                <Typography variant="subtitle1" color="error">
+                    No data matches the filter criteria.
+                </Typography>
+            ) : (
+                <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
+                    <Table size={compact ? 'small' : 'medium'}>
+                        <TableHead>
+                            <TableHeader
+                                headers={tableData.header}
+                                sortableColumns={sortableColumns}
+                                sortColumn={sortColumn}
+                                sortOrder={sortOrder}
+                                handleSort={handleSort}
+                                columnTypes={columnTypes}
+                                ctaData={ctaData}
+                                handleHeaderClick={handleHeaderClick}
                             />
-                        ))}
-                    </TableBody>
-                </Table>
-            </TableContainer>
+                        </TableHead>
+                        <TableBody>
+                            {tableData.rows.map((row, idx) => (
+                                <TableRowComponent
+                                    key={idx}
+                                    row={row}
+                                    tableData={tableData}
+                                    handleCellClick={handleCellClick}
+                                />
+                            ))}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+            )}
             <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
             {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
             {typeModalOpen && (
