@@ -20,7 +20,7 @@ const NavigationBar = ({ onLogout, profileName }) => {
                     </IconButton>
                 </Box>
                 <Typography variant="h6" style={{ flexGrow: 1, textAlign: 'center' }}>
-                    <img src={logo} alt="Alligator UI" style={{ height: '70px', width: '90px' }} />
+                    <img src={logo} alt="Alligator UI" style={{ height: '80px', width: '90px' }} />
                 </Typography>
                 <Box style={{ display: 'flex', alignItems: 'center' }}>
                     <NavLink to="/dataset" style={{ color: 'inherit', textDecoration: 'none' }}>

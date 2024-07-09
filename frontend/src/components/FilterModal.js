@@ -22,7 +22,7 @@ const FilterModal = ({ open, onClose, ctaTypes, columnIndex, applyFilter }) => {
     const handleTypeChange = (type) => {
         setSelectedTypes(prev => ({
             ...prev,
-            [type.name]: !prev[type.name],
+            [type.id]: !prev[type.id] ? type.name : null,
         }));
     };
 
@@ -42,7 +42,7 @@ const FilterModal = ({ open, onClose, ctaTypes, columnIndex, applyFilter }) => {
                         <FormControlLabel
                             control={
                                 <Checkbox
-                                    checked={!!selectedTypes[type.name]}
+                                    checked={!!selectedTypes[type.id]}
                                     onChange={() => handleTypeChange(type)}
                                 />
                             }

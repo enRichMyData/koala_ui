@@ -38,7 +38,16 @@ function TableDataViewer() {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const response = await getTableData(datasetName, tableName, currentPage, 10, sortColumn, sortOrder);
+                const response = await getTableData(
+                    datasetName,
+                    tableName,
+                    currentPage,
+                    10,
+                    sortColumn || filter?.columnIndex, // Use sortColumn for sorting or filter.columnIndex for filtering
+                    sortOrder,
+                    filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null,
+                    filter?.mode
+                );
                 setTableData(response.data);
                 setStatus(response.data.status);
                 setTotalPages(response.pagination.totalPages);
@@ -81,7 +90,7 @@ function TableDataViewer() {
         return () => {
             if (intervalId) clearInterval(intervalId);
         };
-    }, [datasetName, tableName, currentPage, status, sortColumn, sortOrder]);
+    }, [datasetName, tableName, currentPage, status, sortColumn, sortOrder, filter]);
 
     const handleCellClick = (rowId, colId) => {
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
@@ -123,22 +132,29 @@ function TableDataViewer() {
         setTypeModalOpen(true);
     };
 
-    const applyFilter = (columnIndex, selectedTypes, mode) => {
-        // Placeholder for filter logic
-        // This function will call the backend API to apply filters
-        // Params to use: datasetName, tableName, columnIndex, selectedTypes, mode
+    const applyFilter = async (columnIndex, selectedTypes, mode) => {
+        try {
+            setLoading(true);
+            const response = await getTableData(
+                datasetName,
+                tableName,
+                currentPage,
+                10,
+                columnIndex,
+                sortOrder,
+                selectedTypes ? Object.keys(selectedTypes).join(' ') : null,
+                mode
+            );
+            setTableData(response.data);
+            setTotalPages(response.pagination.totalPages);
 
-        console.log('Applying filter with params:', {
-            datasetName,
-            tableName,
-            columnIndex,
-            selectedTypes,
-            mode,
-            currentPage
-        });
-
-        // Update the filter state
-        setFilter({ columnIndex, selectedTypes, mode });
+            // Update the filter state
+            setFilter({ columnIndex, selectedTypes, mode });
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const resetFilters = () => {
@@ -176,7 +192,7 @@ function TableDataViewer() {
                         filter.selectedTypes[type] && (
                             <Chip
                                 key={type}
-                                label={`Column ${filter.columnIndex}: ${type} (${filter.mode})`}
+                                label={`Column ${filter.columnIndex}: ${filter.selectedTypes[type]} (${filter.mode})`}
                                 sx={{ m: 0.5 }}
                             />
                         )

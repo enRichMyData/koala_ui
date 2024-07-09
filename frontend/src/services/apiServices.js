@@ -111,7 +111,7 @@ const getTables = async (datasetName, page = 1, perPage = 10) => {
   }
 };
 
-const getTableData = async (datasetName, tableName, page = 1, perPage = 10, column = null, sort = null) => {
+const getTableData = async (datasetName, tableName, page = 1, perPage = 10, column = null, sort = null, types = null, mode = null) => {
   try {
     const response = await alligatorApiClient.get(`/dataset/${datasetName}/table/${tableName}`, {
       params: {
@@ -119,6 +119,8 @@ const getTableData = async (datasetName, tableName, page = 1, perPage = 10, colu
         per_page: perPage,
         column,
         sort,
+        types,
+        mode,
       },
     });
     console.log('API Response:', response.data);
