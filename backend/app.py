@@ -12,6 +12,22 @@ mongo = PyMongo(app)
 bcrypt = Bcrypt(app)
 jwt = JWTManager(app)
 
+def create_default_admin():
+    admin_email = "admin@example.com"
+    admin_password = "admin"
+
+    users_collection = mongo.db.users
+    if not users_collection.find_one({"email": admin_email}):
+        hashed_password = bcrypt.generate_password_hash(admin_password).decode('utf-8')
+        users_collection.insert_one({"email": admin_email, "password": hashed_password})
+        print(f"Default admin user '{admin_email}' created successfully.")
+    else:
+        print(f"Default admin user '{admin_email}' already exists.")
+
+
+create_default_admin()
+
+
 # Route to create a new user (registration)
 @app.route('/register', methods=['POST'])
 def register():
@@ -30,7 +46,6 @@ def register():
 # Route to authenticate and generate access token (login)
 @app.route('/login', methods=['POST'])
 def login():
-    print("login!!", flush=True)
     email = request.json.get('email')
     password = request.json.get('password')
 
@@ -48,6 +63,3 @@ def login():
 def protected():
     current_user = get_jwt_identity()
     return jsonify(logged_in_as=current_user), 200
-
-if __name__ == '__main__':
-    app.run(debug=True)

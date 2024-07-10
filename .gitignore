@@ -28,3 +28,4 @@ yarn.lock
 *.DS_Store
 frontend/.env
 *.pyc
+*.cpython-39.pyc

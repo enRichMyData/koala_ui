@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   frontend:
-    container_name: react-frontend
+    container_name: koala_frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -17,7 +17,7 @@ services:
     tty: true
   
   backend:
-    container_name: flask-backend
+    container_name: koala_backend
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -31,7 +31,7 @@ services:
       - mongo
 
   mongo:
-    container_name: mongodb
+    container_name: koala_mongo
     image: mongo:7.0.6
     ports:
       - "27017:27017"

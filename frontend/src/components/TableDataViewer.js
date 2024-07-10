@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import {
     CircularProgress, Table, TableBody, TableContainer, Paper, Typography, Box,
-    Button, Pagination, TableHead, Chip
+    Button, Pagination, TableHead, Chip, TableRow, TableCell
 } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
 import FilterModal from './FilterModal';
@@ -43,11 +43,15 @@ function TableDataViewer() {
                     tableName,
                     currentPage,
                     10,
-                    sortColumn || filter?.columnIndex,
+                    sortColumn !== null && sortColumn !== undefined ? sortColumn : filter?.columnIndex,
                     sortOrder,
                     filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null,
                     filter?.mode
                 );
+
+                console.log("sortColumn", sortColumn);
+                console.log("params", datasetName, tableName, currentPage, 10, sortColumn !== null && sortColumn !== undefined ? sortColumn : filter?.columnIndex, sortOrder, filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null, filter?.mode);
+
                 setTableData(response.data);
                 setStatus(response.data.status);
                 setTotalPages(response.pagination.totalPages);
@@ -132,29 +136,8 @@ function TableDataViewer() {
         setTypeModalOpen(true);
     };
 
-    const applyFilter = async (columnIndex, selectedTypes, mode) => {
-        try {
-            setLoading(true);
-            const response = await getTableData(
-                datasetName,
-                tableName,
-                currentPage,
-                10,
-                columnIndex,
-                sortOrder,
-                selectedTypes ? Object.keys(selectedTypes).join(' ') : null,
-                mode
-            );
-            setTableData(response.data);
-            setTotalPages(response.pagination.totalPages);
-
-            // Update the filter state
-            setFilter({ columnIndex, selectedTypes, mode });
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
+    const applyFilter = (columnIndex, selectedTypes, mode) => {
+        setFilter({ columnIndex, selectedTypes, mode });
     };
 
     const resetFilters = () => {
@@ -199,25 +182,31 @@ function TableDataViewer() {
                     ))}
                 </Box>
             )}
-            {tableData.rows.length === 0 ? (
-                <Typography variant="subtitle1" color="error">
-                    No data matches the filter criteria.
-                </Typography>
-            ) : (
-                <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
-                    <Table size={compact ? 'small' : 'medium'}>
-                        <TableHead>
-                            <TableHeader
-                                headers={tableData.header}
-                                sortableColumns={sortableColumns}
-                                sortColumn={sortColumn}
-                                sortOrder={sortOrder}
-                                handleSort={handleSort}
-                                columnTypes={columnTypes}
-                                ctaData={ctaData}
-                                handleHeaderClick={handleHeaderClick}
-                            />
-                        </TableHead>
+            <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
+                <Table size={compact ? 'small' : 'medium'}>
+                    <TableHead>
+                        <TableHeader
+                            headers={tableData.header}
+                            sortableColumns={sortableColumns}
+                            sortColumn={sortColumn}
+                            sortOrder={sortOrder}
+                            handleSort={handleSort}
+                            columnTypes={columnTypes}
+                            ctaData={ctaData}
+                            handleHeaderClick={handleHeaderClick}
+                        />
+                    </TableHead>
+                    {tableData.rows.length === 0 ? (
+                        <TableBody>
+                            <TableRow>
+                                <TableCell colSpan={tableData.header.length} align="center">
+                                    <Typography variant="subtitle1" color="error">
+                                        No data matches the filter criteria.
+                                    </Typography>
+                                </TableCell>
+                            </TableRow>
+                        </TableBody>
+                    ) : (
                         <TableBody>
                             {tableData.rows.map((row, idx) => (
                                 <TableRowComponent
@@ -228,9 +217,9 @@ function TableDataViewer() {
                                 />
                             ))}
                         </TableBody>
-                    </Table>
-                </TableContainer>
-            )}
+                    )}
+                </Table>
+            </TableContainer>
             <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
             {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
             {typeModalOpen && (
