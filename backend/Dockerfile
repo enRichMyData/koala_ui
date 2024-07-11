@@ -1,5 +1,6 @@
-# Dockerfile for Flask App
-FROM python:3.9-slim
+# backend/Dockerfile
+ARG PYTHON_VERSION
+FROM python:${PYTHON_VERSION}
 
 WORKDIR /app
 

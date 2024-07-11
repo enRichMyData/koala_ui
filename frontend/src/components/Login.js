@@ -3,6 +3,9 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import './Login.css'; // Import the CSS file for styling
 
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+
 function Login({ setLoggedIn }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -13,7 +16,7 @@ function Login({ setLoggedIn }) {
   const handleSubmit = async (event) => {
     event.preventDefault();
     try {
-      const response = await axios.post('http://localhost:5001/login', { email, password });
+      const response = await axios.post(`${BACKEND_URL}/login`, { email, password });
       localStorage.setItem('token', response.data.access_token);
       setLoggedIn(true);
     } catch (error) {

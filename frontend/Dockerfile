@@ -1,5 +1,7 @@
-# Step 1: Use an official Node runtime as a parent image
-FROM node:14
+# frontend/Dockerfile
+ARG NODE_VERSION
+FROM node:${NODE_VERSION}
+
 
 # Step 2: Set the working directory inside the container
 WORKDIR /app
