@@ -102,6 +102,7 @@ function EntityDetailsModal({ data, onClose }) {
                     <TableHead>
                         <TableRow>
                             <TableCell>#</TableCell>
+                            <TableCell>QID</TableCell> {/* Added QID column header */}
                             <TableCell>Name</TableCell>
                             <TableCell>Type</TableCell>
                             <TableCell>Description</TableCell>
@@ -113,6 +114,7 @@ function EntityDetailsModal({ data, onClose }) {
                         {data.map((ann, index) => (
                             <TableRow key={index} selected={selectedWinnerIndex === `${index}`}>
                                 <TableCell>{index + 1}</TableCell>
+                                <TableCell>{ann.id}</TableCell> {/* Added QID data cell */}
                                 <TableCell>
                                     {ann.id ? <Link href={`https://www.wikidata.org/wiki/${ann.id}`} target="_blank">{ann.name}</Link> : ann.name}
                                 </TableCell>
@@ -133,13 +135,14 @@ function EntityDetailsModal({ data, onClose }) {
                         {selectedCandidates.length > 0 && (
                             <>
                                 <TableRow>
-                                    <TableCell colSpan={6}>
+                                    <TableCell colSpan={7}>
                                         <Typography variant="h6" color="primary">Selected Candidates from Real-time Search</Typography>
                                     </TableCell>
                                 </TableRow>
                                 {selectedCandidates.map((candidate, index) => (
                                     <TableRow key={`selected-${index}`}>
                                         <TableCell>{data.length + index + 1}</TableCell>
+                                        <TableCell>{candidate.id}</TableCell> {/* Added QID data cell for real-time search */}
                                         <TableCell>
                                             <Link href={`https://www.wikidata.org/wiki/${candidate.id}`} target="_blank">
                                                 {candidate.name}
