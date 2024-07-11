@@ -103,7 +103,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contact
 
 For any questions or suggestions, please contact us at [roberto.avogadro@sintef.no](mailto:roberto.avogadro@sintef.no).
-```
 
 ### Notes:
 1. **Environment Variables**: Ensure the `.env` file has placeholders for `REACT_APP_ALLIGATOR_URL`, `REACT_APP_ALLIGATOR_TOKEN`, `REACT_APP_LAMAPI_URL`, and `REACT_APP_LAMAPI_TOKEN` so users can fill in their own values.
