@@ -11,9 +11,9 @@ const TableRowComponent = ({ row, tableData, handleCellClick }) => {
     return (
         <TableRow key={row.idRow}>
             {row.data.map((cell, colIdx) => {
-                const hasAnnotation = tableData.semanticAnnotations.cea.some(ann => ann.idRow === row.idRow && ann.idColumn === colIdx && ann.entity.length > 0);
+                const hasAnnotation = tableData.semanticAnnotations.cea.some(ann => ann.idRow === row.idRow && ann.idColumn === colIdx && ann.entities.length > 0);
                 const annotation = tableData.semanticAnnotations.cea.find(ann => ann.idRow === row.idRow && ann.idColumn === colIdx);
-                const confidenceScore = annotation?.entity[0]?.score ?? null;
+                const confidenceScore = annotation?.entities[0]?.score ?? null;
                 const cellColor = hasAnnotation ? getCellColor(confidenceScore) : 'inherit';
 
                 return (

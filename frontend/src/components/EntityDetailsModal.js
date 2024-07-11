@@ -118,7 +118,7 @@ function EntityDetailsModal({ data, onClose }) {
                                 <TableCell>
                                     {ann.id ? <Link href={`https://www.wikidata.org/wiki/${ann.id}`} target="_blank">{ann.name}</Link> : ann.name}
                                 </TableCell>
-                                <TableCell>{ann.type.map(t => t.name).join(', ')}</TableCell>
+                                <TableCell>{ann.types.map(t => t.name).join(', ')}</TableCell>
                                 <TableCell>{ann.description}</TableCell>
                                 <TableCell>{ann.score.toFixed(3)}</TableCell>
                                 <TableCell>

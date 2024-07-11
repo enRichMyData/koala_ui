@@ -99,7 +99,7 @@ function TableDataViewer() {
     const handleCellClick = (rowId, colId) => {
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
         if (annotations.length > 0) {
-            setEntityModalData(annotations[0].entity);
+            setEntityModalData(annotations[0].entities);
             setEntityModalOpen(true);
         }
     };
