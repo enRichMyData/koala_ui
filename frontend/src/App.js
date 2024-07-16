@@ -11,7 +11,7 @@ import { CssBaseline } from '@mui/material';
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [showSplash, setShowSplash] = useState(true); // State for splash screen visibility
-  const profileName = "John Doe"; // Assuming the profile name is static for demonstration
+  const profileName = "Koby Koalawood"; // Assuming the profile name is static for demonstration
 
   useEffect(() => {
     if (window.location.hostname !== 'localhost' || window.location.pathname !== '/') {

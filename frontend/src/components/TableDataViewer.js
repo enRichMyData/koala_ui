@@ -37,6 +37,8 @@ function TableDataViewer() {
 
     useEffect(() => {
         const fetchData = async () => {
+            const start = performance.now();
+            console.log('Fetching data...');
             try {
                 const response = await getTableData(
                     datasetName,
@@ -51,6 +53,7 @@ function TableDataViewer() {
 
                 console.log("sortColumn", sortColumn);
                 console.log("params", datasetName, tableName, currentPage, 10, sortColumn !== null && sortColumn !== undefined ? sortColumn : filter?.columnIndex, sortOrder, filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null, filter?.mode);
+                console.log("API Response Time:", performance.now() - start, 'ms');
 
                 setTableData(response.data);
                 setStatus(response.data.status);
