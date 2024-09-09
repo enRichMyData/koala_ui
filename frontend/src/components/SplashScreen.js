@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import './SplashScreen.css';
-import koalaImage from '../assets/images/combined_splash_screen.png'; // Ensure the path to your image is correct
+import koalaImage from '../assets/images/splash_screen.webp'; // Ensure the path to your image is correct
 
 const SplashScreen = ({ onProceed }) => {
   const [isVisible, setIsVisible] = useState(true);

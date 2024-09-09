@@ -1,6 +1,6 @@
 # Koala UI
 
-<img src="./frontend/src/assets/images/koala_logo.png" alt="Koala Logo" width="200" height="200">
+<img src="./frontend/src/assets/images/koala_logo.webp" alt="Koala Logo" width="200" height="200">
 
 Koala UI is a modern, user-friendly web application designed to explore and visualize entity linking results efficiently. It features a clean interface, easy navigation, and powerful data handling capabilities.
 
