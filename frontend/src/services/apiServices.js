@@ -162,13 +162,7 @@ const fetchCandidates = async (query) => {
         name: query,
         limit: 100,
         kg: 'wikidata',
-        query: JSON.stringify({
-          query: {
-            match: {
-              name: query,
-            }
-          }
-        }),
+        cache: false
       }
     });
     console.log('LamAPI Response:', response.data);
