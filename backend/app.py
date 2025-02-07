@@ -5,7 +5,7 @@ from flask_cors import CORS
 from flask_pymongo import PyMongo
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins
 app.config['JWT_SECRET_KEY'] = 'mysecretkey'
 app.config['MONGO_URI'] = 'mongodb://mongo:27017/mydatabase'  # Example MongoDB URI
 mongo = PyMongo(app)
