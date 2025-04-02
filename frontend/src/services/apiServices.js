@@ -45,14 +45,22 @@ const createDataset = async (datasetName) => {
   }
 };
 
-const getDatasets = async (page = 1, perPage = 10) => {
+const getDatasets = async (page = 1, perPage = 10, options = {}) => {
   try {
-    // Using cursor-based pagination according to the new API
+    const params = {
+      limit: perPage,
+    };
+    
+    if (options.nextCursor) {
+      params.next_cursor = options.nextCursor;
+    } else if (options.prevCursor) {
+      params.prev_cursor = options.prevCursor;
+    }
+    
     const response = await crocodileApiClient.get('/datasets', {
-      params: {
-        limit: perPage,
-      },
+      params: params
     });
+    
     console.log('API Response:', response.data);
     
     // Transform data for compatibility with existing UI
@@ -66,7 +74,8 @@ const getDatasets = async (page = 1, perPage = 10) => {
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(response.data.data.length / perPage) || 1,
-        next_cursor: response.data.pagination.next_cursor
+        next_cursor: response.data.pagination.next_cursor,
+        prev_cursor: response.data.pagination.prev_cursor
       }
     };
     
@@ -102,13 +111,22 @@ const uploadTable = async (datasetName, file, kgReference="wikidata") => {
   }
 };
 
-const getTables = async (datasetName, page = 1, perPage = 10) => {
+const getTables = async (datasetName, page = 1, perPage = 10, options = {}) => {
   try {
+    const params = {
+      limit: perPage,
+    };
+    
+    if (options.nextCursor) {
+      params.next_cursor = options.nextCursor;
+    } else if (options.prevCursor) {
+      params.prev_cursor = options.prevCursor;
+    }
+    
     const response = await crocodileApiClient.get(`/datasets/${datasetName}/tables`, {
-      params: {
-        limit: perPage,
-      },
+      params: params
     });
+    
     console.log('API Response:', response.data);
     
     // Transform data for compatibility with existing UI
@@ -122,7 +140,8 @@ const getTables = async (datasetName, page = 1, perPage = 10) => {
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(response.data.data.length / perPage) || 1,
-        next_cursor: response.data.pagination.next_cursor
+        next_cursor: response.data.pagination.next_cursor,
+        prev_cursor: response.data.pagination.prev_cursor
       }
     };
     
@@ -133,88 +152,28 @@ const getTables = async (datasetName, page = 1, perPage = 10) => {
   }
 };
 
-const getTableData = async (datasetName, tableName, page = 1, perPage = 10, column = null, sort = null, types = null, mode = null) => {
+const getTableData = async (datasetName, tableName, page = 1, perPage = 10, options = {}) => {
   try {
-    // Directly use the new endpoint structure
+    // Support for bi-directional cursor-based pagination
+    const params = {
+      limit: perPage,
+    };
+    
+    // Add next_cursor or prev_cursor if provided (but not both)
+    if (options.nextCursor) {
+      params.next_cursor = options.nextCursor;
+    } else if (options.prevCursor) {
+      params.prev_cursor = options.prevCursor;
+    }
+    
     const response = await crocodileApiClient.get(`/datasets/${datasetName}/tables/${tableName}`, {
-      params: {
-        limit: perPage,
-      },
+      params: params
     });
+    
     console.log('API Response:', response.data);
 
-    // Transform the data for compatibility with the existing UI
-    // Prepare the CTA and CEA data from the linked entities
-    const rows = response.data.data.rows || [];
-    const header = response.data.data.header || [];
-    
-    // Create semantic annotations structure expected by UI
-    const cea = [];
-    const cta = {};
-    
-    // Process linked entities to build CEA and CTA data
-    rows.forEach(row => {
-      (row.linked_entities || []).forEach(entity => {
-        // Create CEA annotation for each entity
-        cea.push({
-          idRow: row.idRow,
-          idColumn: entity.idColumn,
-          entities: entity.candidates || []
-        });
-        
-        // Extract types from first candidate for CTA
-        if (entity.candidates && entity.candidates.length > 0) {
-          const firstCandidate = entity.candidates[0];
-          if (firstCandidate.types && firstCandidate.types.length > 0) {
-            cta[entity.idColumn] = cta[entity.idColumn] || [];
-            
-            // Add types that aren't already in the CTA array
-            firstCandidate.types.forEach(type => {
-              if (!cta[entity.idColumn].some(t => t.id === type.id)) {
-                cta[entity.idColumn].push({
-                  id: type.id,
-                  name: type.name,
-                  score: firstCandidate.score
-                });
-              }
-            });
-          }
-        }
-      });
-    });
-
-    // Add metadata with column types based on the response
-    const metadata = {
-      column: header.map((h, index) => {
-        // Check if this column has entities linked to determine if it's NE or LIT
-        const hasEntities = cea.some(a => a.idColumn === index);
-        return {
-          idColumn: index,
-          tag: hasEntities ? 'NE' : 'LIT'
-        };
-      })
-    };
-
-    const transformedData = {
-      data: {
-        ...response.data.data,
-        semanticAnnotations: {
-          cea: cea,
-          cta: Object.entries(cta).map(([idColumn, types]) => ({
-            idColumn: parseInt(idColumn),
-            types
-          }))
-        },
-        metadata: metadata
-      },
-      pagination: {
-        currentPage: page,
-        totalPages: Math.max(Math.ceil(rows.length / perPage), 1),
-        next_cursor: response.data.pagination.next_cursor
-      }
-    };
-    
-    return transformedData;
+    // Return the response directly to maintain original format
+    return response.data;
   } catch (error) {
     console.error('Error retrieving table data:', error);
     throw error;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { getTables, deleteTable, uploadTable } from '../services/apiServices';
 import {
@@ -10,7 +10,6 @@ import {
   IconButton,
   Typography,
   CircularProgress,
-  Pagination,
   Alert,
   Box,
   Dialog,
@@ -22,8 +21,10 @@ import {
 } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import DeleteIcon from '@mui/icons-material/Delete';
-import AddIcon from '@mui/icons-material/Add'; // Fixed import path
+import AddIcon from '@mui/icons-material/Add';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
+import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 
 const TableList = () => {
   const { datasetName } = useParams();
@@ -38,19 +39,49 @@ const TableList = () => {
   const [file, setFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [nextCursor, setNextCursor] = useState(null);
+  const [prevCursor, setPrevCursor] = useState(null);
+  const [paginationHistory, setPaginationHistory] = useState([{ page: 1, nextCursor: null, prevCursor: null }]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+
+  const currentHistoryRef = useRef(paginationHistory[historyIndex]);
+  useEffect(() => {
+    currentHistoryRef.current = paginationHistory[historyIndex];
+  }, [paginationHistory, historyIndex]);
 
   useEffect(() => {
     const fetchTables = async () => {
       setLoading(true);
       try {
+        const historyItem = currentHistoryRef.current;
+        const options = {};
+        
+        if (historyItem.nextCursor) {
+          options.nextCursor = historyItem.nextCursor;
+        } else if (historyItem.prevCursor) {
+          options.prevCursor = historyItem.prevCursor;
+        }
+        
         const encodedName = encodeURIComponent(datasetName);
-        const response = await getTables(encodedName, currentPage);
+        const response = await getTables(encodedName, historyItem.page, 10, options);
         
         if (response.data && response.data.length > 0) {
           setTables(response.data);
           setTotalPages(response.pagination.totalPages);
           setCurrentPage(response.pagination.currentPage);
           setNextCursor(response.pagination.next_cursor);
+          setPrevCursor(response.pagination.prev_cursor);
+          
+          if (historyIndex === paginationHistory.length - 1 && response.pagination.next_cursor) {
+            setPaginationHistory(prev => [
+              ...prev.slice(0, historyIndex + 1),
+              { 
+                page: historyItem.page + 1, 
+                prevCursor: response.pagination.prev_cursor, 
+                nextCursor: response.pagination.next_cursor
+              }
+            ]);
+          }
+          
           setError('');
         } else {
           setTables([]);
@@ -65,10 +96,23 @@ const TableList = () => {
     };
 
     fetchTables();
-  }, [datasetName, currentPage]);
+  }, [datasetName, historyIndex, paginationHistory]);
 
-  const onPageChange = (event, page) => {
-    setCurrentPage(page);
+  const handlePreviousPage = () => {
+    if (historyIndex > 0) {
+      setHistoryIndex(prev => prev - 1);
+      setCurrentPage(paginationHistory[historyIndex - 1].page);
+    }
+  };
+
+  const handleNextPage = () => {
+    if (historyIndex < paginationHistory.length - 1) {
+      setHistoryIndex(prev => prev + 1);
+      setCurrentPage(paginationHistory[historyIndex + 1].page);
+    } else if (nextCursor) {
+      setHistoryIndex(prev => prev + 1);
+      setCurrentPage(prev => prev + 1);
+    }
   };
 
   const handleOpenDeleteDialog = (tableName) => {
@@ -119,7 +163,6 @@ const TableList = () => {
       await uploadTable(datasetName, file);
       setUploadProgress(100);
       
-      // Refresh the table list after uploading
       const response = await getTables(datasetName, currentPage);
       setTables(response.data);
       setError('');
@@ -130,6 +173,9 @@ const TableList = () => {
       handleCloseUploadDialog();
     }
   };
+
+  const canGoForward = historyIndex < paginationHistory.length - 1 || nextCursor;
+  const canGoBackward = historyIndex > 0;
 
   if (loading) {
     return <CircularProgress />;
@@ -201,13 +247,44 @@ const TableList = () => {
           </ListItem>
         )}
       </List>
-      <Pagination 
-        count={totalPages} 
-        page={currentPage} 
-        onChange={onPageChange} 
-        color="primary"
-        disabled={!nextCursor && currentPage === 1}
-      />
+      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+        <Button
+          disabled={!canGoBackward}
+          onClick={handlePreviousPage}
+          startIcon={<NavigateBeforeIcon />}
+          sx={{ mr: 2 }}
+          color="primary"
+          variant="outlined"
+          size="small"
+        >
+          Previous
+        </Button>
+        
+        <Box sx={{ 
+          px: 2, 
+          py: 1, 
+          borderRadius: 1, 
+          bgcolor: 'action.selected', 
+          display: 'flex', 
+          alignItems: 'center'
+        }}>
+          <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+            Page {currentPage}
+          </Typography>
+        </Box>
+        
+        <Button
+          disabled={!canGoForward}
+          onClick={handleNextPage}
+          endIcon={<NavigateNextIcon />}
+          sx={{ ml: 2 }}
+          color="primary"
+          variant="outlined"
+          size="small"
+        >
+          Next
+        </Button>
+      </Box>
       
       <Dialog open={openDeleteDialog} onClose={handleCloseDeleteDialog}>
         <DialogTitle>{"Confirm Delete"}</DialogTitle>
