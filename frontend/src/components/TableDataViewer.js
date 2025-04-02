@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import {
     CircularProgress, Table, TableBody, TableContainer, Paper, Typography, Box,
-    Button, Pagination, TableHead, Chip, TableRow, TableCell
+    Button, Pagination, TableHead, Chip, TableRow, TableCell, Alert
 } from '@mui/material';
 import EntityDetailsModal from './EntityDetailsModal';
 import FilterModal from './FilterModal';
@@ -34,6 +34,7 @@ function TableDataViewer() {
     const [columnTypes, setColumnTypes] = useState([]);
     const [ctaData, setCtaData] = useState({});
     const [filter, setFilter] = useState(null);
+    const [nextCursor, setNextCursor] = useState(null);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -51,35 +52,32 @@ function TableDataViewer() {
                     filter?.mode
                 );
 
-                console.log("sortColumn", sortColumn);
-                console.log("params", datasetName, tableName, currentPage, 10, sortColumn !== null && sortColumn !== undefined ? sortColumn : filter?.columnIndex, sortOrder, filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null, filter?.mode);
                 console.log("API Response Time:", performance.now() - start, 'ms');
 
                 setTableData(response.data);
                 setStatus(response.data.status);
                 setTotalPages(response.pagination.totalPages);
+                setNextCursor(response.pagination.next_cursor);
 
                 const sortableCols = [];
                 const colTypes = [];
                 const cta = {};
 
-                response.data.header.forEach((header, index) => {
-                    if (response.data.metadata && response.data.metadata.column) {
-                        const columnMetadata = response.data.metadata.column.find(item => item.idColumn === index);
-                        if (columnMetadata) {
-                            if (columnMetadata.tag === 'NE' || columnMetadata.tag === 'SUBJ') {
-                                sortableCols.push(index);
-                                colTypes[index] = 'NE';
-                            } else {
-                                colTypes[index] = 'LIT';
-                            }
+                if (response.data.metadata && response.data.metadata.column) {
+                    response.data.metadata.column.forEach(col => {
+                        if (col.tag === 'NE' || col.tag === 'SUBJ') {
+                            sortableCols.push(col.idColumn);
                         }
-                    }
-                    const ctaColumn = response.data.semanticAnnotations.cta.find(cta => cta.idColumn === index);
-                    if (ctaColumn) {
-                        cta[index] = ctaColumn.types;
-                    }
-                });
+                        colTypes[col.idColumn] = col.tag;
+                    });
+                }
+
+                // Process CTA data
+                if (response.data.semanticAnnotations && response.data.semanticAnnotations.cta) {
+                    response.data.semanticAnnotations.cta.forEach(annotation => {
+                        cta[annotation.idColumn] = annotation.types;
+                    });
+                }
 
                 setSortableColumns(sortableCols);
                 setColumnTypes(colTypes);
@@ -92,7 +90,8 @@ function TableDataViewer() {
         };
 
         fetchData();
-        const intervalId = (status === 'DOING' || status === 'TODO') ? setInterval(fetchData, 5000) : null;
+        const intervalId = (status === 'DOING' || status === 'TODO' || status === 'processing') ? 
+                           setInterval(fetchData, 5000) : null;
 
         return () => {
             if (intervalId) clearInterval(intervalId);
@@ -100,6 +99,8 @@ function TableDataViewer() {
     }, [datasetName, tableName, currentPage, status, sortColumn, sortOrder, filter]);
 
     const handleCellClick = (rowId, colId) => {
+        if (!tableData || !tableData.semanticAnnotations) return;
+        
         const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
         if (annotations.length > 0) {
             setEntityModalData(annotations[0].entities);
@@ -148,14 +149,15 @@ function TableDataViewer() {
     };
 
     if (loading) return <CircularProgress />;
-    if (error) return <Typography color="error">Error loading table data: {error}</Typography>;
+    if (error) return <Alert severity="error">Error loading table data: {error}</Alert>;
+    if (!tableData) return <Alert severity="warning">No data available for this table.</Alert>;
 
     return (
         <Box sx={{ width: '100%', p: 2 }}>
             <Typography variant="h6" gutterBottom>
                 Table Data: {tableName}
             </Typography>
-            {(status === 'TODO' || status === 'DOING') && (
+            {(status === 'TODO' || status === 'DOING' || status === 'processing') && (
                 <Box sx={{ display: 'flex', alignItems: 'center', color: 'primary.main' }}>
                     <CircularProgress size={24} sx={{ mr: 2 }} />
                     <Typography variant="subtitle1">Processing table data...</Typography>
@@ -199,7 +201,7 @@ function TableDataViewer() {
                             handleHeaderClick={handleHeaderClick}
                         />
                     </TableHead>
-                    {tableData.rows.length === 0 ? (
+                    {!tableData.rows || tableData.rows.length === 0 ? (
                         <TableBody>
                             <TableRow>
                                 <TableCell colSpan={tableData.header.length} align="center">
@@ -223,7 +225,14 @@ function TableDataViewer() {
                     )}
                 </Table>
             </TableContainer>
-            <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
+            <Pagination 
+                count={totalPages} 
+                page={currentPage} 
+                onChange={(event, page) => setCurrentPage(page)} 
+                color="primary" 
+                sx={{ py: 2 }}
+                disabled={!nextCursor && currentPage === 1}
+            />
             {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
             {typeModalOpen && (
                 <FilterModal

@@ -22,7 +22,8 @@ import {
 } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import DeleteIcon from '@mui/icons-material/Delete';
-import AddIcon from '@mui/icons-material/Add'; // Icon for adding a new table
+import AddIcon from '@mui/icons-material/Add'; // Fixed import path
+import FileUploadIcon from '@mui/icons-material/FileUpload';
 
 const TableList = () => {
   const { datasetName } = useParams();
@@ -35,7 +36,8 @@ const TableList = () => {
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
   const [selectedTable, setSelectedTable] = useState(null);
   const [file, setFile] = useState(null);
-  const [kgReference, setKgReference] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [nextCursor, setNextCursor] = useState(null);
 
   useEffect(() => {
     const fetchTables = async () => {
@@ -43,10 +45,12 @@ const TableList = () => {
       try {
         const encodedName = encodeURIComponent(datasetName);
         const response = await getTables(encodedName, currentPage);
+        
         if (response.data && response.data.length > 0) {
           setTables(response.data);
           setTotalPages(response.pagination.totalPages);
           setCurrentPage(response.pagination.currentPage);
+          setNextCursor(response.pagination.next_cursor);
           setError('');
         } else {
           setTables([]);
@@ -96,7 +100,7 @@ const TableList = () => {
   const handleCloseUploadDialog = () => {
     setOpenUploadDialog(false);
     setFile(null);
-    setKgReference('');
+    setUploadProgress(0);
   };
 
   const handleFileChange = (event) => {
@@ -105,15 +109,23 @@ const TableList = () => {
 
   const handleUploadTable = async (event) => {
     event.preventDefault();
+    if (!file) {
+      setError('Please select a file to upload');
+      return;
+    }
+
     try {
-      await uploadTable(datasetName, file, kgReference);
+      setUploadProgress(10);
+      await uploadTable(datasetName, file);
+      setUploadProgress(100);
+      
       // Refresh the table list after uploading
       const response = await getTables(datasetName, currentPage);
       setTables(response.data);
       setError('');
     } catch (error) {
       console.error('Failed to upload table:', error);
-      setError('Failed to upload table');
+      setError('Failed to upload table: ' + (error.response?.data?.detail || error.message));
     } finally {
       handleCloseUploadDialog();
     }
@@ -128,20 +140,56 @@ const TableList = () => {
       <Typography variant="h6" component="div">
         Tables in Dataset: {datasetName}
       </Typography>
-      <Button variant="contained" color="primary" startIcon={<AddIcon />} onClick={handleOpenUploadDialog}>
+      <Button 
+        variant="contained" 
+        color="primary" 
+        startIcon={<FileUploadIcon />} 
+        onClick={handleOpenUploadDialog}
+        sx={{ my: 2 }}
+      >
         Upload New Table
       </Button>
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <Alert severity="error" sx={{ my: 2 }}>{error}</Alert>}
       <List>
         {tables.length > 0 ? (
           tables.map((table, index) => (
-            <ListItem key={index} button component={Link} to={`/dataset/${encodeURIComponent(datasetName)}/table/${table.tableName}`}>
+            <ListItem 
+              key={index} 
+              button 
+              component={Link} 
+              to={`/dataset/${encodeURIComponent(datasetName)}/table/${encodeURIComponent(table.tableName)}`}
+              sx={{ 
+                borderLeft: `4px solid ${
+                  table.status === 'DONE' ? 'green' : 
+                  table.status === 'processing' || table.status === 'DOING' ? 'orange' : 'grey'
+                }`,
+                mb: 1
+              }}
+            >
               <ListItemIcon>
                 <TableChartIcon />
               </ListItemIcon>
-              <ListItemText primary={table.tableName} />
+              <ListItemText 
+                primary={table.tableName} 
+                secondary={
+                  <>
+                    <Typography component="span" variant="body2">
+                      Rows: {table.totalRows} | Status: {table.status || 'Unknown'}
+                    </Typography>
+                    {table.createdAt && (
+                      <Typography component="span" variant="body2" sx={{ ml: 2 }}>
+                        Created: {new Date(table.createdAt).toLocaleString()}
+                      </Typography>
+                    )}
+                  </>
+                }
+              />
               <ListItemSecondaryAction>
-                <IconButton edge="end" aria-label="delete" onClick={() => handleOpenDeleteDialog(table.tableName)}>
+                <IconButton edge="end" aria-label="delete" onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleOpenDeleteDialog(table.tableName);
+                }}>
                   <DeleteIcon />
                 </IconButton>
               </ListItemSecondaryAction>
@@ -153,7 +201,13 @@ const TableList = () => {
           </ListItem>
         )}
       </List>
-      <Pagination count={totalPages} page={currentPage} onChange={onPageChange} color="primary" />
+      <Pagination 
+        count={totalPages} 
+        page={currentPage} 
+        onChange={onPageChange} 
+        color="primary"
+        disabled={!nextCursor && currentPage === 1}
+      />
       
       <Dialog open={openDeleteDialog} onClose={handleCloseDeleteDialog}>
         <DialogTitle>{"Confirm Delete"}</DialogTitle>
@@ -166,7 +220,7 @@ const TableList = () => {
           <Button onClick={handleCloseDeleteDialog} color="primary">
             Cancel
           </Button>
-          <Button onClick={confirmDeleteTable} color="secondary">
+          <Button onClick={confirmDeleteTable} color="error">
             Delete
           </Button>
         </DialogActions>
@@ -176,12 +230,36 @@ const TableList = () => {
         <DialogTitle>Upload New Table</DialogTitle>
         <DialogContent>
           <form onSubmit={handleUploadTable}>
-            <input type="file" onChange={handleFileChange} required />
+            <Typography variant="body1" gutterBottom sx={{ mt: 2 }}>
+              Select a CSV file to upload:
+            </Typography>
+            <input type="file" accept=".csv" onChange={handleFileChange} required />
+            
+            {uploadProgress > 0 && (
+              <Box sx={{ width: '100%', mt: 2 }}>
+                <Box sx={{ 
+                  width: `${uploadProgress}%`, 
+                  height: '4px', 
+                  bgcolor: 'primary.main', 
+                  transition: 'width 0.5s'
+                }}/>
+                <Typography variant="body2" align="center" sx={{ mt: 1 }}>
+                  {uploadProgress < 100 ? 'Uploading...' : 'Upload complete!'}
+                </Typography>
+              </Box>
+            )}
+            
             <DialogActions>
-              <Button onClick={handleCloseUploadDialog} color="primary">
+              <Button onClick={handleCloseUploadDialog} color="secondary">
                 Cancel
               </Button>
-              <Button type="submit" color="primary">
+              <Button 
+                type="submit" 
+                color="primary" 
+                variant="contained" 
+                disabled={!file || uploadProgress > 0}
+                startIcon={<FileUploadIcon />}
+              >
                 Upload
               </Button>
             </DialogActions>
