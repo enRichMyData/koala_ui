@@ -68,12 +68,14 @@ const TruncatedCell = ({ content, maxLength = 100, compact = false }) => {
 // Component for cell with entity linking
 const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
   const getScoreColor = (score) => {
+    if (score === null || score === undefined) return '#e0e0e0'; // gray for missing scores
     if (score > 0.8) return '#a5d6a7'; // light green
     if (score >= 0.5) return '#fff59d'; // light yellow
     return '#ffab91'; // light red
   };
 
   const getScoreBorderColor = (score) => {
+    if (score === null || score === undefined) return '#9e9e9e'; // darker gray for missing scores
     if (score > 0.8) return '#388e3c'; // darker green
     if (score >= 0.5) return '#fbc02d'; // darker yellow
     return '#e64a19'; // darker red
@@ -84,12 +86,12 @@ const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
   }
 
   const topCandidate = entityData.candidates[0];
-  const score = topCandidate.score;
+  const score = topCandidate.score !== undefined ? topCandidate.score : null;
   const tooltipContent = `
     ${topCandidate.name} (${topCandidate.id})
-    Score: ${score.toFixed(2)}
+    ${score !== null ? `Score: ${score.toFixed(2)}` : 'Score: N/A'}
     ${topCandidate.description || 'No description'}
-    Types: ${topCandidate.types.map(t => t.name).join(', ')}
+    Types: ${topCandidate.types ? topCandidate.types.map(t => t.name).join(', ') : 'N/A'}
   `;
 
   return (
@@ -126,7 +128,7 @@ const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
               {topCandidate.id}
             </Typography>
             <Chip
-              label={score.toFixed(2)}
+              label={score !== null ? score.toFixed(2) : 'N/A'}
               size="small"
               sx={{ 
                 height: compact ? 16 : 20, 
@@ -217,21 +219,94 @@ const TableDataViewer = () => {
     };
   }, [fetchTableData, status]);
 
-  const handleCellClick = (rowId, colId) => {
+  const handleCellClick = (rowId, colId, cellValue) => {
+    const entity = findEntityForCell(rowId, colId);
+    setModalData({
+      candidates: entity?.candidates || [],
+      rowId: rowId,
+      columnId: colId,
+      cellValue: cellValue
+    });
+    setModalOpen(true);
+  };
+
+  const handleAnnotationChange = (action, details) => {
     if (!data || !data.rows) return;
     
-    const row = data.rows.find(r => r.idRow === rowId);
-    if (!row || !row.linked_entities) return;
+    // Log the details for debugging
+    console.log(`Annotation ${action}:`, details);
     
-    const entity = row.linked_entities.find(e => e.idColumn === colId);
-    if (entity && entity.candidates && entity.candidates.length > 0) {
-      setModalData(entity.candidates);
-      setModalOpen(true);
+    if (action === 'update') {
+      const updatedRows = data.rows.map(row => {
+        if (row.idRow === details.rowId) {
+          const updatedLinkedEntities = row.linked_entities.map(entity => {
+            if (entity.idColumn === details.columnId) {
+              const filteredCandidates = entity.candidates.filter(c => c.id !== details.entity.id);
+              return {
+                ...entity,
+                candidates: [details.entity, ...filteredCandidates]
+              };
+            }
+            return entity;
+          });
+          
+          return {
+            ...row,
+            linked_entities: updatedLinkedEntities
+          };
+        }
+        return row;
+      });
+      
+      setData({
+        ...data,
+        rows: updatedRows
+      });
+    } 
+    else if (action === 'delete') {
+      // Make sure to handle cases where rowId or columnId is 0
+      const { rowId, columnId, entityId } = details;
+      
+      // Check that rowId and columnId exist and are not undefined
+      if (rowId === undefined || columnId === undefined || !entityId) {
+        console.error('Invalid details for deletion:', details);
+        return;
+      }
+      
+      const updatedRows = data.rows.map(row => {
+        if (row.idRow === rowId) {
+          if (!row.linked_entities) return row;
+          
+          const updatedLinkedEntities = row.linked_entities.map(entity => {
+            if (entity.idColumn === columnId) {
+              const updatedCandidates = entity.candidates.filter(c => c.id !== entityId);
+              if (updatedCandidates.length === 0) {
+                return null;
+              }
+              return {
+                ...entity,
+                candidates: updatedCandidates
+              };
+            }
+            return entity;
+          }).filter(Boolean);
+          
+          return {
+            ...row,
+            linked_entities: updatedLinkedEntities
+          };
+        }
+        return row;
+      });
+      
+      setData({
+        ...data,
+        rows: updatedRows
+      });
     }
   };
 
   const handlePreviousPage = () => {
-    // Go back in our history
     if (historyIndex > 0) {
       setHistoryIndex(prev => prev - 1);
       setCurrentPage(paginationHistory[historyIndex - 1].page);
@@ -239,12 +314,10 @@ const TableDataViewer = () => {
   };
 
   const handleNextPage = () => {
-    // Go forward in our history if possible, otherwise fetch next page
     if (historyIndex < paginationHistory.length - 1) {
       setHistoryIndex(prev => prev + 1);
       setCurrentPage(paginationHistory[historyIndex + 1].page);
     } else {
-      // The next button should only be enabled if there's a next_cursor
       const currentItem = paginationHistory[historyIndex];
       if (currentItem.nextCursor) {
         setHistoryIndex(prev => prev + 1);
@@ -257,7 +330,6 @@ const TableDataViewer = () => {
     setCompact(!compact);
   };
 
-  // Find linked entity for a cell
   const findEntityForCell = (rowId, colId) => {
     if (!data || !data.rows) return null;
     
@@ -267,7 +339,6 @@ const TableDataViewer = () => {
     return row.linked_entities.find(e => e.idColumn === colId);
   };
 
-  // Loading skeleton
   if (loading && !data) {
     return (
       <Card sx={{ m: 2, overflow: 'hidden' }}>
@@ -285,7 +356,6 @@ const TableDataViewer = () => {
     );
   }
 
-  // Error state
   if (error) {
     return (
       <Alert 
@@ -302,7 +372,6 @@ const TableDataViewer = () => {
     );
   }
 
-  // Empty state
   if (!data || !data.rows || data.rows.length === 0) {
     return (
       <Card sx={{ m: 2, textAlign: 'center', p: 4 }}>
@@ -320,7 +389,6 @@ const TableDataViewer = () => {
     );
   }
 
-  // Helper to check if we can go forward or backward
   const canGoForward = historyIndex < paginationHistory.length - 1 || 
                        paginationHistory[historyIndex].nextCursor;
   const canGoBackward = historyIndex > 0;
@@ -475,19 +543,27 @@ const TableDataViewer = () => {
                       return (
                         <TableCell 
                           key={colIndex}
+                          onClick={() => handleCellClick(row.idRow, colIndex, cell)}
                           sx={{ 
                             minWidth: 100,
                             maxWidth: compact ? 200 : 300,
                             verticalAlign: 'top',
                             padding: compact ? '6px 10px' : '10px 16px',
                             fontSize: compact ? '0.75rem' : 'inherit',
+                            cursor: 'pointer',
+                            '&:hover': {
+                              backgroundColor: 'rgba(0, 0, 0, 0.04)'
+                            }
                           }}
                         >
                           {entity ? (
                             <LinkedEntityCell 
                               value={cell}
                               entityData={entity}
-                              onClick={() => handleCellClick(row.idRow, colIndex)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCellClick(row.idRow, colIndex, cell);
+                              }}
                               compact={compact}
                             />
                           ) : (
@@ -574,7 +650,13 @@ const TableDataViewer = () => {
       
       {modalOpen && modalData && (
         <EntityDetailsModal
-          data={modalData}
+          data={modalData.candidates}
+          rowId={modalData.rowId}
+          columnId={modalData.columnId}
+          cellValue={modalData.cellValue}
+          datasetName={datasetName}
+          tableName={tableName}
+          onAnnotationChange={handleAnnotationChange}
           onClose={() => {
             setModalOpen(false);
             setModalData(null);

@@ -200,16 +200,23 @@ const deleteTable = async (datasetName, tableName) => {
   }
 };
 
-// LamAPI function
-const fetchCandidates = async (query) => {
+// Enhanced LamAPI function
+const fetchCandidates = async (query, options = {}) => {
   try {
+    const params = {
+      name: query,
+      limit: options.limit || 100,
+      kg: 'wikidata',
+      cache: false // Always set cache to false as required
+    };
+    
+    // Add optional parameters if provided
+    if (options.kind) params.kind = options.kind;
+    if (options.ner_type) params.ner_type = options.ner_type;
+    if (options.types) params.types = options.types;
+    
     const response = await lamapiClient.get('/lookup/entity-retrieval', {
-      params: {
-        name: query,
-        limit: 100,
-        kg: 'wikidata',
-        cache: false
-      }
+      params: params
     });
     console.log('LamAPI Response:', response.data);
     return response.data;
@@ -219,4 +226,69 @@ const fetchCandidates = async (query) => {
   }
 };
 
-export { getDatasets, getTables, getTableData, deleteDataset, deleteTable, fetchCandidates, createDataset, uploadTable};
+// Function to search for entity types (to get QIDs for types)
+const fetchEntityTypes = async (query) => {
+  try {
+    const response = await lamapiClient.get('/lookup/entity-retrieval', {
+      params: {
+        name: query,
+        limit: 50,
+        kg: 'wikidata',
+        cache: false,
+        kind: 'type' // Request types specifically
+      }
+    });
+    console.log('Entity Types Response:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching entity types:', error);
+    throw error;
+  }
+};
+
+// Function to update an annotation
+const updateAnnotation = async (datasetName, tableName, rowId, columnId, entityData) => {
+  try {
+    const response = await crocodileApiClient.put(
+      `/datasets/${datasetName}/tables/${tableName}/annotations`, 
+      {
+        row_id: rowId,
+        column_id: columnId,
+        entity: entityData
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error updating annotation:', error);
+    throw error;
+  }
+};
+
+// Function to delete a specific entity from cell annotations
+const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityId) => {
+  try {
+    // Using the RESTful endpoint structure for deleting a specific entity
+    const response = await crocodileApiClient.delete(
+      `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}/candidates/${entityId}`
+    );
+    console.log(`Successfully deleted entity ${entityId} from ${datasetName}/${tableName}, row ${rowId}, column ${columnId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting annotation:', error);
+    throw error;
+  }
+};
+
+export { 
+  getDatasets, 
+  getTables, 
+  getTableData, 
+  deleteDataset, 
+  deleteTable, 
+  fetchCandidates, 
+  fetchEntityTypes,
+  updateAnnotation,
+  deleteAnnotation,
+  createDataset, 
+  uploadTable
+};

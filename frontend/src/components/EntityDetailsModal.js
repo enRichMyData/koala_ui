@@ -3,15 +3,23 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Table, TableBody, TableCell, 
   TableHead, TableRow, Button, Link, TextField, CircularProgress, List, ListItem, 
   ListItemText, Typography, Checkbox, Box, Chip, Avatar, IconButton, Divider,
-  Tooltip, Paper, Tab, Tabs, InputAdornment, TableContainer
+  Tooltip, Paper, Tab, Tabs, InputAdornment, TableContainer, FormControl, 
+  InputLabel, Select, MenuItem, Grid, Autocomplete, OutlinedInput, Alert
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
-import { fetchCandidates } from '../services/apiServices';
+import { 
+  fetchCandidates, 
+  fetchEntityTypes, 
+  updateAnnotation, 
+  deleteAnnotation 
+} from '../services/apiServices';
 import SearchIcon from '@mui/icons-material/Search';
 import CloseIcon from '@mui/icons-material/Close';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InfoIcon from '@mui/icons-material/Info';
+import DeleteIcon from '@mui/icons-material/Delete';
+import ClearIcon from '@mui/icons-material/Clear';
 
 // Styled components
 const StyledTableRow = styled(TableRow)(({ theme, isSelected }) => ({
@@ -23,6 +31,17 @@ const StyledTableRow = styled(TableRow)(({ theme, isSelected }) => ({
 }));
 
 const ScoreChip = styled(Chip)(({ theme, score }) => {
+  if (score === null || score === undefined) {
+    return {
+      backgroundColor: '#9e9e9e', // gray for missing scores
+      color: 'white',
+      fontWeight: 'bold',
+      '& .MuiChip-label': {
+        padding: '0 8px',
+      }
+    };
+  }
+  
   let color = '#e57373'; // red for low scores
   if (score > 0.8) color = '#81c784'; // green for high scores
   else if (score >= 0.5) color = '#fff176'; // yellow for medium scores
@@ -45,7 +64,16 @@ const TypeChip = styled(Chip)(({ theme }) => ({
   }
 }));
 
-function EntityDetailsModal({ data, onClose }) {
+function EntityDetailsModal({ 
+  data, 
+  onClose, 
+  rowId = null,
+  columnId = null,
+  cellValue = "",
+  datasetName = null, 
+  tableName = null,
+  onAnnotationChange = null
+}) {
   const [selectedWinnerIndex, setSelectedWinnerIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [candidates, setCandidates] = useState([]);
@@ -54,9 +82,20 @@ function EntityDetailsModal({ data, onClose }) {
   const [selectedCandidates, setSelectedCandidates] = useState([]);
   const [checkedCandidates, setCheckedCandidates] = useState([]);
   const [currentTab, setCurrentTab] = useState(0);
+  const [kind, setKind] = useState('');
+  const [nerType, setNerType] = useState('');
+  const [selectedTypes, setSelectedTypes] = useState([]);
+  const [typeQuery, setTypeQuery] = useState('');
+  const [typeOptions, setTypeOptions] = useState([]);
+  const [loadingTypes, setLoadingTypes] = useState(false);
+  const [savingAnnotation, setSavingAnnotation] = useState(false);
+  const [deletingAnnotation, setDeletingAnnotation] = useState(false);
+  const [actionSuccess, setActionSuccess] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [entityBeingDeleted, setEntityBeingDeleted] = useState(null);
+  const [localData, setLocalData] = useState([]);
 
   useEffect(() => {
-    // Find if any entity is already marked as a match
     const matchIndex = data.findIndex(entity => entity.match);
     if (matchIndex !== -1) {
       setSelectedWinnerIndex(matchIndex);
@@ -64,11 +103,21 @@ function EntityDetailsModal({ data, onClose }) {
   }, [data]);
 
   useEffect(() => {
+    setLocalData(data);
+  }, [data]);
+
+  useEffect(() => {
     const fetchData = async () => {
       if (query.length > 2) {
         setLoading(true);
         try {
-          const responseData = await fetchCandidates(query);
+          const searchOptions = { limit: 100 };
+          if (kind) searchOptions.kind = kind;
+          if (nerType) searchOptions.ner_type = nerType;
+          if (selectedTypes.length > 0) {
+            searchOptions.types = selectedTypes.map(type => type.id).join(' ');
+          }
+          const responseData = await fetchCandidates(query, searchOptions);
           setCandidates(responseData);
         } catch (err) {
           setError(err.message || 'Error fetching candidates');
@@ -82,7 +131,35 @@ function EntityDetailsModal({ data, onClose }) {
 
     const debounceFetch = setTimeout(fetchData, 300);
     return () => clearTimeout(debounceFetch);
-  }, [query]);
+  }, [query, kind, nerType, selectedTypes]);
+
+  useEffect(() => {
+    const fetchTypes = async () => {
+      if (typeQuery.length > 2) {
+        setLoadingTypes(true);
+        try {
+          const types = await fetchEntityTypes(typeQuery);
+          setTypeOptions(types);
+        } catch (err) {
+          console.error('Error fetching types:', err);
+        } finally {
+          setLoadingTypes(false);
+        }
+      } else {
+        setTypeOptions([]);
+      }
+    };
+
+    const debounceFetch = setTimeout(fetchTypes, 300);
+    return () => clearTimeout(debounceFetch);
+  }, [typeQuery]);
+
+  useEffect(() => {
+    if (data.length === 0 && cellValue) {
+      setQuery(cellValue);
+      setCurrentTab(1); // Switch to search tab automatically
+    }
+  }, [data, cellValue]);
 
   const toggleWinner = (id) => {
     setSelectedWinnerIndex(id);
@@ -99,149 +176,184 @@ function EntityDetailsModal({ data, onClose }) {
   };
 
   const handleConfirmSelection = () => {
-    setSelectedCandidates(prev => [...prev, ...checkedCandidates]);
+    const newCandidates = checkedCandidates.filter(
+      (candidate) => !data.some((entity) => entity.id === candidate.id)
+    );
+    setSelectedCandidates(prev => [...prev, ...newCandidates]);
     setCheckedCandidates([]);
     setCandidates([]);
     setQuery('');
-    setCurrentTab(1); // Switch to results tab after adding
+    setCurrentTab(0);
   };
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
   };
 
+  const handleSaveAnnotation = async () => {
+    if (!rowId || !columnId || !datasetName || !tableName) {
+      setActionError('Missing required information for saving annotation');
+      return;
+    }
+
+    setSavingAnnotation(true);
+    setActionSuccess(null);
+    setActionError(null);
+
+    try {
+      let selectedEntity;
+      if (typeof selectedWinnerIndex === 'number') {
+        selectedEntity = data[selectedWinnerIndex];
+      } else if (typeof selectedWinnerIndex === 'string' && selectedWinnerIndex.startsWith('added-')) {
+        const addedIndex = parseInt(selectedWinnerIndex.replace('added-', ''));
+        selectedEntity = selectedCandidates[addedIndex];
+      }
+
+      if (!selectedEntity) {
+        throw new Error('No entity selected');
+      }
+
+      await updateAnnotation(datasetName, tableName, rowId, columnId, selectedEntity);
+      setActionSuccess('Annotation updated successfully');
+      if (onAnnotationChange) {
+        onAnnotationChange('update', { rowId, columnId, entity: selectedEntity });
+      }
+    } catch (error) {
+      setActionError(`Failed to update annotation: ${error.message}`);
+    } finally {
+      setSavingAnnotation(false);
+    }
+  };
+
+  const handleDeleteEntity = async (entity) => {
+    // Proper validation with clear error messages
+    if (!entity || !entity.id) {
+      setActionError('Cannot delete: Invalid entity information');
+      return;
+    }
+    
+    // Check if rowId is null or undefined (but allow 0 as valid)
+    if (rowId === null || rowId === undefined) {
+      setActionError('Cannot delete: Missing row information');
+      return;
+    }
+    
+    // Check if columnId is null or undefined (but allow 0 as valid)
+    if (columnId === null || columnId === undefined) {
+      setActionError('Cannot delete: Missing column information');
+      return;
+    }
+    
+    if (!datasetName || !tableName) {
+      setActionError('Cannot delete: Missing dataset or table information');
+      return;
+    }
+
+    setEntityBeingDeleted(entity.id);
+    setActionSuccess(null);
+    setActionError(null);
+    
+    // Immediately remove the entity from the local state for instant UI feedback
+    setLocalData(prevData => prevData.filter(e => e.id !== entity.id));
+
+    try {
+      await deleteAnnotation(datasetName, tableName, rowId, columnId, entity.id);
+      setActionSuccess(`Entity ${entity.name || entity.id} deleted successfully`);
+      
+      // Notify parent component about the deleted entity
+      if (onAnnotationChange) {
+        onAnnotationChange('delete', { 
+          rowId, 
+          columnId, 
+          entityId: entity.id 
+        });
+      }
+
+      // If we just deleted the currently selected entity, clear the selection
+      if ((typeof selectedWinnerIndex === 'number' && data[selectedWinnerIndex]?.id === entity.id)) {
+        setSelectedWinnerIndex(null);
+      }
+
+      // If this was the last entity, switch to search tab
+      if (localData.length <= 1) {
+        setCurrentTab(1);
+      }
+    } catch (error) {
+      // If the deletion failed, restore the entity in the local state
+      setLocalData(prevData => [...prevData, entity]);
+      console.error('Delete entity error:', error);
+      setActionError(`Failed to delete entity: ${error.message}`);
+    } finally {
+      setEntityBeingDeleted(null);
+    }
+  };
+
   const renderEntityTable = () => (
-    <TableContainer component={Paper} elevation={0} sx={{ mt: 2, maxHeight: 400, overflow: 'auto' }}>
-      <Table stickyHeader size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell width="5%">Rank</TableCell>
-            <TableCell width="15%">QID</TableCell>
-            <TableCell width="20%">Entity</TableCell>
-            <TableCell width="25%">Description</TableCell>
-            <TableCell width="20%">Types</TableCell>
-            <TableCell width="10%">Score</TableCell>
-            <TableCell width="5%">Select</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {data.map((entity, index) => (
-            <StyledTableRow key={index} isSelected={selectedWinnerIndex === index}>
-              <TableCell>{index + 1}</TableCell>
-              <TableCell>
-                <Tooltip title="Open in Wikidata" arrow>
-                  <Link 
-                    href={`https://www.wikidata.org/wiki/${entity.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ display: 'flex', alignItems: 'center' }}
-                  >
-                    {entity.id}
-                    <OpenInNewIcon fontSize="small" sx={{ ml: 0.5, fontSize: 14 }} />
-                  </Link>
-                </Tooltip>
-              </TableCell>
-              <TableCell>
-                <Typography variant="body2" noWrap>{entity.name}</Typography>
-              </TableCell>
-              <TableCell>
-                <Tooltip title={entity.description || 'No description'} arrow>
-                  <Typography variant="body2" sx={{ 
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical'
-                  }}>
-                    {entity.description || 'No description'}
-                  </Typography>
-                </Tooltip>
-              </TableCell>
-              <TableCell>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
-                  {entity.types?.slice(0, 2).map(type => (
-                    <TypeChip
-                      key={type.id}
-                      label={type.name}
-                      size="small"
-                      clickable
-                      component="a"
-                      href={`https://www.wikidata.org/wiki/${type.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    />
-                  ))}
-                  {entity.types?.length > 2 && (
-                    <Tooltip title={entity.types.slice(2).map(t => t.name).join(', ')} arrow>
-                      <TypeChip 
-                        icon={<InfoIcon />} 
-                        label={`+${entity.types.length - 2}`} 
-                        size="small" 
-                      />
-                    </Tooltip>
-                  )}
-                </Box>
-              </TableCell>
-              <TableCell>
-                <ScoreChip 
-                  label={entity.score.toFixed(2)} 
-                  size="small" 
-                  score={entity.score} 
-                />
-              </TableCell>
-              <TableCell>
-                <IconButton
-                  size="small"
-                  color="primary"
-                  onClick={() => toggleWinner(index)}
-                >
-                  {selectedWinnerIndex === index ? 
-                    <CheckCircleIcon color="primary" /> : 
-                    <CheckCircleIcon color="disabled" />
-                  }
-                </IconButton>
-              </TableCell>
-            </StyledTableRow>
-          ))}
-          
-          {selectedCandidates.length > 0 && (
-            <>
+    <Box>
+      {localData.length === 0 ? (
+        <Box sx={{ textAlign: 'center', py: 4 }}>
+          <Typography variant="body1" color="text.secondary">
+            No entities are associated with this cell.
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => setCurrentTab(1)}
+            sx={{ mt: 2 }}
+          >
+            Search for entities
+          </Button>
+        </Box>
+      ) : (
+        <TableContainer component={Paper} elevation={0} sx={{ mt: 2, maxHeight: 400, overflow: 'auto' }}>
+          <Table stickyHeader size="small">
+            <TableHead>
               <TableRow>
-                <TableCell colSpan={7} sx={{ backgroundColor: '#f5f5f5' }}>
-                  <Typography variant="subtitle2">Added Candidates</Typography>
-                </TableCell>
+                <TableCell width="5%">Rank</TableCell>
+                <TableCell width="15%">QID</TableCell>
+                <TableCell width="20%">Entity</TableCell>
+                <TableCell width="20%">Description</TableCell>
+                <TableCell width="18%">Types</TableCell>
+                <TableCell width="10%">Score</TableCell>
+                <TableCell width="12%">Actions</TableCell>
               </TableRow>
-              
-              {selectedCandidates.map((candidate, index) => (
-                <StyledTableRow 
-                  key={`added-${index}`} 
-                  isSelected={selectedWinnerIndex === `added-${index}`}
-                >
-                  <TableCell>{data.length + index + 1}</TableCell>
+            </TableHead>
+            <TableBody>
+              {localData.map((entity, index) => (
+                <StyledTableRow key={index} isSelected={selectedWinnerIndex === index}>
+                  <TableCell>{index + 1}</TableCell>
                   <TableCell>
                     <Tooltip title="Open in Wikidata" arrow>
                       <Link 
-                        href={`https://www.wikidata.org/wiki/${candidate.id}`}
+                        href={`https://www.wikidata.org/wiki/${entity.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         sx={{ display: 'flex', alignItems: 'center' }}
                       >
-                        {candidate.id}
+                        {entity.id}
                         <OpenInNewIcon fontSize="small" sx={{ ml: 0.5, fontSize: 14 }} />
                       </Link>
                     </Tooltip>
                   </TableCell>
                   <TableCell>
-                    <Typography variant="body2" noWrap>{candidate.name}</Typography>
+                    <Typography variant="body2" noWrap>{entity.name}</Typography>
                   </TableCell>
                   <TableCell>
-                    <Typography variant="body2" noWrap>
-                      {candidate.description || 'No description'}
-                    </Typography>
+                    <Tooltip title={entity.description || 'No description'} arrow>
+                      <Typography variant="body2" sx={{ 
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical'
+                      }}>
+                        {entity.description || 'No description'}
+                      </Typography>
+                    </Tooltip>
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
-                      {candidate.types?.slice(0, 2).map(type => (
+                      {entity.types?.slice(0, 2).map(type => (
                         <TypeChip
                           key={type.id}
                           label={type.name}
@@ -253,63 +365,238 @@ function EntityDetailsModal({ data, onClose }) {
                           rel="noopener noreferrer"
                         />
                       ))}
-                      {candidate.types?.length > 2 && (
-                        <Tooltip title={candidate.types.slice(2).map(t => t.name).join(', ')} arrow>
+                      {entity.types?.length > 2 && (
+                        <Tooltip title={entity.types.slice(2).map(t => t.name).join(', ')} arrow>
                           <TypeChip 
                             icon={<InfoIcon />} 
-                            label={`+${candidate.types.length - 2}`} 
+                            label={`+${entity.types.length - 2}`} 
                             size="small" 
                           />
                         </Tooltip>
                       )}
                     </Box>
                   </TableCell>
-                  <TableCell>-</TableCell>
                   <TableCell>
-                    <IconButton
-                      size="small"
-                      color="primary"
-                      onClick={() => toggleWinner(`added-${index}`)}
-                    >
-                      {selectedWinnerIndex === `added-${index}` ? 
-                        <CheckCircleIcon color="primary" /> : 
-                        <CheckCircleIcon color="disabled" />
-                      }
-                    </IconButton>
+                    <ScoreChip 
+                      label={entity.score !== undefined && entity.score !== null ? entity.score.toFixed(2) : 'N/A'} 
+                      size="small" 
+                      score={entity.score} 
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => toggleWinner(index)}
+                        sx={{ mr: 0.5 }}
+                      >
+                        {selectedWinnerIndex === index ? 
+                          <CheckCircleIcon color="primary" /> : 
+                          <CheckCircleIcon color="disabled" />
+                        }
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleDeleteEntity(entity)}
+                        disabled={entityBeingDeleted === entity.id}
+                        sx={{ ml: 0.5 }}
+                      >
+                        {entityBeingDeleted === entity.id ? 
+                          <CircularProgress size={16} /> : 
+                          <DeleteIcon fontSize="small" />
+                        }
+                      </IconButton>
+                    </Box>
                   </TableCell>
                 </StyledTableRow>
               ))}
-            </>
-          )}
-        </TableBody>
-      </Table>
-    </TableContainer>
+              
+              {selectedCandidates.length > 0 && (
+                <>
+                  <TableRow>
+                    <TableCell colSpan={7} sx={{ backgroundColor: '#f5f5f5' }}>
+                      <Typography variant="subtitle2">Added Candidates</Typography>
+                    </TableCell>
+                  </TableRow>
+                  
+                  {selectedCandidates.map((candidate, index) => (
+                    <StyledTableRow 
+                      key={`added-${index}`} 
+                      isSelected={selectedWinnerIndex === `added-${index}`}
+                    >
+                      <TableCell>{localData.length + index + 1}</TableCell>
+                      <TableCell>
+                        <Tooltip title="Open in Wikidata" arrow>
+                          <Link 
+                            href={`https://www.wikidata.org/wiki/${candidate.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ display: 'flex', alignItems: 'center' }}
+                          >
+                            {candidate.id}
+                            <OpenInNewIcon fontSize="small" sx={{ ml: 0.5, fontSize: 14 }} />
+                          </Link>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" noWrap>{candidate.name}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" noWrap>
+                          {candidate.description || 'No description'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
+                          {candidate.types?.slice(0, 2).map(type => (
+                            <TypeChip
+                              key={type.id}
+                              label={type.name}
+                              size="small"
+                              clickable
+                              component="a"
+                              href={`https://www.wikidata.org/wiki/${type.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            />
+                          ))}
+                          {candidate.types?.length > 2 && (
+                            <Tooltip title={candidate.types.slice(2).map(t => t.name).join(', ')} arrow>
+                              <TypeChip 
+                                icon={<InfoIcon />} 
+                                label={`+${candidate.types.length - 2}`} 
+                                size="small" 
+                              />
+                            </Tooltip>
+                          )}
+                        </Box>
+                      </TableCell>
+                      <TableCell>-</TableCell>
+                      <TableCell>
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => toggleWinner(`added-${index}`)}
+                        >
+                          {selectedWinnerIndex === `added-${index}` ? 
+                            <CheckCircleIcon color="primary" /> : 
+                            <CheckCircleIcon color="disabled" />
+                          }
+                        </IconButton>
+                      </TableCell>
+                    </StyledTableRow>
+                  ))}
+                </>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Box>
   );
 
   const renderSearchResults = () => (
     <>
-      <TextField
-        fullWidth
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search for entities..."
-        variant="outlined"
-        margin="normal"
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon />
-            </InputAdornment>
-          ),
-          endAdornment: query && (
-            <InputAdornment position="end">
-              <IconButton size="small" onClick={() => setQuery('')}>
-                <CloseIcon />
-              </IconButton>
-            </InputAdornment>
-          )
-        }}
-      />
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={12}>
+          <TextField
+            fullWidth
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search for entities..."
+            variant="outlined"
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+              endAdornment: query && (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setQuery('')}>
+                    <CloseIcon />
+                  </IconButton>
+                </InputAdornment>
+              )
+            }}
+          />
+        </Grid>
+        
+        <Grid item xs={12} sm={4}>
+          <FormControl fullWidth variant="outlined" size="small">
+            <InputLabel>Kind</InputLabel>
+            <Select
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              label="Kind"
+            >
+              <MenuItem value="">Any</MenuItem>
+              <MenuItem value="entity">Entity</MenuItem>
+              <MenuItem value="type">Type</MenuItem>
+              <MenuItem value="property">Property</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+        
+        <Grid item xs={12} sm={4}>
+          <FormControl fullWidth variant="outlined" size="small">
+            <InputLabel>NER Type</InputLabel>
+            <Select
+              value={nerType}
+              onChange={(e) => setNerType(e.target.value)}
+              label="NER Type"
+            >
+              <MenuItem value="">Any</MenuItem>
+              <MenuItem value="PERSON">Person</MenuItem>
+              <MenuItem value="LOCATION">Location</MenuItem>
+              <MenuItem value="ORGANIZATION">Organization</MenuItem>
+              <MenuItem value="OTHER">Other</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+        
+        <Grid item xs={12} sm={4}>
+          <Autocomplete
+            multiple
+            filterSelectedOptions
+            options={typeOptions}
+            getOptionLabel={(option) => `${option.name} (${option.id})`}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            loading={loadingTypes}
+            value={selectedTypes}
+            onChange={(event, newValue) => setSelectedTypes(newValue)}
+            onInputChange={(event, newInputValue) => setTypeQuery(newInputValue)}
+            renderTags={(value, getTagProps) =>
+              value.map((option, index) => (
+                <Chip
+                  label={option.name}
+                  size="small"
+                  {...getTagProps({ index })}
+                />
+              ))
+            }
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Entity Types"
+                placeholder="Search types..."
+                size="small"
+                InputProps={{
+                  ...params.InputProps,
+                  endAdornment: (
+                    <>
+                      {loadingTypes ? <CircularProgress color="inherit" size={20} /> : null}
+                      {params.InputProps.endAdornment}
+                    </>
+                  ),
+                }}
+              />
+            )}
+          />
+        </Grid>
+      </Grid>
       
       {loading && (
         <Box display="flex" justifyContent="center" my={2}>
@@ -325,6 +612,10 @@ function EntityDetailsModal({ data, onClose }) {
       
       {candidates.length > 0 ? (
         <>
+          <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
+            Found {candidates.length} results
+          </Typography>
+          
           <List sx={{ mt: 2, mb: 2, maxHeight: 300, overflow: 'auto' }}>
             {candidates.map((candidate, index) => (
               <ListItem 
@@ -365,7 +656,7 @@ function EntityDetailsModal({ data, onClose }) {
                   secondary={
                     <>
                       <Typography variant="body2" color="text.secondary">
-                        {candidate.description}
+                        {candidate.description || 'No description'}
                       </Typography>
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', mt: 1 }}>
                         {candidate.types?.map(type => (
@@ -384,6 +675,18 @@ function EntityDetailsModal({ data, onClose }) {
                     </>
                   }
                 />
+                
+                {data.some(entity => entity.id === candidate.id) && (
+                  <Tooltip title="This entity already exists in the candidates list">
+                    <Chip 
+                      label="Already added" 
+                      size="small" 
+                      color="info" 
+                      variant="outlined"
+                      sx={{ mr: 1 }}
+                    />
+                  </Tooltip>
+                )}
               </ListItem>
             ))}
           </List>
@@ -431,9 +734,32 @@ function EntityDetailsModal({ data, onClose }) {
         justifyContent: 'space-between',
         alignItems: 'center',
         backgroundColor: '#f5f5f5',
-        borderBottom: '1px solid #ddd'
+        borderBottom: '1px solid #ddd',
+        pb: 1
       }}>
-        <Typography variant="h6">Entity Details</Typography>
+        <Box>
+          <Typography variant="h6">Entity Annotation</Typography>
+          {cellValue && (
+            <Typography 
+              variant="caption" 
+              color="text.secondary"
+              sx={{ 
+                display: 'inline-block',
+                bgcolor: 'rgba(0, 0, 0, 0.04)',
+                borderRadius: 1,
+                px: 1,
+                py: 0.5,
+                mt: 0.5,
+                maxWidth: '80%',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {cellValue}
+            </Typography>
+          )}
+        </Box>
         <IconButton onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -453,6 +779,18 @@ function EntityDetailsModal({ data, onClose }) {
       </Box>
       
       <DialogContent sx={{ p: 2 }}>
+        {actionSuccess && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            {actionSuccess}
+          </Alert>
+        )}
+        
+        {actionError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {actionError}
+          </Alert>
+        )}
+        
         {currentTab === 0 ? renderEntityTable() : renderSearchResults()}
       </DialogContent>
       
@@ -460,22 +798,35 @@ function EntityDetailsModal({ data, onClose }) {
         p: 2, 
         borderTop: '1px solid #ddd',
         display: 'flex',
-        justifyContent: 'space-between'
+        justifyContent: 'flex-end'
       }}>
         <Button 
           variant="outlined" 
           color="secondary" 
           onClick={onClose}
+          sx={{ mr: 1 }}
         >
           Cancel
         </Button>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          onClick={onClose}
-        >
-          Confirm Selection
-        </Button>
+        
+        {rowId && columnId ? (
+          <Button 
+            variant="contained" 
+            color="primary" 
+            onClick={handleSaveAnnotation}
+            disabled={savingAnnotation || (typeof selectedWinnerIndex !== 'number' && !selectedWinnerIndex.toString().startsWith('added-'))}
+          >
+            {savingAnnotation ? 'Saving...' : 'Save Selected Entity'}
+          </Button>
+        ) : (
+          <Button 
+            variant="contained" 
+            color="primary" 
+            onClick={onClose}
+          >
+            Close
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );
