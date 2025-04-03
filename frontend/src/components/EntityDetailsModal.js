@@ -4,7 +4,7 @@ import {
   TableHead, TableRow, Button, Link, TextField, CircularProgress, List, ListItem, 
   ListItemText, Typography, Checkbox, Box, Chip, Avatar, IconButton, Divider,
   Tooltip, Paper, Tab, Tabs, InputAdornment, TableContainer, FormControl, 
-  InputLabel, Select, MenuItem, Grid, Autocomplete, OutlinedInput, Alert
+  InputLabel, Select, MenuItem, Grid, Autocomplete, OutlinedInput, Alert, Fade
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import { 
@@ -94,6 +94,8 @@ function EntityDetailsModal({
   const [actionError, setActionError] = useState(null);
   const [entityBeingDeleted, setEntityBeingDeleted] = useState(null);
   const [localData, setLocalData] = useState([]);
+  const [searchSelectedEntity, setSearchSelectedEntity] = useState(null);
+  const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
     const matchIndex = data.findIndex(entity => entity.match);
@@ -161,6 +163,12 @@ function EntityDetailsModal({
     }
   }, [data, cellValue]);
 
+  useEffect(() => {
+    if (currentTab !== 1) {
+      setSearchSelectedEntity(null);
+    }
+  }, [currentTab]);
+
   const toggleWinner = (id) => {
     setSelectedWinnerIndex(id);
   };
@@ -191,7 +199,9 @@ function EntityDetailsModal({
   };
 
   const handleSaveAnnotation = async () => {
-    if (!rowId || !columnId || !datasetName || !tableName) {
+    if (rowId === null || rowId === undefined || 
+        columnId === null || columnId === undefined || 
+        !datasetName || !tableName) {
       setActionError('Missing required information for saving annotation');
       return;
     }
@@ -202,11 +212,16 @@ function EntityDetailsModal({
 
     try {
       let selectedEntity;
-      if (typeof selectedWinnerIndex === 'number') {
-        selectedEntity = data[selectedWinnerIndex];
-      } else if (typeof selectedWinnerIndex === 'string' && selectedWinnerIndex.startsWith('added-')) {
-        const addedIndex = parseInt(selectedWinnerIndex.replace('added-', ''));
-        selectedEntity = selectedCandidates[addedIndex];
+      
+      if (currentTab === 0) {
+        if (typeof selectedWinnerIndex === 'number') {
+          selectedEntity = localData[selectedWinnerIndex];
+        } else if (typeof selectedWinnerIndex === 'string' && selectedWinnerIndex.startsWith('added-')) {
+          const addedIndex = parseInt(selectedWinnerIndex.replace('added-', ''));
+          selectedEntity = selectedCandidates[addedIndex];
+        }
+      } else {
+        selectedEntity = searchSelectedEntity;
       }
 
       if (!selectedEntity) {
@@ -215,9 +230,39 @@ function EntityDetailsModal({
 
       await updateAnnotation(datasetName, tableName, rowId, columnId, selectedEntity);
       setActionSuccess('Annotation updated successfully');
+      
+      setJustSaved(true);
+      
+      // Update the selected entity with a score of 1 before updating localData
+      const topEntity = {
+        ...selectedEntity,
+        score: 1,  // Ensure top entity has score of 1
+        match: true // Mark it as the matching entity
+      };
+      
+      // Create updated local data with the selected entity at the top
+      const updatedLocalData = [
+        topEntity,
+        ...localData.filter(e => e.id !== selectedEntity.id)
+      ];
+      
+      setLocalData(updatedLocalData);
+      setSelectedWinnerIndex(0);
+      
       if (onAnnotationChange) {
-        onAnnotationChange('update', { rowId, columnId, entity: selectedEntity });
+        onAnnotationChange('update', { rowId, columnId, entity: topEntity });
       }
+      
+      if (currentTab === 1 && searchSelectedEntity) {
+        const exists = localData.some(entity => entity.id === searchSelectedEntity.id) || 
+                      selectedCandidates.some(entity => entity.id === searchSelectedEntity.id);
+        
+        if (!exists) {
+          setSelectedCandidates(prev => [...prev, searchSelectedEntity]);
+        }
+        setCurrentTab(0);
+      }
+
     } catch (error) {
       setActionError(`Failed to update annotation: ${error.message}`);
     } finally {
@@ -226,19 +271,16 @@ function EntityDetailsModal({
   };
 
   const handleDeleteEntity = async (entity) => {
-    // Proper validation with clear error messages
     if (!entity || !entity.id) {
       setActionError('Cannot delete: Invalid entity information');
       return;
     }
     
-    // Check if rowId is null or undefined (but allow 0 as valid)
     if (rowId === null || rowId === undefined) {
       setActionError('Cannot delete: Missing row information');
       return;
     }
     
-    // Check if columnId is null or undefined (but allow 0 as valid)
     if (columnId === null || columnId === undefined) {
       setActionError('Cannot delete: Missing column information');
       return;
@@ -253,14 +295,12 @@ function EntityDetailsModal({
     setActionSuccess(null);
     setActionError(null);
     
-    // Immediately remove the entity from the local state for instant UI feedback
     setLocalData(prevData => prevData.filter(e => e.id !== entity.id));
 
     try {
       await deleteAnnotation(datasetName, tableName, rowId, columnId, entity.id);
       setActionSuccess(`Entity ${entity.name || entity.id} deleted successfully`);
       
-      // Notify parent component about the deleted entity
       if (onAnnotationChange) {
         onAnnotationChange('delete', { 
           rowId, 
@@ -269,23 +309,24 @@ function EntityDetailsModal({
         });
       }
 
-      // If we just deleted the currently selected entity, clear the selection
       if ((typeof selectedWinnerIndex === 'number' && data[selectedWinnerIndex]?.id === entity.id)) {
         setSelectedWinnerIndex(null);
       }
 
-      // If this was the last entity, switch to search tab
       if (localData.length <= 1) {
         setCurrentTab(1);
       }
     } catch (error) {
-      // If the deletion failed, restore the entity in the local state
       setLocalData(prevData => [...prevData, entity]);
       console.error('Delete entity error:', error);
       setActionError(`Failed to delete entity: ${error.message}`);
     } finally {
       setEntityBeingDeleted(null);
     }
+  };
+
+  const handleSelectSearchEntity = (entity) => {
+    setSearchSelectedEntity(entity);
   };
 
   const renderEntityTable = () => (
@@ -617,78 +658,98 @@ function EntityDetailsModal({
           </Typography>
           
           <List sx={{ mt: 2, mb: 2, maxHeight: 300, overflow: 'auto' }}>
-            {candidates.map((candidate, index) => (
-              <ListItem 
-                key={index}
-                sx={{
-                  border: '1px solid #eee',
-                  borderRadius: '4px',
-                  mb: 1,
-                  '&:hover': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.04)'
-                  }
-                }}
-              >
-                <Checkbox
-                  checked={checkedCandidates.some(c => c.id === candidate.id)}
-                  onChange={() => handleCandidateCheck(candidate)}
-                  color="primary"
-                />
-                <ListItemText
-                  primary={
-                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <Link 
-                        href={`https://www.wikidata.org/wiki/${candidate.id}`} 
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        sx={{ display: 'flex', alignItems: 'center', mr: 1 }}
-                      >
-                        {candidate.name}
-                        <OpenInNewIcon fontSize="small" sx={{ ml: 0.5, fontSize: 14 }} />
-                      </Link>
-                      <Chip 
-                        label={candidate.id} 
-                        size="small" 
-                        sx={{ ml: 1, backgroundColor: '#e3f2fd' }} 
-                      />
-                    </Box>
-                  }
-                  secondary={
-                    <>
-                      <Typography variant="body2" color="text.secondary">
-                        {candidate.description || 'No description'}
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', mt: 1 }}>
-                        {candidate.types?.map(type => (
-                          <TypeChip
-                            key={type.id}
-                            label={type.name}
-                            size="small"
-                            clickable
-                            component="a"
-                            href={`https://www.wikidata.org/wiki/${type.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          />
-                        ))}
+            {candidates.map((candidate, index) => {
+              const isAlreadyAdded = data.some(entity => entity.id === candidate.id);
+              const isSelected = searchSelectedEntity?.id === candidate.id;
+              
+              return (
+                <ListItem 
+                  key={index}
+                  sx={{
+                    border: `1px solid ${isSelected ? '#2196f3' : '#eee'}`,
+                    borderRadius: '4px',
+                    mb: 1,
+                    backgroundColor: isSelected ? 'rgba(33, 150, 243, 0.08)' : 'inherit',
+                    '&:hover': {
+                      backgroundColor: isSelected ? 'rgba(33, 150, 243, 0.12)' : 'rgba(0, 0, 0, 0.04)'
+                    }
+                  }}
+                >
+                  <Checkbox
+                    checked={checkedCandidates.some(c => c.id === candidate.id)}
+                    onChange={() => handleCandidateCheck(candidate)}
+                    color="primary"
+                  />
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <Link 
+                          href={`https://www.wikidata.org/wiki/${candidate.id}`} 
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{ display: 'flex', alignItems: 'center', mr: 1 }}
+                        >
+                          {candidate.name}
+                          <OpenInNewIcon fontSize="small" sx={{ ml: 0.5, fontSize: 14 }} />
+                        </Link>
+                        <Chip 
+                          label={candidate.id} 
+                          size="small" 
+                          sx={{ ml: 1, backgroundColor: '#e3f2fd' }} 
+                        />
                       </Box>
-                    </>
-                  }
-                />
-                
-                {data.some(entity => entity.id === candidate.id) && (
-                  <Tooltip title="This entity already exists in the candidates list">
-                    <Chip 
-                      label="Already added" 
-                      size="small" 
-                      color="info" 
-                      variant="outlined"
-                      sx={{ mr: 1 }}
-                    />
-                  </Tooltip>
-                )}
-              </ListItem>
-            ))}
+                    }
+                    secondary={
+                      <>
+                        <Typography variant="body2" color="text.secondary">
+                          {candidate.description || 'No description'}
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', mt: 1 }}>
+                          {candidate.types?.map(type => (
+                            <TypeChip
+                              key={type.id}
+                              label={type.name}
+                              size="small"
+                              clickable
+                              component="a"
+                              href={`https://www.wikidata.org/wiki/${type.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            />
+                          ))}
+                        </Box>
+                      </>
+                    }
+                    onClick={() => handleSelectSearchEntity(candidate)}
+                    sx={{ cursor: 'pointer' }}
+                  />
+                  
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    {isAlreadyAdded && (
+                      <Tooltip title="This entity already exists in the candidates list">
+                        <Chip 
+                          label="Already added" 
+                          size="small" 
+                          color="info" 
+                          variant="outlined"
+                          sx={{ mr: 1 }}
+                        />
+                      </Tooltip>
+                    )}
+                    
+                    <Button
+                      variant={isSelected ? "contained" : "outlined"}
+                      color="primary"
+                      size="small"
+                      onClick={() => handleSelectSearchEntity(candidate)}
+                      startIcon={isSelected ? <CheckCircleIcon /> : null}
+                    >
+                      {isSelected ? "Selected" : "Select"}
+                    </Button>
+                  </Box>
+                </ListItem>
+              );
+            })}
           </List>
           
           {checkedCandidates.length > 0 && (
@@ -724,44 +785,54 @@ function EntityDetailsModal({
       fullWidth
       PaperProps={{
         sx: {
-          borderRadius: '8px',
+          borderRadius: '12px',
           overflow: 'hidden'
         }
       }}
     >
-      <DialogTitle sx={{ 
-        display: 'flex', 
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        backgroundColor: '#f5f5f5',
-        borderBottom: '1px solid #ddd',
-        pb: 1
-      }}>
+      <DialogTitle 
+        sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#f5f5f5',
+          borderBottom: '1px solid #ddd',
+          p: 2
+        }}
+      >
         <Box>
-          <Typography variant="h6">Entity Annotation</Typography>
+          <Typography variant="h6" component="span">Entity Annotation</Typography>
           {cellValue && (
-            <Typography 
-              variant="caption" 
-              color="text.secondary"
+            <Chip
+              label={cellValue}
+              size="medium"
+              variant="outlined"
+              color="primary"
               sx={{ 
-                display: 'inline-block',
-                bgcolor: 'rgba(0, 0, 0, 0.04)',
-                borderRadius: 1,
-                px: 1,
-                py: 0.5,
-                mt: 0.5,
-                maxWidth: '80%',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
+                ml: 2,
+                maxWidth: '50%',
+                '& .MuiChip-label': {
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }
               }}
-            >
-              {cellValue}
-            </Typography>
+            />
           )}
         </Box>
-        <IconButton onClick={onClose} size="small">
-          <CloseIcon />
+        <IconButton 
+          onClick={onClose} 
+          size="small"
+          aria-label="close"
+          sx={{ 
+            color: 'text.secondary', 
+            '&:hover': { 
+              backgroundColor: 'rgba(0, 0, 0, 0.04)',
+              color: 'text.primary'
+            },
+            transition: 'all 0.2s'
+          }}
+        >
+          <CloseIcon fontSize="small" />
         </IconButton>
       </DialogTitle>
       
@@ -780,15 +851,19 @@ function EntityDetailsModal({
       
       <DialogContent sx={{ p: 2 }}>
         {actionSuccess && (
-          <Alert severity="success" sx={{ mb: 2 }}>
-            {actionSuccess}
-          </Alert>
+          <Fade in={!!actionSuccess}>
+            <Alert severity="success" sx={{ mb: 2 }}>
+              {actionSuccess}
+            </Alert>
+          </Fade>
         )}
         
         {actionError && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {actionError}
-          </Alert>
+          <Fade in={!!actionError}>
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {actionError}
+            </Alert>
+          </Fade>
         )}
         
         {currentTab === 0 ? renderEntityTable() : renderSearchResults()}
@@ -802,19 +877,23 @@ function EntityDetailsModal({
       }}>
         <Button 
           variant="outlined" 
-          color="secondary" 
+          color="inherit"
           onClick={onClose}
           sx={{ mr: 1 }}
         >
           Cancel
         </Button>
         
-        {rowId && columnId ? (
+        {rowId !== null && columnId !== null ? (
           <Button 
             variant="contained" 
             color="primary" 
             onClick={handleSaveAnnotation}
-            disabled={savingAnnotation || (typeof selectedWinnerIndex !== 'number' && !selectedWinnerIndex.toString().startsWith('added-'))}
+            disabled={savingAnnotation || 
+              (currentTab === 0 && 
+                typeof selectedWinnerIndex !== 'number' && 
+                !selectedWinnerIndex?.toString().startsWith('added-')) ||
+              (currentTab === 1 && !searchSelectedEntity)}
           >
             {savingAnnotation ? 'Saving...' : 'Save Selected Entity'}
           </Button>

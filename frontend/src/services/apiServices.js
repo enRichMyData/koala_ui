@@ -246,16 +246,29 @@ const fetchEntityTypes = async (query) => {
   }
 };
 
-// Function to update an annotation
+// Function to update an annotation with the correct endpoint
 const updateAnnotation = async (datasetName, tableName, rowId, columnId, entityData) => {
   try {
-    const response = await crocodileApiClient.put(
-      `/datasets/${datasetName}/tables/${tableName}/annotations`, 
-      {
-        row_id: rowId,
-        column_id: columnId,
-        entity: entityData
+    // Format the request based on the required schema
+    const requestBody = {
+      entity_id: entityData.id,
+      match: true,
+      score: entityData.score || 1,
+      notes: "",
+      candidate_info: {
+        id: entityData.id,
+        name: entityData.name || "",
+        description: entityData.description || "",
+        types: entityData.types || []
       }
+    };
+
+    console.log(`Updating annotation for ${datasetName}/${tableName}, row ${rowId}, column ${columnId}`, requestBody);
+    
+    // Use the row/column specific endpoint
+    const response = await crocodileApiClient.put(
+      `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}`,
+      requestBody
     );
     return response.data;
   } catch (error) {
