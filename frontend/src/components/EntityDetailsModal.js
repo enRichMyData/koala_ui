@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { 
   Dialog, DialogTitle, DialogContent, DialogActions, Table, TableBody, TableCell, 
   TableHead, TableRow, Button, Link, TextField, CircularProgress, List, ListItem, 
-  ListItemText, Typography, Checkbox, Box, Chip, Avatar, IconButton, Divider,
+  ListItemText, Typography, Checkbox, Box, Chip, IconButton,
   Tooltip, Paper, Tab, Tabs, InputAdornment, TableContainer, FormControl, 
-  InputLabel, Select, MenuItem, Grid, Autocomplete, OutlinedInput, Alert, Fade
+  InputLabel, Select, MenuItem, Grid, Autocomplete, Alert, Fade
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import { 
@@ -19,7 +19,6 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InfoIcon from '@mui/icons-material/Info';
 import DeleteIcon from '@mui/icons-material/Delete';
-import ClearIcon from '@mui/icons-material/Clear';
 
 // Styled components
 const StyledTableRow = styled(TableRow)(({ theme, isSelected }) => ({
@@ -89,13 +88,11 @@ function EntityDetailsModal({
   const [typeOptions, setTypeOptions] = useState([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [savingAnnotation, setSavingAnnotation] = useState(false);
-  const [deletingAnnotation, setDeletingAnnotation] = useState(false);
   const [actionSuccess, setActionSuccess] = useState(null);
   const [actionError, setActionError] = useState(null);
   const [entityBeingDeleted, setEntityBeingDeleted] = useState(null);
   const [localData, setLocalData] = useState([]);
   const [searchSelectedEntity, setSearchSelectedEntity] = useState(null);
-  const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
     const matchIndex = data.findIndex(entity => entity.match);
@@ -230,8 +227,6 @@ function EntityDetailsModal({
 
       await updateAnnotation(datasetName, tableName, rowId, columnId, selectedEntity);
       setActionSuccess('Annotation updated successfully');
-      
-      setJustSaved(true);
       
       // Update the selected entity with a score of 1 before updating localData
       const topEntity = {

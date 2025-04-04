@@ -21,7 +21,6 @@ import {
 } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import DeleteIcon from '@mui/icons-material/Delete';
-import AddIcon from '@mui/icons-material/Add';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
@@ -31,7 +30,6 @@ const TableList = () => {
   const [tables, setTables] = useState([]);
   const [error, setError] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
@@ -39,8 +37,7 @@ const TableList = () => {
   const [file, setFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [nextCursor, setNextCursor] = useState(null);
-  const [prevCursor, setPrevCursor] = useState(null);
-  const [paginationHistory, setPaginationHistory] = useState([{ page: 1, nextCursor: null, prevCursor: null }]);
+  const [paginationHistory, setPaginationHistory] = useState([{ page: 1, nextCursor: null }]);
   const [historyIndex, setHistoryIndex] = useState(0);
 
   const currentHistoryRef = useRef(paginationHistory[historyIndex]);
@@ -57,8 +54,6 @@ const TableList = () => {
         
         if (historyItem.nextCursor) {
           options.nextCursor = historyItem.nextCursor;
-        } else if (historyItem.prevCursor) {
-          options.prevCursor = historyItem.prevCursor;
         }
         
         const encodedName = encodeURIComponent(datasetName);
@@ -66,17 +61,14 @@ const TableList = () => {
         
         if (response.data && response.data.length > 0) {
           setTables(response.data);
-          setTotalPages(response.pagination.totalPages);
           setCurrentPage(response.pagination.currentPage);
           setNextCursor(response.pagination.next_cursor);
-          setPrevCursor(response.pagination.prev_cursor);
           
           if (historyIndex === paginationHistory.length - 1 && response.pagination.next_cursor) {
             setPaginationHistory(prev => [
               ...prev.slice(0, historyIndex + 1),
               { 
                 page: historyItem.page + 1, 
-                prevCursor: response.pagination.prev_cursor, 
                 nextCursor: response.pagination.next_cursor
               }
             ]);

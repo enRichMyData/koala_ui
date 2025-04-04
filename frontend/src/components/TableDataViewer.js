@@ -4,10 +4,9 @@ import { getTableData } from '../services/apiServices';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
-  Button, Divider, Skeleton, useTheme, useMediaQuery, Badge, Stack, Collapse, Fade
+  Button, Divider, Skeleton
 } from '@mui/material';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
-import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import ReadMoreIcon from '@mui/icons-material/ReadMore';
@@ -156,8 +155,6 @@ const TableDataViewer = () => {
   const [modalData, setModalData] = useState(null);
   const [compact, setCompact] = useState(false);
   const [status, setStatus] = useState('loading');
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   // Keep track of our pagination state
   const currentHistoryRef = useRef(paginationHistory[historyIndex]);
@@ -393,7 +390,6 @@ const TableDataViewer = () => {
                        paginationHistory[historyIndex].nextCursor;
   const canGoBackward = historyIndex > 0;
   
-  const currentHistoryItem = paginationHistory[historyIndex];
   const hasEntity = data.rows.some(row => row.linked_entities && row.linked_entities.length > 0);
 
   return (
