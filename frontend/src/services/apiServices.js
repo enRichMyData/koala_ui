@@ -152,9 +152,9 @@ const getTables = async (datasetName, page = 1, perPage = 10, options = {}) => {
   }
 };
 
-const getTableData = async (datasetName, tableName, page = 1, perPage = 10, options = {}) => {
+const getTableData = async (datasetName, tableName, perPage = 10, options = {}) => {
   try {
-    // Support for bi-directional cursor-based pagination
+    // Support for cursor-based pagination
     const params = {
       limit: perPage,
     };

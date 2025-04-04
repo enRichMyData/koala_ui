@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import {
@@ -148,51 +148,28 @@ const TableDataViewer = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [paginationHistory, setPaginationHistory] = useState([{ page: 1, nextCursor: null, prevCursor: null }]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1); // Keep for display purposes only
+  const [nextCursor, setNextCursor] = useState(null);
+  const [prevCursor, setPrevCursor] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState(null);
   const [compact, setCompact] = useState(false);
   const [status, setStatus] = useState('loading');
   
-  // Keep track of our pagination state
-  const currentHistoryRef = useRef(paginationHistory[historyIndex]);
-  useEffect(() => {
-    currentHistoryRef.current = paginationHistory[historyIndex];
-  }, [paginationHistory, historyIndex]);
-
-  // Fetch table data with cursor
-  const fetchTableData = useCallback(async () => {
+  // Fetch table data with cursor-based pagination
+  const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
     
     try {
-      const historyItem = currentHistoryRef.current;
-      const options = {};
-      
-      if (historyItem.nextCursor) {
-        options.nextCursor = historyItem.nextCursor;
-      } else if (historyItem.prevCursor) {
-        options.prevCursor = historyItem.prevCursor;
-      }
-      
-      const response = await getTableData(datasetName, tableName, historyItem.page, 10, options);
+      const response = await getTableData(datasetName, tableName, 10, options);
       
       if (response.data) {
         setData(response.data);
         setStatus(response.data.status);
         
-        // Update pagination history with new cursors if this was a forward request
-        if (historyIndex === paginationHistory.length - 1) {
-          setPaginationHistory(prev => [
-            ...prev.slice(0, historyIndex + 1),
-            { 
-              page: historyItem.page + 1, 
-              prevCursor: response.pagination.prev_cursor, 
-              nextCursor: response.pagination.next_cursor
-            }
-          ]);
-        }
+        // Store cursors from the response
+        setNextCursor(response.pagination?.next_cursor || null);
+        setPrevCursor(response.pagination?.prev_cursor || null);
       } else {
         setError('No data available');
       }
@@ -202,19 +179,35 @@ const TableDataViewer = () => {
     } finally {
       setLoading(false);
     }
-  }, [datasetName, tableName, historyIndex, paginationHistory]);
+  }, [datasetName, tableName]);
 
   useEffect(() => {
+    // Initial data fetch
     fetchTableData();
     
     // Polling if table is still processing
     const isProcessing = status === 'DOING' || status === 'TODO' || status === 'processing';
-    const intervalId = isProcessing ? setInterval(fetchTableData, 5000) : null;
+    const intervalId = isProcessing ? setInterval(() => fetchTableData(), 5000) : null;
     
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
   }, [fetchTableData, status]);
+
+  // Direct cursor-based pagination handlers
+  const handlePreviousPage = () => {
+    if (prevCursor) {
+      fetchTableData({ prevCursor });
+      setCurrentPage(prev => prev - 1); // Just for display purposes
+    }
+  };
+
+  const handleNextPage = () => {
+    if (nextCursor) {
+      fetchTableData({ nextCursor });
+      setCurrentPage(prev => prev + 1); // Just for display purposes
+    }
+  };
 
   const handleCellClick = (rowId, colId, cellValue) => {
     const entity = findEntityForCell(rowId, colId);
@@ -303,26 +296,6 @@ const TableDataViewer = () => {
     }
   };
 
-  const handlePreviousPage = () => {
-    if (historyIndex > 0) {
-      setHistoryIndex(prev => prev - 1);
-      setCurrentPage(paginationHistory[historyIndex - 1].page);
-    }
-  };
-
-  const handleNextPage = () => {
-    if (historyIndex < paginationHistory.length - 1) {
-      setHistoryIndex(prev => prev + 1);
-      setCurrentPage(paginationHistory[historyIndex + 1].page);
-    } else {
-      const currentItem = paginationHistory[historyIndex];
-      if (currentItem.nextCursor) {
-        setHistoryIndex(prev => prev + 1);
-        setCurrentPage(prev => prev + 1);
-      }
-    }
-  };
-
   const toggleCompact = () => {
     setCompact(!compact);
   };
@@ -386,10 +359,6 @@ const TableDataViewer = () => {
     );
   }
 
-  const canGoForward = historyIndex < paginationHistory.length - 1 || 
-                       paginationHistory[historyIndex].nextCursor;
-  const canGoBackward = historyIndex > 0;
-  
   const hasEntity = data.rows.some(row => row.linked_entities && row.linked_entities.length > 0);
 
   return (
@@ -588,7 +557,7 @@ const TableDataViewer = () => {
           
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Button
-              disabled={!canGoBackward}
+              disabled={!prevCursor}
               onClick={handlePreviousPage}
               startIcon={<NavigateBeforeIcon />}
               sx={{ mr: 1 }}
@@ -613,7 +582,7 @@ const TableDataViewer = () => {
             </Box>
             
             <Button
-              disabled={!canGoForward}
+              disabled={!nextCursor}
               onClick={handleNextPage}
               endIcon={<NavigateNextIcon />}
               sx={{ ml: 1 }}
