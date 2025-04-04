@@ -214,7 +214,9 @@ const fetchCandidates = async (query, options = {}) => {
     if (options.kind) params.kind = options.kind;
     if (options.ner_type) params.ner_type = options.ner_type;
     if (options.types) params.types = options.types;
-    
+  
+    console.log('Fetching candidates with params:', params);
+    // Make the API call to LamAPI
     const response = await lamapiClient.get('/lookup/entity-retrieval', {
       params: params
     });
