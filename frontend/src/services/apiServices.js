@@ -4,6 +4,11 @@ const CROCODILE_API_URL = process.env.REACT_APP_CROCODILE_URL;
 const LAMAPI_URL = process.env.REACT_APP_LAMAPI_URL;
 const LAMAPI_TOKEN = process.env.REACT_APP_LAMAPI_TOKEN;
 
+// Helper function to get user ID from localStorage
+const getUserId = () => {
+  return localStorage.getItem('userId') || 'default_user'; 
+};
+
 // Crocodile API Client
 const crocodileApiClient = axios.create({
   baseURL: CROCODILE_API_URL,
@@ -37,6 +42,8 @@ const createDataset = async (datasetName) => {
   try {
     const response = await crocodileApiClient.post('/datasets', {
       dataset_name: datasetName
+    }, {
+      params: { user_id: getUserId() }
     });
     return response.data.dataset;
   } catch (error) {
@@ -49,6 +56,7 @@ const getDatasets = async (page = 1, perPage = 10, options = {}) => {
   try {
     const params = {
       limit: perPage,
+      user_id: getUserId()
     };
     
     if (options.nextCursor) {
@@ -94,14 +102,13 @@ const uploadTable = async (datasetName, file, kgReference="wikidata") => {
   const tableName = file.name.replace(/\.[^/.]+$/, "");
   
   try {
-    // Fix: Use singular "dataset" and "table" in the path as per Crocodile API spec
     const response = await crocodileApiClient.post(`/datasets/${datasetName}/tables/csv`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
       params: {
-        // Add table_name as a query parameter
-        table_name: tableName
+        table_name: tableName,
+        user_id: getUserId()
       }
     });
     return response.data;
@@ -115,6 +122,7 @@ const getTables = async (datasetName, page = 1, perPage = 10, options = {}) => {
   try {
     const params = {
       limit: perPage,
+      user_id: getUserId()
     };
     
     if (options.nextCursor) {
@@ -157,6 +165,7 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
     // Support for cursor-based pagination
     const params = {
       limit: perPage,
+      user_id: getUserId()
     };
     
     // Add next_cursor or prev_cursor if provided (but not both)
@@ -182,7 +191,9 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
 
 const deleteDataset = async (datasetName) => {
   try {
-    const response = await crocodileApiClient.delete(`/datasets/${datasetName}`);
+    const response = await crocodileApiClient.delete(`/datasets/${datasetName}`, {
+      params: { user_id: getUserId() }
+    });
     return response.data;
   } catch (error) {
     console.error('Error deleting dataset:', error);
@@ -192,7 +203,9 @@ const deleteDataset = async (datasetName) => {
 
 const deleteTable = async (datasetName, tableName) => {
   try {
-    const response = await crocodileApiClient.delete(`/datasets/${datasetName}/tables/${tableName}`);
+    const response = await crocodileApiClient.delete(`/datasets/${datasetName}/tables/${tableName}`, {
+      params: { user_id: getUserId() }
+    });
     return response.data;
   } catch (error) {
     console.error('Error deleting table:', error);
@@ -270,7 +283,10 @@ const updateAnnotation = async (datasetName, tableName, rowId, columnId, entityD
     // Use the row/column specific endpoint
     const response = await crocodileApiClient.put(
       `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}`,
-      requestBody
+      requestBody,
+      {
+        params: { user_id: getUserId() }
+      }
     );
     return response.data;
   } catch (error) {
@@ -284,7 +300,10 @@ const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityI
   try {
     // Using the RESTful endpoint structure for deleting a specific entity
     const response = await crocodileApiClient.delete(
-      `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}/candidates/${entityId}`
+      `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}/candidates/${entityId}`,
+      {
+        params: { user_id: getUserId() }
+      }
     );
     console.log(`Successfully deleted entity ${entityId} from ${datasetName}/${tableName}, row ${rowId}, column ${columnId}`);
     return response.data;

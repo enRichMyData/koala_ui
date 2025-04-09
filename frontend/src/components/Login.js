@@ -3,12 +3,12 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import './Login.css'; // Import the CSS file for styling
 
-
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 function Login({ setLoggedIn }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
 
   const handleEmailChange = (event) => setEmail(event.target.value);
   const handlePasswordChange = (event) => setPassword(event.target.value);
@@ -17,17 +17,25 @@ function Login({ setLoggedIn }) {
     event.preventDefault();
     try {
       const response = await axios.post(`${BACKEND_URL}/login`, { email, password });
+      
+      // Store token
       localStorage.setItem('token', response.data.access_token);
+      
+      // Also store user ID - extract from email or use email directly as ID
+      const userId = email.split('@')[0] || 'default_user';
+      localStorage.setItem('userId', userId);
+      
       setLoggedIn(true);
     } catch (error) {
       console.error('Login failed:', error);
-      // Handle login failure
+      setError('Login failed. Please check your credentials.');
     }
   };
 
   return (
     <div className="login-container">
       <h2>Login</h2>
+      {error && <div className="error-message">{error}</div>}
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label>Email:</label>

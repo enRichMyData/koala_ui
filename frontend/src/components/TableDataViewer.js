@@ -162,7 +162,7 @@ const TableDataViewer = () => {
     
     try {
       const response = await getTableData(datasetName, tableName, 10, options);
-      
+      console.log('Fetched table data:', response);
       if (response.data) {
         setData(response.data);
         setStatus(response.data.status);

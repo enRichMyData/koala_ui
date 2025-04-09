@@ -7,6 +7,13 @@ import logo from '../assets/images/logo.png';  // Make sure the path to your log
 
 const NavigationBar = ({ onLogout, profileName }) => {
     const navigate = useNavigate();
+    
+    const handleLogout = () => {
+        // Clear both token and userId
+        localStorage.removeItem('token');
+        localStorage.removeItem('userId');
+        onLogout();
+    };
 
     return (
         <AppBar position="static">
@@ -25,7 +32,7 @@ const NavigationBar = ({ onLogout, profileName }) => {
                     </NavLink>
                     <Avatar src={logo} alt={profileName} style={{ width: 90, height: 80, marginLeft: 10, marginRight: 10 }} />
                     <Typography variant="subtitle1" style={{ marginRight: 20 }}>{profileName}</Typography>
-                    <Button color="inherit" onClick={onLogout}>
+                    <Button color="inherit" onClick={handleLogout}>
                         Logout
                     </Button>
                 </Box>
