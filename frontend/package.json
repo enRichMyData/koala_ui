@@ -16,7 +16,8 @@
     "react-router-dom": "^6.22.3",
     "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4",
-    "axios": "^0.24.0"
+    "axios": "^0.24.0",
+    "jose": "^4.14.4"
   },
   "scripts": {
     "start": "react-scripts start",

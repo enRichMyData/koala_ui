@@ -2,21 +2,20 @@
 ARG NODE_VERSION
 FROM node:${NODE_VERSION}
 
-
-# Step 2: Set the working directory inside the container
+# Set the working directory
 WORKDIR /app
 
-# Step 3: Copy package.json and package-lock.json
+# Copy package.json and package-lock.json first (for better caching)
 COPY package*.json ./
 
-# Step 4: Install dependencies
+# Install dependencies
 RUN npm install
 
-# Step 5: Copy the rest of your app's source code
+# Copy the rest of the application code
 COPY . .
 
-# Step 6: Expose port 3000 to have it mapped by Docker daemon
+# Expose port 3000
 EXPOSE 3000
 
-# Step 7: Define the command to run your app
+# Command to run the application
 CMD ["npm", "start"]

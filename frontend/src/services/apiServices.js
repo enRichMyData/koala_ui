@@ -1,17 +1,54 @@
 import axios from 'axios';
+import * as jose from 'jose';
 
 const CROCODILE_API_URL = process.env.REACT_APP_CROCODILE_URL;
+const CROCODILE_SECRET = process.env.REACT_APP_CROCODILE_SECRET || 'secret';
 const LAMAPI_URL = process.env.REACT_APP_LAMAPI_URL;
 const LAMAPI_TOKEN = process.env.REACT_APP_LAMAPI_TOKEN;
 
-// Helper function to get user ID from localStorage
-const getUserId = () => {
+// Helper function to get user email or ID from localStorage
+const getUserEmail = () => {
+  // First try to get the actual email from localStorage
+  const email = localStorage.getItem('userEmail');
+  if (email) return email;
+  
+  // Fall back to userId if email is not available
   return localStorage.getItem('userId') || 'default_user'; 
+};
+
+// Helper function to generate a JWT token with jose
+const generateCrocodileToken = async () => {
+  const encoder = new TextEncoder();
+  // Use email as the key in the payload to match what Crocodile expects
+  const payload = { email: getUserEmail() };
+  
+  // Convert the secret to a Uint8Array
+  const secretKey = encoder.encode(CROCODILE_SECRET);
+  
+  // Sign the token with the HS256 algorithm
+  const token = await new jose.SignJWT(payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('1h')  // Token expires in 1 hour
+    .sign(secretKey);
+  
+  return token;
 };
 
 // Crocodile API Client
 const crocodileApiClient = axios.create({
   baseURL: CROCODILE_API_URL,
+});
+
+// Add auth token to every Crocodile API request
+crocodileApiClient.interceptors.request.use(async config => {
+  try {
+    const token = await generateCrocodileToken();
+    config.headers.Authorization = `Bearer ${token}`;
+  } catch (error) {
+    console.error('Error generating token:', error);
+  }
+  return config;
 });
 
 // Simple retry interceptor for specific status codes for Crocodile API
@@ -43,7 +80,7 @@ const createDataset = async (datasetName) => {
     const response = await crocodileApiClient.post('/datasets', {
       dataset_name: datasetName
     }, {
-      params: { user_id: getUserId() }
+      params: { user_id: getUserEmail() }
     });
     return response.data.dataset;
   } catch (error) {
@@ -56,7 +93,7 @@ const getDatasets = async (page = 1, perPage = 10, options = {}) => {
   try {
     const params = {
       limit: perPage,
-      user_id: getUserId()
+      user_id: getUserEmail()
     };
     
     if (options.nextCursor) {
@@ -108,7 +145,7 @@ const uploadTable = async (datasetName, file, kgReference="wikidata") => {
       },
       params: {
         table_name: tableName,
-        user_id: getUserId()
+        user_id: getUserEmail()
       }
     });
     return response.data;
@@ -122,7 +159,7 @@ const getTables = async (datasetName, page = 1, perPage = 10, options = {}) => {
   try {
     const params = {
       limit: perPage,
-      user_id: getUserId()
+      user_id: getUserEmail()
     };
     
     if (options.nextCursor) {
@@ -165,7 +202,7 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
     // Support for cursor-based pagination
     const params = {
       limit: perPage,
-      user_id: getUserId()
+      user_id: getUserEmail()
     };
     
     // Add next_cursor or prev_cursor if provided (but not both)
@@ -192,7 +229,7 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
 const deleteDataset = async (datasetName) => {
   try {
     const response = await crocodileApiClient.delete(`/datasets/${datasetName}`, {
-      params: { user_id: getUserId() }
+      params: { user_id: getUserEmail() }
     });
     return response.data;
   } catch (error) {
@@ -204,7 +241,7 @@ const deleteDataset = async (datasetName) => {
 const deleteTable = async (datasetName, tableName) => {
   try {
     const response = await crocodileApiClient.delete(`/datasets/${datasetName}/tables/${tableName}`, {
-      params: { user_id: getUserId() }
+      params: { user_id: getUserEmail() }
     });
     return response.data;
   } catch (error) {
@@ -285,7 +322,7 @@ const updateAnnotation = async (datasetName, tableName, rowId, columnId, entityD
       `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}`,
       requestBody,
       {
-        params: { user_id: getUserId() }
+        params: { user_id: getUserEmail() }
       }
     );
     return response.data;
@@ -302,7 +339,7 @@ const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityI
     const response = await crocodileApiClient.delete(
       `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}/candidates/${entityId}`,
       {
-        params: { user_id: getUserId() }
+        params: { user_id: getUserEmail() }
       }
     );
     console.log(`Successfully deleted entity ${entityId} from ${datasetName}/${tableName}, row ${rowId}, column ${columnId}`);
