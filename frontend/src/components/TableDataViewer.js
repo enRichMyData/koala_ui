@@ -1,241 +1,635 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import {
-    CircularProgress, Table, TableBody, TableContainer, Paper, Typography, Box,
-    Button, Pagination, TableHead, Chip, TableRow, TableCell
+  Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
+  Button, Divider, Skeleton
 } from '@mui/material';
-import EntityDetailsModal from './EntityDetailsModal';
-import FilterModal from './FilterModal';
-import SortIcon from '@mui/icons-material/Sort';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
+import ReadMoreIcon from '@mui/icons-material/ReadMore';
 import CompressIcon from '@mui/icons-material/Compress';
-import ExpandIcon from '@mui/icons-material/Expand';
-import ClearAllIcon from '@mui/icons-material/ClearAll';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import EntityDetailsModal from './EntityDetailsModal';
 
-import TableHeader from './TableHeader';
-import TableRowComponent from './TableRow';
+// Component for truncating text in cells
+const TruncatedCell = ({ content, maxLength = 100, compact = false }) => {
+  const [expanded, setExpanded] = useState(false);
+  
+  if (!content) return null;
+  const text = String(content);
+  
+  if (text.length <= maxLength) {
+    return <span>{text}</span>;
+  }
 
-function TableDataViewer() {
-    const { datasetName, tableName } = useParams();
-    const [tableData, setTableData] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [currentPage, setCurrentPage] = useState(1);
-    const [totalPages, setTotalPages] = useState(0);
-    const [status, setStatus] = useState('');
-    const [entityModalOpen, setEntityModalOpen] = useState(false);
-    const [entityModalData, setEntityModalData] = useState(null);
-    const [typeModalOpen, setTypeModalOpen] = useState(false);
-    const [typeModalData, setTypeModalData] = useState(null);
-    const [sortColumn, setSortColumn] = useState(null);
-    const [sortOrder, setSortOrder] = useState(null);
-    const [sortableColumns, setSortableColumns] = useState([]);
-    const [compact, setCompact] = useState(false);
-    const [columnTypes, setColumnTypes] = useState([]);
-    const [ctaData, setCtaData] = useState({});
-    const [filter, setFilter] = useState(null);
-
-    useEffect(() => {
-        const fetchData = async () => {
-            const start = performance.now();
-            console.log('Fetching data...');
-            try {
-                const response = await getTableData(
-                    datasetName,
-                    tableName,
-                    currentPage,
-                    10,
-                    sortColumn !== null && sortColumn !== undefined ? sortColumn : filter?.columnIndex,
-                    sortOrder,
-                    filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null,
-                    filter?.mode
-                );
-
-                console.log("sortColumn", sortColumn);
-                console.log("params", datasetName, tableName, currentPage, 10, sortColumn !== null && sortColumn !== undefined ? sortColumn : filter?.columnIndex, sortOrder, filter?.selectedTypes ? Object.keys(filter.selectedTypes).join(' ') : null, filter?.mode);
-                console.log("API Response Time:", performance.now() - start, 'ms');
-
-                setTableData(response.data);
-                setStatus(response.data.status);
-                setTotalPages(response.pagination.totalPages);
-
-                const sortableCols = [];
-                const colTypes = [];
-                const cta = {};
-
-                response.data.header.forEach((header, index) => {
-                    if (response.data.metadata && response.data.metadata.column) {
-                        const columnMetadata = response.data.metadata.column.find(item => item.idColumn === index);
-                        if (columnMetadata) {
-                            if (columnMetadata.tag === 'NE' || columnMetadata.tag === 'SUBJ') {
-                                sortableCols.push(index);
-                                colTypes[index] = 'NE';
-                            } else {
-                                colTypes[index] = 'LIT';
-                            }
-                        }
-                    }
-                    const ctaColumn = response.data.semanticAnnotations.cta.find(cta => cta.idColumn === index);
-                    if (ctaColumn) {
-                        cta[index] = ctaColumn.types;
-                    }
-                });
-
-                setSortableColumns(sortableCols);
-                setColumnTypes(colTypes);
-                setCtaData(cta);
-            } catch (err) {
-                setError(err.message);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchData();
-        const intervalId = (status === 'DOING' || status === 'TODO') ? setInterval(fetchData, 5000) : null;
-
-        return () => {
-            if (intervalId) clearInterval(intervalId);
-        };
-    }, [datasetName, tableName, currentPage, status, sortColumn, sortOrder, filter]);
-
-    const handleCellClick = (rowId, colId) => {
-        const annotations = tableData.semanticAnnotations.cea.filter(ann => ann.idRow === rowId && ann.idColumn === colId);
-        if (annotations.length > 0) {
-            setEntityModalData(annotations[0].entities);
-            setEntityModalOpen(true);
-        }
-    };
-
-    const handleEntityModalClose = () => {
-        setEntityModalOpen(false);
-        setEntityModalData(null);
-    };
-
-    const handleTypeModalClose = () => {
-        setTypeModalOpen(false);
-        setTypeModalData(null);
-    };
-
-    const handleSort = (column) => {
-        if (sortableColumns.includes(column)) {
-            const newSortOrder = sortColumn === column && sortOrder === 'asc' ? 'desc' : 'asc';
-            setSortColumn(column);
-            setSortOrder(newSortOrder);
-        }
-    };
-
-    const resetSort = () => {
-        setSortColumn(null);
-        setSortOrder(null);
-    };
-
-    const toggleCompact = () => {
-        setCompact(!compact);
-    };
-
-    const handleHeaderClick = (ctaTypes, columnIndex) => {
-        setTypeModalData({ ctaTypes, columnIndex });
-        setTypeModalOpen(true);
-    };
-
-    const applyFilter = (columnIndex, selectedTypes, mode) => {
-        setFilter({ columnIndex, selectedTypes, mode });
-    };
-
-    const resetFilters = () => {
-        setFilter(null);
-    };
-
-    if (loading) return <CircularProgress />;
-    if (error) return <Typography color="error">Error loading table data: {error}</Typography>;
-
+  if (expanded) {
     return (
-        <Box sx={{ width: '100%', p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-                Table Data: {tableName}
-            </Typography>
-            {(status === 'TODO' || status === 'DOING') && (
-                <Box sx={{ display: 'flex', alignItems: 'center', color: 'primary.main' }}>
-                    <CircularProgress size={24} sx={{ mr: 2 }} />
-                    <Typography variant="subtitle1">Processing table data...</Typography>
-                </Box>
-            )}
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-                <Button onClick={toggleCompact} color="primary" startIcon={compact ? <ExpandIcon /> : <CompressIcon />}>
-                    {compact ? 'Expand Table' : 'Compact Table'}
-                </Button>
-                <Button onClick={resetSort} color="primary" startIcon={<SortIcon />}>
-                    Reset Sort
-                </Button>
-                <Button onClick={resetFilters} color="primary" startIcon={<ClearAllIcon />}>
-                    Reset Filters
-                </Button>
-            </Box>
-            {filter && (
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', mb: 2 }}>
-                    {Object.keys(filter.selectedTypes).map((type) => (
-                        filter.selectedTypes[type] && (
-                            <Chip
-                                key={type}
-                                label={`Column ${filter.columnIndex}: ${filter.selectedTypes[type]} (${filter.mode})`}
-                                sx={{ m: 0.5 }}
-                            />
-                        )
-                    ))}
-                </Box>
-            )}
-            <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
-                <Table size={compact ? 'small' : 'medium'}>
-                    <TableHead>
-                        <TableHeader
-                            headers={tableData.header}
-                            sortableColumns={sortableColumns}
-                            sortColumn={sortColumn}
-                            sortOrder={sortOrder}
-                            handleSort={handleSort}
-                            columnTypes={columnTypes}
-                            ctaData={ctaData}
-                            handleHeaderClick={handleHeaderClick}
-                        />
-                    </TableHead>
-                    {tableData.rows.length === 0 ? (
-                        <TableBody>
-                            <TableRow>
-                                <TableCell colSpan={tableData.header.length} align="center">
-                                    <Typography variant="subtitle1" color="error">
-                                        No data matches the filter criteria.
-                                    </Typography>
-                                </TableCell>
-                            </TableRow>
-                        </TableBody>
-                    ) : (
-                        <TableBody>
-                            {tableData.rows.map((row, idx) => (
-                                <TableRowComponent
-                                    key={idx}
-                                    row={row}
-                                    tableData={tableData}
-                                    handleCellClick={handleCellClick}
-                                />
-                            ))}
-                        </TableBody>
-                    )}
-                </Table>
-            </TableContainer>
-            <Pagination count={totalPages} page={currentPage} onChange={(event, page) => setCurrentPage(page)} color="primary" sx={{ py: 2 }} />
-            {entityModalOpen && <EntityDetailsModal data={entityModalData} onClose={handleEntityModalClose} />}
-            {typeModalOpen && (
-                <FilterModal
-                    open={typeModalOpen}
-                    onClose={handleTypeModalClose}
-                    ctaTypes={typeModalData.ctaTypes}
-                    columnIndex={typeModalData.columnIndex}
-                    applyFilter={applyFilter}
-                />
-            )}
-        </Box>
+      <Box sx={{ position: 'relative' }}>
+        <Typography variant={compact ? "caption" : "body2"}>
+          {text}
+          <IconButton 
+            size="small" 
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(false);
+            }}
+            sx={{ ml: 0.5, p: 0.5 }}
+          >
+            <CompressIcon fontSize="small" />
+          </IconButton>
+        </Typography>
+      </Box>
     );
-}
+  }
+
+  return (
+    <Box sx={{ position: 'relative' }}>
+      <Typography variant={compact ? "caption" : "body2"}>
+        {text.substring(0, maxLength)}...
+        <IconButton 
+          size="small" 
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(true);
+          }}
+          sx={{ ml: 0.5, p: 0.5 }}
+        >
+          <ReadMoreIcon fontSize="small" />
+        </IconButton>
+      </Typography>
+    </Box>
+  );
+};
+
+// Component for cell with entity linking
+const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
+  const getScoreColor = (score) => {
+    if (score === null || score === undefined) return '#e0e0e0'; // gray for missing scores
+    if (score > 0.8) return '#a5d6a7'; // light green
+    if (score >= 0.5) return '#fff59d'; // light yellow
+    return '#ffab91'; // light red
+  };
+
+  const getScoreBorderColor = (score) => {
+    if (score === null || score === undefined) return '#9e9e9e'; // darker gray for missing scores
+    if (score > 0.8) return '#388e3c'; // darker green
+    if (score >= 0.5) return '#fbc02d'; // darker yellow
+    return '#e64a19'; // darker red
+  };
+
+  if (!entityData?.candidates || entityData.candidates.length === 0) {
+    return <TruncatedCell content={value} maxLength={150} compact={compact} />;
+  }
+
+  const topCandidate = entityData.candidates[0];
+  const score = topCandidate.score !== undefined ? topCandidate.score : null;
+  const tooltipContent = `
+    ${topCandidate.name} (${topCandidate.id})
+    ${score !== null ? `Score: ${score.toFixed(2)}` : 'Score: N/A'}
+    ${topCandidate.description || 'No description'}
+    Types: ${topCandidate.types ? topCandidate.types.map(t => t.name).join(', ') : 'N/A'}
+  `;
+
+  return (
+    <Box 
+      onClick={onClick} 
+      sx={{
+        cursor: 'pointer',
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        padding: compact ? '2px 4px' : '4px 8px',
+        borderRadius: '4px',
+        backgroundColor: getScoreColor(score),
+        border: `1px solid ${getScoreBorderColor(score)}`,
+        transition: 'all 0.2s',
+        '&:hover': {
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          filter: 'brightness(0.95)'
+        }
+      }}
+    >
+      <Tooltip title={tooltipContent} arrow placement="top">
+        <Box sx={{ width: '100%' }}>
+          <Typography variant={compact ? "caption" : "body2"} sx={{ fontWeight: 'medium' }}>
+            <TruncatedCell content={value} maxLength={100} compact={compact} />
+          </Typography>
+          <Box sx={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            mt: 0.5
+          }}>
+            <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: compact ? '0.65rem' : '0.7rem' }}>
+              {topCandidate.id}
+            </Typography>
+            <Chip
+              label={score !== null ? score.toFixed(2) : 'N/A'}
+              size="small"
+              sx={{ 
+                height: compact ? 16 : 20, 
+                fontSize: compact ? '0.65rem' : '0.7rem',
+                backgroundColor: getScoreBorderColor(score),
+                color: 'white'
+              }}
+            />
+          </Box>
+        </Box>
+      </Tooltip>
+    </Box>
+  );
+};
+
+const TableDataViewer = () => {
+  const { datasetName, tableName } = useParams();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1); // Keep for display purposes only
+  const [nextCursor, setNextCursor] = useState(null);
+  const [prevCursor, setPrevCursor] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalData, setModalData] = useState(null);
+  const [compact, setCompact] = useState(false);
+  const [status, setStatus] = useState('loading');
+  
+  // Fetch table data with cursor-based pagination
+  const fetchTableData = useCallback(async (options = {}) => {
+    setLoading(true);
+    
+    try {
+      const response = await getTableData(datasetName, tableName, 10, options);
+      console.log('Fetched table data:', response);
+      if (response.data) {
+        setData(response.data);
+        setStatus(response.data.status);
+        
+        // Store cursors from the response
+        setNextCursor(response.pagination?.next_cursor || null);
+        setPrevCursor(response.pagination?.prev_cursor || null);
+      } else {
+        setError('No data available');
+      }
+    } catch (err) {
+      console.error('Error fetching table data:', err);
+      setError(err.message || 'An error occurred while fetching data');
+    } finally {
+      setLoading(false);
+    }
+  }, [datasetName, tableName]);
+
+  useEffect(() => {
+    // Initial data fetch
+    fetchTableData();
+    
+    // Polling if table is still processing
+    const isProcessing = status === 'DOING' || status === 'TODO' || status === 'processing';
+    const intervalId = isProcessing ? setInterval(() => fetchTableData(), 5000) : null;
+    
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [fetchTableData, status]);
+
+  // Direct cursor-based pagination handlers
+  const handlePreviousPage = () => {
+    if (prevCursor) {
+      fetchTableData({ prevCursor });
+      setCurrentPage(prev => prev - 1); // Just for display purposes
+    }
+  };
+
+  const handleNextPage = () => {
+    if (nextCursor) {
+      fetchTableData({ nextCursor });
+      setCurrentPage(prev => prev + 1); // Just for display purposes
+    }
+  };
+
+  const handleCellClick = (rowId, colId, cellValue) => {
+    const entity = findEntityForCell(rowId, colId);
+    setModalData({
+      candidates: entity?.candidates || [],
+      rowId: rowId,
+      columnId: colId,
+      cellValue: cellValue
+    });
+    setModalOpen(true);
+  };
+
+  const handleAnnotationChange = (action, details) => {
+    if (!data || !data.rows) return;
+    
+    // Log the details for debugging
+    console.log(`Annotation ${action}:`, details);
+    
+    if (action === 'update') {
+      const updatedRows = data.rows.map(row => {
+        if (row.idRow === details.rowId) {
+          const updatedLinkedEntities = row.linked_entities.map(entity => {
+            if (entity.idColumn === details.columnId) {
+              const filteredCandidates = entity.candidates.filter(c => c.id !== details.entity.id);
+              return {
+                ...entity,
+                candidates: [details.entity, ...filteredCandidates]
+              };
+            }
+            return entity;
+          });
+          
+          return {
+            ...row,
+            linked_entities: updatedLinkedEntities
+          };
+        }
+        return row;
+      });
+      
+      setData({
+        ...data,
+        rows: updatedRows
+      });
+    } 
+    else if (action === 'delete') {
+      // Make sure to handle cases where rowId or columnId is 0
+      const { rowId, columnId, entityId } = details;
+      
+      // Check that rowId and columnId exist and are not undefined
+      if (rowId === undefined || columnId === undefined || !entityId) {
+        console.error('Invalid details for deletion:', details);
+        return;
+      }
+      
+      const updatedRows = data.rows.map(row => {
+        if (row.idRow === rowId) {
+          if (!row.linked_entities) return row;
+          
+          const updatedLinkedEntities = row.linked_entities.map(entity => {
+            if (entity.idColumn === columnId) {
+              const updatedCandidates = entity.candidates.filter(c => c.id !== entityId);
+              if (updatedCandidates.length === 0) {
+                return null;
+              }
+              return {
+                ...entity,
+                candidates: updatedCandidates
+              };
+            }
+            return entity;
+          }).filter(Boolean);
+          
+          return {
+            ...row,
+            linked_entities: updatedLinkedEntities
+          };
+        }
+        return row;
+      });
+      
+      setData({
+        ...data,
+        rows: updatedRows
+      });
+    }
+  };
+
+  const toggleCompact = () => {
+    setCompact(!compact);
+  };
+
+  const findEntityForCell = (rowId, colId) => {
+    if (!data || !data.rows) return null;
+    
+    const row = data.rows.find(r => r.idRow === rowId);
+    if (!row || !row.linked_entities) return null;
+    
+    return row.linked_entities.find(e => e.idColumn === colId);
+  };
+
+  if (loading && !data) {
+    return (
+      <Card sx={{ m: 2, overflow: 'hidden' }}>
+        <CardHeader
+          title={<Skeleton width="60%" height={40} />}
+          subheader={<Skeleton width="40%" height={24} />}
+        />
+        <Divider />
+        <CardContent>
+          <Box sx={{ height: 400 }}>
+            <Skeleton variant="rectangular" height={400} />
+          </Box>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert 
+        severity="error" 
+        sx={{ m: 2 }}
+        action={
+          <Button color="inherit" size="small" onClick={fetchTableData}>
+            Retry
+          </Button>
+        }
+      >
+        Error loading table data: {error}
+      </Alert>
+    );
+  }
+
+  if (!data || !data.rows || data.rows.length === 0) {
+    return (
+      <Card sx={{ m: 2, textAlign: 'center', p: 4 }}>
+        <Typography variant="h6" color="text.secondary">
+          No data available for this table
+        </Typography>
+        <Button 
+          variant="outlined" 
+          sx={{ mt: 2 }} 
+          onClick={fetchTableData}
+        >
+          Refresh
+        </Button>
+      </Card>
+    );
+  }
+
+  const hasEntity = data.rows.some(row => row.linked_entities && row.linked_entities.length > 0);
+
+  return (
+    <Box sx={{ m: 2 }}>
+      <Card elevation={3}>
+        <CardHeader
+          title={
+            <Typography variant="h5" component="div">
+              {tableName}
+            </Typography>
+          }
+          subheader={
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', mt: 1 }}>
+              <Typography variant="subtitle1" color="text.secondary" component="div">
+                Dataset: {datasetName}
+              </Typography>
+              <Chip
+                label={data.status || 'Unknown'}
+                size="small"
+                color={
+                  data.status === 'DONE' ? 'success' :
+                  data.status === 'DOING' || data.status === 'processing' ? 'warning' : 'default'
+                }
+                sx={{ ml: 2 }}
+              />
+              {(data.status === 'DOING' || data.status === 'processing') && (
+                <CircularProgress size={16} sx={{ ml: 1 }} />
+              )}
+              
+              {hasEntity && (
+                <Box sx={{ ml: 2, display: 'flex', alignItems: 'center' }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+                    Entity confidence:
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Box sx={{ 
+                      width: 12, 
+                      height: 12, 
+                      borderRadius: '50%', 
+                      backgroundColor: '#388e3c', 
+                      mr: 0.5 
+                    }} />
+                    <Typography variant="caption" sx={{ mr: 1 }}>High</Typography>
+                    
+                    <Box sx={{ 
+                      width: 12, 
+                      height: 12, 
+                      borderRadius: '50%', 
+                      backgroundColor: '#fbc02d', 
+                      mr: 0.5 
+                    }} />
+                    <Typography variant="caption" sx={{ mr: 1 }}>Medium</Typography>
+                    
+                    <Box sx={{ 
+                      width: 12, 
+                      height: 12, 
+                      borderRadius: '50%', 
+                      backgroundColor: '#e64a19', 
+                      mr: 0.5 
+                    }} />
+                    <Typography variant="caption">Low</Typography>
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          }
+          action={
+            <Box sx={{ display: 'flex' }}>
+              <Tooltip title={compact ? "Expand View" : "Compact View"}>
+                <IconButton onClick={toggleCompact} size="small">
+                  {compact ? <FullscreenIcon /> : <CompressIcon />}
+                </IconButton>
+              </Tooltip>
+            </Box>
+          }
+        />
+        
+        <Divider />
+        
+        <CardContent sx={{ p: 0 }}>
+          <TableContainer 
+            component={Paper} 
+            elevation={0}
+            sx={{ 
+              maxHeight: compact ? '60vh' : '70vh',
+              width: '100%',
+              overflow: 'auto',
+              transition: 'max-height 0.3s ease',
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                backgroundColor: '#f1f1f1',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                backgroundColor: '#888',
+                borderRadius: '4px',
+              },
+            }}
+          >
+            <Table 
+              stickyHeader 
+              size={compact ? 'small' : 'medium'}
+              sx={{ 
+                minWidth: 650,
+                tableLayout: 'auto',
+              }}
+            >
+              <TableHead>
+                <TableRow>
+                  {data.header.map((header, index) => (
+                    <TableCell
+                      key={index}
+                      sx={{
+                        fontWeight: 'bold',
+                        backgroundColor: '#f5f5f5',
+                        color: '#333',
+                        whiteSpace: 'nowrap',
+                        borderBottom: '2px solid #ddd',
+                        textTransform: 'uppercase',
+                        fontSize: compact ? '0.65rem' : '0.75rem',
+                        letterSpacing: '0.5px',
+                        padding: compact ? '8px 10px' : '12px 16px',
+                        minWidth: 120,
+                      }}
+                    >
+                      {header}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+              
+              <TableBody>
+                {data.rows.map((row) => (
+                  <TableRow 
+                    key={row.idRow}
+                    sx={{ 
+                      '&:nth-of-type(odd)': { backgroundColor: '#fafafa' },
+                      '&:hover': { backgroundColor: '#f1f7fd' },
+                      transition: 'background-color 0.2s'
+                    }}
+                  >
+                    {row.data.map((cell, colIndex) => {
+                      const entity = findEntityForCell(row.idRow, colIndex);
+                      
+                      return (
+                        <TableCell 
+                          key={colIndex}
+                          onClick={() => handleCellClick(row.idRow, colIndex, cell)}
+                          sx={{ 
+                            minWidth: 100,
+                            maxWidth: compact ? 200 : 300,
+                            verticalAlign: 'top',
+                            padding: compact ? '6px 10px' : '10px 16px',
+                            fontSize: compact ? '0.75rem' : 'inherit',
+                            cursor: 'pointer',
+                            '&:hover': {
+                              backgroundColor: 'rgba(0, 0, 0, 0.04)'
+                            }
+                          }}
+                        >
+                          {entity ? (
+                            <LinkedEntityCell 
+                              value={cell}
+                              entityData={entity}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCellClick(row.idRow, colIndex, cell);
+                              }}
+                              compact={compact}
+                            />
+                          ) : (
+                            <TruncatedCell content={cell} maxLength={compact ? 100 : 150} compact={compact} />
+                          )}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </CardContent>
+        
+        <Box sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          p: 2,
+          borderTop: '1px solid rgba(0, 0, 0, 0.12)'
+        }}>
+          <Typography variant="caption" color="text.secondary">
+            {data.rows.length} rows displayed
+          </Typography>
+          
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Button
+              disabled={!prevCursor}
+              onClick={handlePreviousPage}
+              startIcon={<NavigateBeforeIcon />}
+              sx={{ mr: 1 }}
+              color="primary"
+              variant="outlined"
+              size="small"
+            >
+              Previous
+            </Button>
+            
+            <Box sx={{ 
+              px: 2, 
+              py: 1, 
+              borderRadius: 1, 
+              bgcolor: 'action.selected', 
+              display: 'flex', 
+              alignItems: 'center'
+            }}>
+              <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                Page {currentPage}
+              </Typography>
+            </Box>
+            
+            <Button
+              disabled={!nextCursor}
+              onClick={handleNextPage}
+              endIcon={<NavigateNextIcon />}
+              sx={{ ml: 1 }}
+              color="primary"
+              variant="outlined"
+              size="small"
+            >
+              Next
+            </Button>
+          </Box>
+          
+          <Box>
+            <Tooltip title={compact ? "Show more details" : "Compact view"}>
+              <Button 
+                variant="text" 
+                size="small" 
+                color="inherit"
+                onClick={toggleCompact}
+                endIcon={<KeyboardArrowDownIcon sx={{ 
+                  transform: compact ? 'rotate(180deg)' : 'rotate(0)', 
+                  transition: 'transform 0.3s' 
+                }} />}
+              >
+                {compact ? "Expand" : "Compact"}
+              </Button>
+            </Tooltip>
+          </Box>
+        </Box>
+      </Card>
+      
+      {modalOpen && modalData && (
+        <EntityDetailsModal
+          data={modalData.candidates}
+          rowId={modalData.rowId}
+          columnId={modalData.columnId}
+          cellValue={modalData.cellValue}
+          datasetName={datasetName}
+          tableName={tableName}
+          onAnnotationChange={handleAnnotationChange}
+          onClose={() => {
+            setModalOpen(false);
+            setModalData(null);
+          }}
+        />
+      )}
+    </Box>
+  );
+};
 
 export default TableDataViewer;
