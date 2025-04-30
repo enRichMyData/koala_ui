@@ -118,7 +118,7 @@ const getDatasets = async (page = 1, perPage = 10, options = {}) => {
       })),
       pagination: {
         currentPage: page,
-        totalPages: Math.ceil(response.data.data.length / perPage) || 1,
+        totalPages: null, // Total pages cannot be determined with cursor-based pagination
         next_cursor: response.data.pagination.next_cursor,
         prev_cursor: response.data.pagination.prev_cursor
       }
