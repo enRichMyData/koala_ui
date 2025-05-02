@@ -3,11 +3,26 @@ from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_cors import CORS
 from flask_pymongo import PyMongo
+import os
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins
-app.config['JWT_SECRET_KEY'] = 'mysecretkey'
-app.config['MONGO_URI'] = 'mongodb://mongo:27017/mydatabase'  # Example MongoDB URI
+
+# Get required environment variables without fallbacks
+if 'JWT_SECRET_KEY' not in os.environ:
+    raise RuntimeError("JWT_SECRET_KEY environment variable is required")
+
+if 'MONGO_URI' not in os.environ:
+    raise RuntimeError("MONGO_URI environment variable is required")
+
+app.config['JWT_SECRET_KEY'] = os.environ['JWT_SECRET_KEY']
+
+# Append database name to MongoDB URI
+mongo_uri = os.environ['MONGO_URI']
+if not mongo_uri.endswith('/'):
+    mongo_uri += '/'
+app.config['MONGO_URI'] = mongo_uri + 'koala_db'
+
 mongo = PyMongo(app)
 bcrypt = Bcrypt(app)
 jwt = JWTManager(app)
