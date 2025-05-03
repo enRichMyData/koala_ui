@@ -16,15 +16,23 @@ function Login({ setLoggedIn }) {
   const handleSubmit = async (event) => {
     event.preventDefault();
     try {
-      const response = await axios.post(`${BACKEND_URL}/login`, { email, password });
-      
+      const formData = new URLSearchParams();
+      formData.append('username', email);
+      formData.append('password', password);
+
+      const response = await axios.post(`${BACKEND_URL}/login`, formData, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      });
+
       // Store token
       localStorage.setItem('token', response.data.access_token);
-      
+
       // Also store user ID - extract from email or use email directly as ID
       const userId = email.split('@')[0] || 'default_user';
       localStorage.setItem('userId', userId);
-      
+
       setLoggedIn(true);
     } catch (error) {
       console.error('Login failed:', error);

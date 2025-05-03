@@ -88,6 +88,25 @@ Once the server is running, you can access the application at `http://localhost:
 - **Table Viewing:** Explore detailed data within tables.
 - **Data Visualization:** Visualize data trends and insights.
 
+## User Management
+
+To create users, prepare a CSV file with the following format:
+
+```csv
+email,password
+admin@example.com,secure_admin_password
+user1@example.com,secure_user1_password
+user2@example.com,secure_user2_password
+```
+
+Run the user creation script:
+
+```bash
+python backend/create_default_users.py backend/users.csv
+```
+
+Ensure passwords are strong and secure.
+
 ## Screenshots
 
 ![Main Interface](./frontend/src/assets/images/splash_screen.webp)

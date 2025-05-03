@@ -1,80 +1,175 @@
-from flask import Flask, jsonify, request
-from flask_bcrypt import Bcrypt
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from flask_cors import CORS
-from flask_pymongo import PyMongo
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from pymongo import MongoClient
+from passlib.context import CryptContext
+from jose import JWTError, jwt
 import os
+import csv
+from datetime import datetime, timedelta
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins
+# Initialize FastAPI app
+app = FastAPI(
+    title="Koala API",
+    description="API for managing users and authentication in Koala UI.",
+    version="1.0.0",
+    swagger_ui_parameters={"persistAuthorization": True},  # Keep authorization in Swagger UI
+)
 
-# Get required environment variables without fallbacks
-if 'JWT_SECRET_KEY' not in os.environ:
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# MongoDB connection
+mongo_uri = os.getenv("MONGO_URI")
+if not mongo_uri:
+    raise RuntimeError("Environment variable MONGO_URI must be set")
+
+client = MongoClient(mongo_uri)
+db = client["koala_db"]  # Use "koala_db" as the default database name
+
+# JWT configuration
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+if not SECRET_KEY:
     raise RuntimeError("JWT_SECRET_KEY environment variable is required")
 
-if 'MONGO_URI' not in os.environ:
-    raise RuntimeError("MONGO_URI environment variable is required")
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-app.config['JWT_SECRET_KEY'] = os.environ['JWT_SECRET_KEY']
+# OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# Append database name to MongoDB URI
-mongo_uri = os.environ['MONGO_URI']
-if not mongo_uri.endswith('/'):
-    mongo_uri += '/'
-app.config['MONGO_URI'] = mongo_uri + 'koala_db'
+# Pydantic models
+class User(BaseModel):
+    email: str
+    password: str
 
-mongo = PyMongo(app)
-bcrypt = Bcrypt(app)
-jwt = JWTManager(app)
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
-def create_default_admin():
-    admin_email = "admin@example.com"
-    admin_password = "admin"
+# Utility functions
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
 
-    users_collection = mongo.db.users
-    if not users_collection.find_one({"email": admin_email}):
-        hashed_password = bcrypt.generate_password_hash(admin_password).decode('utf-8')
-        users_collection.insert_one({"email": admin_email, "password": hashed_password})
-        print(f"Default admin user '{admin_email}' created successfully.")
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        role: str = payload.get("role", "user")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        user = db.users.find_one({"email": email})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        user["role"] = role  # Add role to the user object
+        return user
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def is_admin_user(user: dict):
+    """
+    Check if the user has admin privileges.
+    """
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+@app.on_event("startup")
+def create_admin_user():
+    """
+    Create an admin user from environment variables if it doesn't already exist.
+    """
+    admin_email = os.getenv("ADMIN_EMAIL")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+
+    if not admin_email or not admin_password:
+        print("Admin credentials not provided in environment variables.")
+        return
+
+    if not db.users.find_one({"email": admin_email}):
+        hashed_password = pwd_context.hash(admin_password)
+        db.users.insert_one({"email": admin_email, "password": hashed_password, "role": "admin"})
+        print(f"Admin user '{admin_email}' created successfully.")
     else:
-        print(f"Default admin user '{admin_email}' already exists.")
+        print(f"Admin user '{admin_email}' already exists.")
 
+# Routes
+@app.post("/register", response_model=dict)
+def register(user: User, current_user: dict = Depends(get_current_user)):
+    """
+    Register a new user (Admin only).
+    """
+    is_admin_user(current_user)  # Ensure the current user is an admin
 
-create_default_admin()
+    if db.users.find_one({"email": user.email}):
+        raise HTTPException(status_code=400, detail="User already exists")
 
+    hashed_password = get_password_hash(user.password)
+    db.users.insert_one({"email": user.email, "password": hashed_password})
+    return {"msg": "User created successfully"}
 
-# Route to create a new user (registration)
-@app.route('/register', methods=['POST'])
-def register():
-    email = request.json.get('email')
-    password = request.json.get('password')
+@app.post("/login", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Login and get an access token.
+    """
+    user = db.users.find_one({"email": form_data.username})
+    if not user or not verify_password(form_data.password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    if not email or not password:
-        return jsonify({"msg": "Missing email or password"}), 400
+    # Include the user's role in the JWT token
+    access_token = create_access_token(data={"sub": user["email"], "role": user.get("role", "user")})
+    return {"access_token": access_token, "token_type": "bearer"}
 
-    hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-    users_collection = mongo.db.users
-    users_collection.insert_one({"email": email, "password": hashed_password})
+@app.post("/upload-users", response_model=dict)
+def upload_users(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """
+    Upload a CSV file to create multiple users (Admin only).
+    """
+    is_admin_user(current_user)  # Ensure the current user is an admin
 
-    return jsonify({"msg": "User created successfully"}), 201
+    try:
+        content = file.file.read().decode("utf-8").splitlines()
+        reader = csv.DictReader(content)
+        for row in reader:
+            email = row.get("email")
+            password = row.get("password")
+            if not email or not password:
+                continue
+            if db.users.find_one({"email": email}):
+                continue
+            hashed_password = get_password_hash(password)
+            db.users.insert_one({"email": email, "password": hashed_password})
+        return {"msg": "Users uploaded successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
 
-# Route to authenticate and generate access token (login)
-@app.route('/login', methods=['POST'])
-def login():
-    email = request.json.get('email')
-    password = request.json.get('password')
+@app.delete("/delete-user/{email}", response_model=dict)
+def delete_user(email: str, current_user: dict = Depends(get_current_user)):
+    """
+    Delete a user by email (Admin only).
+    """
+    is_admin_user(current_user)  # Ensure the current user is an admin
 
-    users_collection = mongo.db.users
-    user = users_collection.find_one({"email": email})
-    if not user or not bcrypt.check_password_hash(user['password'], password):
-        return jsonify({"msg": "Invalid email or password"}), 401
-
-    access_token = create_access_token(identity=email)
-    return jsonify(access_token=access_token), 200
-
-# Protected route that requires JWT
-@app.route('/protected', methods=['GET'])
-@jwt_required()
-def protected():
-    current_user = get_jwt_identity()
-    return jsonify(logged_in_as=current_user), 200
+    result = db.users.delete_one({"email": email})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"msg": f"User {email} deleted successfully"}
