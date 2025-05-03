@@ -1,6 +1,6 @@
 fastapi
 uvicorn
 pymongo
-passlib[bcrypt]
+passlib[bcrypt]>=1.7.4
 python-jose
 python-multipart
