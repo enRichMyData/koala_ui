@@ -44,7 +44,7 @@ services:
     volumes:
       - ./data/mongo:/data/db
     ports:
-      - "27017:27017"
+      - "${MONGO_PORT}:27017"
 
 volumes:
   frontend_node_modules:
