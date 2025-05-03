@@ -4,6 +4,8 @@ import axios from 'axios';
 import './Login.css'; // Import the CSS file for styling
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// remove any trailing slash so `${BASE_URL}/login` is always correct
+const BASE_URL = BACKEND_URL?.replace(/\/+$/, '');
 
 function Login({ setLoggedIn }) {
   const [email, setEmail] = useState('');
@@ -20,7 +22,7 @@ function Login({ setLoggedIn }) {
       formData.append('username', email);
       formData.append('password', password);
 
-      const response = await axios.post(`${BACKEND_URL}/login`, formData, {
+      const response = await axios.post(`${BASE_URL}/login`, formData, {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
