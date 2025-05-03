@@ -38,7 +38,7 @@ services:
       - mongo
 
   mongo:
-    image: mongo:6.0
+    image: mongo:${MONGO_VERSION}
     container_name: koala_mongo
     restart: unless-stopped
     volumes:
