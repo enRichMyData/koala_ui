@@ -37,8 +37,11 @@ services:
       - mongo
 
   mongo:
-    container_name: koala_mongo
     image: mongo:${MONGO_VERSION}
+    container_name: koala_mongo
+    restart: unless-stopped
+    volumes:
+      - ./data/mongo:/data/db
     ports:
       - "${MONGO_PORT}:27017"
 

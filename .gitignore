@@ -31,3 +31,4 @@ yarn.lock
 .env
 
 files
+data
