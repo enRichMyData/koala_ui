@@ -1,5 +1,6 @@
-Flask
-Flask-Bcrypt
-Flask-JWT-Extended
-Flask-CORS
-Flask-PyMongo
+fastapi
+uvicorn
+pymongo
+passlib[bcrypt]
+python-jose
+python-multipart
