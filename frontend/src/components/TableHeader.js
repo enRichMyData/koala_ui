@@ -1,37 +1,47 @@
 import React from 'react';
-import { TableCell, TableRow, Tooltip, Chip, IconButton, Box } from '@mui/material';
+import { TableCell, TableRow, Tooltip, IconButton, Box, Typography } from '@mui/material';
 import SortIcon from '@mui/icons-material/Sort';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
 import InfoIcon from '@mui/icons-material/Info';
+import FilterListIcon from '@mui/icons-material/FilterList';
 
-const TableHeader = ({ headers, sortableColumns, sortColumn, sortOrder, handleSort, columnTypes, ctaData, handleHeaderClick }) => (
+const TableHeader = ({
+  headers, sortableColumns, sortColumn, sortOrder,
+  handleSort, columnTypes, ctaData, handleHeaderClick
+}) => (
   <TableRow>
     {headers.map((header, index) => {
       const isNE = columnTypes[index] === 'NE';
-      const ctaTypes = ctaData[index] || [];
-      const bg = columnTypes[index] === 'NE' ? '#d0f0c0' : '#f0e68c';
+      const types = Array.isArray(ctaData[index]) ? ctaData[index] : ctaData[index]?.types || [];
+      const bg = isNE ? '#e8f5e9' : '#fff9c4';
+
       return (
         <TableCell
           key={index}
-          style={{
+          onClick={undefined}
+          sx={{
             backgroundColor: bg,
-            border: sortColumn === index ? '2px solid #3f51b5' : 'none',
-            padding: '8px 16px',
-            position: 'relative',
-            cursor: isNE ? 'pointer' : 'default',
-            textDecoration: isNE ? 'underline' : 'none'
+            borderBottom: '2px solid #ccc',
+            py: 1.5,
+            px: 2,
+            textAlign: 'center',
+            cursor: 'default',
+            transition: 'background 0.2s',
+            '&:hover': { backgroundColor: isNE ? '#c8e6c9' : bg }
           }}
-          onClick={isNE ? () => handleHeaderClick(ctaTypes, index) : undefined}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Tooltip title={columnTypes[index] === 'NE' ? 'Named Entity (NE)' : 'Literal (LIT)'} arrow>
-              <Box sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 'bold' }}>
-                {header} {columnTypes[index]}
-              </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+            <Tooltip title={isNE ? 'Named Entity (NE)' : 'Literal (LIT)'} arrow>
+              <Typography variant="subtitle2" noWrap>
+                {header}
+              </Typography>
             </Tooltip>
             {sortableColumns.includes(index) && (
-              <IconButton size="small" onClick={() => handleSort(index)} sx={{ ml: 1 }}>
+              <IconButton
+                size="small"
+                onClick={(e) => { e.stopPropagation(); handleSort(index); }}
+              >
                 {sortColumn === index
                   ? (sortOrder === 'asc' ? <ArrowDropUpIcon /> : <ArrowDropDownIcon />)
                   : <SortIcon />
@@ -39,13 +49,32 @@ const TableHeader = ({ headers, sortableColumns, sortColumn, sortOrder, handleSo
               </IconButton>
             )}
           </Box>
-          {ctaTypes.length > 0 && (
-            <Box sx={{ mt: 1, display: 'flex', flexWrap: 'wrap' }}>
-              {/* show top type badge */}
-              <Chip label={ctaTypes[0].name} size="small" color="primary" clickable />
-              {ctaTypes.length > 1 && <IconButton size="small"><InfoIcon fontSize="small" /></IconButton>}
-            </Box>
-          )}
+          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center', gap: 1 }}>
+            {types.length > 0 && (
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleHeaderClick(types, header);
+                }}
+                title="View column type statistics"
+              >
+                <InfoIcon fontSize="small" />
+              </IconButton>
+            )}
+            {isNE && (
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleHeaderClick(types, header, index);
+                }}
+                title="Filter by entity types in this column"
+              >
+                <FilterListIcon fontSize="small" />
+              </IconButton>
+            )}
+          </Box>
         </TableCell>
       );
     })}

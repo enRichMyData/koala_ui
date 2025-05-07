@@ -34,6 +34,8 @@ function Login({ setLoggedIn }) {
       // Also store user ID - extract from email or use email directly as ID
       const userId = email.split('@')[0] || 'default_user';
       localStorage.setItem('userId', userId);
+      // Persist actual email for display in nav bar
+      localStorage.setItem('userEmail', email);
 
       setLoggedIn(true);
     } catch (error) {

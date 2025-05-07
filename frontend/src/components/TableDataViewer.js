@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { getTableData } from '../services/apiServices';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
-  Button, Divider, Skeleton, Dialog, DialogTitle, DialogContent, List, ListItem, ListItemText
+  Button, Divider, Skeleton, Dialog, DialogTitle, DialogContent, 
+  Grid, LinearProgress, DialogActions, Breadcrumbs, Link
 } from '@mui/material';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
@@ -12,8 +13,13 @@ import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import ReadMoreIcon from '@mui/icons-material/ReadMore';
 import CompressIcon from '@mui/icons-material/Compress';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import FilterIcon from '@mui/icons-material/FilterList';
+import ClearIcon from '@mui/icons-material/Clear';
 import EntityDetailsModal from './EntityDetailsModal';
 import TableHeader from './TableHeader';
+import TableSearch from './TableSearch';
+import TableSortControls from './TableSortControls';
+import TypeFilterModal from './TypeFilterModal';
 
 // Component for truncating text in cells
 const TruncatedCell = ({ content, maxLength = 100, compact = false }) => {
@@ -145,11 +151,12 @@ const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
 };
 
 const TableDataViewer = () => {
+  const navigate = useNavigate();
   const { datasetName, tableName } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1); // Keep for display purposes only
+  const [currentPage, setCurrentPage] = useState(1);
   const [nextCursor, setNextCursor] = useState(null);
   const [prevCursor, setPrevCursor] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -158,27 +165,58 @@ const TableDataViewer = () => {
   const [status, setStatus] = useState('loading');
   const [openTypeModal, setOpenTypeModal] = useState(false);
   const [typeModalData, setTypeModalData] = useState([]);
-  const [typeModalColumn, setTypeModalColumn] = useState(null);
+  const [typeModalColumn, setTypeModalColumn] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [searchColumns, setSearchColumns] = useState([]);
+  const [activeFilters, setActiveFilters] = useState({
+    column: null,
+    includeTypes: [],
+    excludeTypes: []
+  });
+  const [sortParams, setSortParams] = useState({
+    sortBy: null,
+    column: null,
+    sortDirection: 'desc'
+  });
+  const [typeFilterOpen, setTypeFilterOpen] = useState(false);
+  const [selectedFilterColumn, setSelectedFilterColumn] = useState(null);
+  const [availableColumnTypes, setAvailableColumnTypes] = useState([]);
 
-  const handleHeaderClick = (types, index) => {
-    setTypeModalData(types);
-    setTypeModalColumn(index);
+  const handleHeaderClick = (types, columnName) => {
+    const sorted = types
+      .filter(t => t.name)
+      .sort((a, b) => b.frequency - a.frequency);
+    setTypeModalData(sorted);
+    setTypeModalColumn(columnName);
     setOpenTypeModal(true);
   };
+
   const handleCloseTypeModal = () => setOpenTypeModal(false);
 
-  // Fetch table data with cursor-based pagination
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
     
     try {
-      const response = await getTableData(datasetName, tableName, 10, options);
+      const fetchOptions = {
+        ...options,
+        search: searchText || undefined,
+        searchColumns: searchColumns?.length > 0 ? searchColumns : undefined,
+        column: activeFilters.column !== null ? activeFilters.column : undefined,
+        includeTypes: activeFilters.includeTypes?.length > 0 ? activeFilters.includeTypes : undefined,
+        excludeTypes: activeFilters.excludeTypes?.length > 0 ? activeFilters.excludeTypes : undefined,
+        sortBy: sortParams.sortBy || undefined,
+        sortDirection: sortParams.sortDirection || undefined
+      };
+      
+      if (sortParams.sortBy === 'confidence' && sortParams.column !== undefined) {
+        fetchOptions.column = sortParams.column;
+      }
+
+      const response = await getTableData(datasetName, tableName, 10, fetchOptions);
       console.log('Fetched table data:', response);
       if (response.data) {
         setData(response.data);
         setStatus(response.data.status);
-        
-        // Store cursors from the response
         setNextCursor(response.pagination?.next_cursor || null);
         setPrevCursor(response.pagination?.prev_cursor || null);
       } else {
@@ -190,34 +228,87 @@ const TableDataViewer = () => {
     } finally {
       setLoading(false);
     }
-  }, [datasetName, tableName]);
+  }, [datasetName, tableName, searchText, searchColumns, activeFilters, sortParams]);
 
   useEffect(() => {
-    // Initial data fetch
     fetchTableData();
-    
-    // Polling if table is still processing
     const isProcessing = status === 'DOING' || status === 'TODO' || status === 'processing';
     const intervalId = isProcessing ? setInterval(() => fetchTableData(), 5000) : null;
-    
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
   }, [fetchTableData, status]);
 
-  // Direct cursor-based pagination handlers
   const handlePreviousPage = () => {
     if (prevCursor) {
       fetchTableData({ prevCursor });
-      setCurrentPage(prev => prev - 1); // Just for display purposes
+      setCurrentPage(prev => prev - 1);
     }
   };
 
   const handleNextPage = () => {
     if (nextCursor) {
       fetchTableData({ nextCursor });
-      setCurrentPage(prev => prev + 1); // Just for display purposes
+      setCurrentPage(prev => prev + 1);
     }
+  };
+
+  const handleSearch = (text, columns = []) => {
+    setSearchText(text);
+    setSearchColumns(columns);
+    setCurrentPage(1);
+    fetchTableData();
+  };
+
+  const handleSortChange = (params) => {
+    setSortParams(params);
+    setCurrentPage(1);
+    fetchTableData();
+  };
+
+  const handleColumnHeaderClick = (columnIndex, columnName) => {
+    const columnData = data?.column_types?.[columnIndex];
+    if (columnData && columnData.types && columnData.types.length > 0) {
+      setSelectedFilterColumn(columnIndex);
+      setAvailableColumnTypes(columnData.types);
+      setTypeFilterOpen(true);
+    } else {
+      console.log("No type information available for this column");
+    }
+  };
+
+  const handleApplyFilter = (filterData) => {
+    setActiveFilters(filterData);
+    setCurrentPage(1);
+    fetchTableData();
+  };
+
+  const handleClearFilters = () => {
+    setSearchText('');
+    setSearchColumns([]);
+    setActiveFilters({
+      column: null,
+      includeTypes: [],
+      excludeTypes: []
+    });
+    setSortParams({
+      sortBy: null,
+      column: null,
+      sortDirection: 'desc'
+    });
+    setCurrentPage(1);
+    fetchTableData();
+  };
+
+  const toggleCompact = () => {
+    setCompact(!compact);
+  };
+
+  const findEntityForCell = (rowId, colId) => {
+    if (!data || !data.rows) return null;
+    const row = data.rows.find(r => r.idRow === rowId);
+    if (!row || !row.linked_entities) return null;
+    return row.linked_entities.find(e => e.idColumn === colId);
   };
 
   const handleCellClick = (rowId, colId, cellValue) => {
@@ -233,10 +324,7 @@ const TableDataViewer = () => {
 
   const handleAnnotationChange = (action, details) => {
     if (!data || !data.rows) return;
-    
-    // Log the details for debugging
     console.log(`Annotation ${action}:`, details);
-    
     if (action === 'update') {
       const updatedRows = data.rows.map(row => {
         if (row.idRow === details.rowId) {
@@ -250,7 +338,6 @@ const TableDataViewer = () => {
             }
             return entity;
           });
-          
           return {
             ...row,
             linked_entities: updatedLinkedEntities
@@ -258,26 +345,19 @@ const TableDataViewer = () => {
         }
         return row;
       });
-      
       setData({
         ...data,
         rows: updatedRows
       });
-    } 
-    else if (action === 'delete') {
-      // Make sure to handle cases where rowId or columnId is 0
+    } else if (action === 'delete') {
       const { rowId, columnId, entityId } = details;
-      
-      // Check that rowId and columnId exist and are not undefined
       if (rowId === undefined || columnId === undefined || !entityId) {
         console.error('Invalid details for deletion:', details);
         return;
       }
-      
       const updatedRows = data.rows.map(row => {
         if (row.idRow === rowId) {
           if (!row.linked_entities) return row;
-          
           const updatedLinkedEntities = row.linked_entities.map(entity => {
             if (entity.idColumn === columnId) {
               const updatedCandidates = entity.candidates.filter(c => c.id !== entityId);
@@ -291,7 +371,6 @@ const TableDataViewer = () => {
             }
             return entity;
           }).filter(Boolean);
-          
           return {
             ...row,
             linked_entities: updatedLinkedEntities
@@ -299,7 +378,6 @@ const TableDataViewer = () => {
         }
         return row;
       });
-      
       setData({
         ...data,
         rows: updatedRows
@@ -307,18 +385,11 @@ const TableDataViewer = () => {
     }
   };
 
-  const toggleCompact = () => {
-    setCompact(!compact);
-  };
-
-  const findEntityForCell = (rowId, colId) => {
-    if (!data || !data.rows) return null;
-    
-    const row = data.rows.find(r => r.idRow === rowId);
-    if (!row || !row.linked_entities) return null;
-    
-    return row.linked_entities.find(e => e.idColumn === colId);
-  };
+  const hasActiveFilters = searchText || 
+    searchColumns?.length > 0 || 
+    activeFilters.includeTypes?.length > 0 || 
+    activeFilters.excludeTypes?.length > 0 ||
+    sortParams.sortBy;
 
   if (loading && !data) {
     return (
@@ -372,17 +443,33 @@ const TableDataViewer = () => {
 
   const hasEntity = data.rows.some(row => row.linked_entities && row.linked_entities.length > 0);
 
-  // Derive per-column classification from backend
   const classified = data.classified_columns || { NE: {}, LIT: {} };
   const columnTypes = data.header.map((_, idx) =>
     classified.NE.hasOwnProperty(idx) ? 'NE'
     : classified.LIT.hasOwnProperty(idx) ? 'LIT'
     : ''
   );
-  const ctaData = data.column_types || {};
+  const rawColumnTypes = data?.column_types || {};
+  const ctaData = data?.header.map((_, idx) => rawColumnTypes[idx]?.types || []);
 
   return (
     <Box sx={{ m: 2 }}>
+      <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
+        <Link color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer' }}>
+          Datasets
+        </Link>
+        <Link
+          color="inherit"
+          onClick={() => navigate(`/dataset/${encodeURIComponent(datasetName)}`)}
+          sx={{ cursor: 'pointer' }}
+        >
+          {datasetName}
+        </Link>
+        <Typography color="text.primary" noWrap>
+          {tableName}
+        </Typography>
+      </Breadcrumbs>
+
       <Card elevation={3}>
         <CardHeader
           title={
@@ -396,15 +483,15 @@ const TableDataViewer = () => {
                 Dataset: {datasetName}
               </Typography>
               <Chip
-                label={data.status || 'Unknown'}
+                label={data?.status || 'Unknown'}
                 size="small"
                 color={
-                  data.status === 'DONE' ? 'success' :
-                  data.status === 'DOING' || data.status === 'processing' ? 'warning' : 'default'
+                  data?.status === 'DONE' ? 'success' :
+                  data?.status === 'DOING' || data?.status === 'processing' ? 'warning' : 'default'
                 }
                 sx={{ ml: 2 }}
               />
-              {(data.status === 'DOING' || data.status === 'processing') && (
+              {(data?.status === 'DOING' || data?.status === 'processing') && (
                 <CircularProgress size={16} sx={{ ml: 1 }} />
               )}
               
@@ -443,6 +530,17 @@ const TableDataViewer = () => {
                   </Box>
                 </Box>
               )}
+              
+              {hasActiveFilters && (
+                <Chip
+                  icon={<FilterIcon />}
+                  label="Filters Active"
+                  size="small"
+                  color="secondary"
+                  onDelete={handleClearFilters}
+                  sx={{ ml: 2 }}
+                />
+              )}
             </Box>
           }
           action={
@@ -455,6 +553,28 @@ const TableDataViewer = () => {
             </Box>
           }
         />
+        
+        <Divider />
+        
+        <CardContent sx={{ p: 2 }}>
+          <TableSearch
+            headers={data?.header || []}
+            onSearch={handleSearch}
+            loading={loading}
+            columnTypes={columnTypes}
+            initialSearchText={searchText}
+            initialSearchColumns={searchColumns}
+          />
+          
+          <TableSortControls
+            headers={data?.header || []}
+            columnTypes={columnTypes}
+            onSort={handleSortChange}
+            currentSortParams={sortParams}
+            hasActiveFilters={hasActiveFilters}
+            onClearFilters={handleClearFilters}
+          />
+        </CardContent>
         
         <Divider />
         
@@ -490,65 +610,81 @@ const TableDataViewer = () => {
             >
               <TableHead>
                 <TableHeader
-                  headers={data.header}
+                  headers={data?.header || []}
                   sortableColumns={[]} 
                   sortColumn={null} 
                   sortOrder={null} 
                   handleSort={() => {}}
                   columnTypes={columnTypes}
                   ctaData={ctaData}
-                  handleHeaderClick={handleHeaderClick}
+                  handleHeaderClick={(types, header, columnIndex) => {
+                    handleColumnHeaderClick(columnIndex, header);
+                  }}
                 />
               </TableHead>
               
               <TableBody>
-                {data.rows.map((row) => (
-                  <TableRow 
-                    key={row.idRow}
-                    sx={{ 
-                      '&:nth-of-type(odd)': { backgroundColor: '#fafafa' },
-                      '&:hover': { backgroundColor: '#f1f7fd' },
-                      transition: 'background-color 0.2s'
-                    }}
-                  >
-                    {row.data.map((cell, colIndex) => {
-                      const isNE = columnTypes[colIndex] === 'NE';
-                      const entity = findEntityForCell(row.idRow, colIndex);
-                      
-                      return (
-                        <TableCell 
-                          key={colIndex}
-                          onClick={isNE ? () => handleCellClick(row.idRow, colIndex, cell) : undefined}
-                          sx={{ 
-                            cursor: isNE ? 'pointer' : 'default',
-                            minWidth: 100,
-                            maxWidth: compact ? 200 : 300,
-                            verticalAlign: 'top',
-                            padding: compact ? '6px 10px' : '10px 16px',
-                            fontSize: compact ? '0.75rem' : 'inherit',
-                            '&:hover': {
-                              backgroundColor: isNE ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
-                            }
-                          }}
-                        >
-                          {entity ? (
-                            <LinkedEntityCell 
-                              value={cell}
-                              entityData={entity}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleCellClick(row.idRow, colIndex, cell);
-                              }}
-                              compact={compact}
-                            />
-                          ) : (
-                            <TruncatedCell content={cell} maxLength={compact ? 100 : 150} compact={compact} />
-                          )}
-                        </TableCell>
-                      );
-                    })}
+                {data?.rows?.length > 0 ? (
+                  data.rows.map((row) => (
+                    <TableRow 
+                      key={row.idRow}
+                      sx={{ 
+                        '&:nth-of-type(odd)': { backgroundColor: '#fafafa' },
+                        '&:hover': { backgroundColor: '#f1f7fd' },
+                        transition: 'background-color 0.2s'
+                      }}
+                    >
+                      {row.data.map((cell, colIndex) => {
+                        const isNE = columnTypes[colIndex] === 'NE';
+                        const entity = findEntityForCell(row.idRow, colIndex);
+                        
+                        return (
+                          <TableCell 
+                            key={colIndex}
+                            onClick={isNE ? () => handleCellClick(row.idRow, colIndex, cell) : undefined}
+                            sx={{ 
+                              cursor: isNE ? 'pointer' : 'default',
+                              minWidth: 100,
+                              maxWidth: compact ? 200 : 300,
+                              verticalAlign: 'top',
+                              padding: compact ? '6px 10px' : '10px 16px',
+                              fontSize: compact ? '0.75rem' : 'inherit',
+                              '&:hover': {
+                                backgroundColor: isNE ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
+                              }
+                            }}
+                          >
+                            {entity ? (
+                              <LinkedEntityCell 
+                                value={cell}
+                                entityData={entity}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCellClick(row.idRow, colIndex, cell);
+                                }}
+                                compact={compact}
+                              />
+                            ) : (
+                              <TruncatedCell content={cell} maxLength={compact ? 100 : 150} compact={compact} />
+                            )}
+                          </TableCell>
+                        );
+                      })}
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={(data?.header || []).length} align="center" sx={{ py: 4 }}>
+                      {loading ? (
+                        <CircularProgress size={32} />
+                      ) : (
+                        <Typography variant="body1" color="text.secondary">
+                          No rows found{hasActiveFilters ? ' matching the current filters' : ''}
+                        </Typography>
+                      )}
+                    </TableCell>
                   </TableRow>
-                ))}
+                )}
               </TableBody>
             </Table>
           </TableContainer>
@@ -562,7 +698,8 @@ const TableDataViewer = () => {
           borderTop: '1px solid rgba(0, 0, 0, 0.12)'
         }}>
           <Typography variant="caption" color="text.secondary">
-            {data.rows.length} rows displayed
+            {data?.rows?.length > 0 ? `${data.rows.length} rows displayed` : 'No rows found'}
+            {data?.total_matches && ` (${data.total_matches} total matches)`}
           </Typography>
           
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -623,6 +760,16 @@ const TableDataViewer = () => {
         </Box>
       </Card>
       
+      <TypeFilterModal
+        open={typeFilterOpen}
+        onClose={() => setTypeFilterOpen(false)}
+        onApplyFilter={handleApplyFilter}
+        columnIndex={selectedFilterColumn}
+        columnName={data?.header?.[selectedFilterColumn] || `Column ${selectedFilterColumn}`}
+        availableTypes={availableColumnTypes || []}
+        loading={loading}
+      />
+      
       {modalOpen && modalData && (
         <EntityDetailsModal
           data={modalData.candidates}
@@ -638,19 +785,38 @@ const TableDataViewer = () => {
           }}
         />
       )}
-
-      <Dialog open={openTypeModal} onClose={handleCloseTypeModal}>
-        <DialogTitle>Column {typeModalColumn} Types</DialogTitle>
-        <DialogContent dividers>
-          <List>
-            {typeModalData.map((t, i) => (
-              <ListItem key={i}>
-                <ListItemText primary={`${t.name}: ${t.frequency.toFixed(2)}`} />
-              </ListItem>
-            ))}
-          </List>
-        </DialogContent>
-      </Dialog>
+      
+      {openTypeModal && (
+        <Dialog open={openTypeModal} onClose={handleCloseTypeModal} maxWidth="sm" fullWidth>
+          <DialogTitle>Types for Column: {typeModalColumn}</DialogTitle>
+          <DialogContent dividers>
+            <Grid container spacing={2}>
+              {typeModalData.map((t, i) => (
+                <Grid item xs={12} key={i}>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Typography sx={{ minWidth: 120, fontWeight: 'medium' }} noWrap>
+                      {t.name}
+                    </Typography>
+                    <Box sx={{ flexGrow: 1, mx: 2 }}>
+                      <LinearProgress
+                        variant="determinate"
+                        value={t.frequency * 100}
+                        sx={{ height: 8, borderRadius: 4, backgroundColor: '#eee' }}
+                      />
+                    </Box>
+                    <Typography sx={{ minWidth: 40, textAlign: 'right' }}>
+                      {(t.frequency * 100).toFixed(1)}%
+                    </Typography>
+                  </Box>
+                </Grid>
+              ))}
+            </Grid>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCloseTypeModal}>Close</Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Box>
   );
 };

@@ -212,6 +212,58 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
       params.prev_cursor = options.prevCursor;
     }
     
+    // Add search parameters if provided
+    if (options.search) {
+      params.search = options.search;
+    }
+    
+    // Add column parameter if provided
+    if (options.column !== undefined && options.column !== null) {
+      params.column = options.column;
+    }
+    
+    // Add search_columns if provided
+    if (options.searchColumns && options.searchColumns.length > 0) {
+      // Handle array parameters properly for axios
+      options.searchColumns.forEach(col => {
+        if (params.search_columns) {
+          params.search_columns.push(col);
+        } else {
+          params.search_columns = [col];
+        }
+      });
+    }
+    
+    // Add type filtering parameters
+    if (options.includeTypes && options.includeTypes.length > 0) {
+      options.includeTypes.forEach(type => {
+        if (params.include_types) {
+          params.include_types.push(type);
+        } else {
+          params.include_types = [type];
+        }
+      });
+    }
+    
+    if (options.excludeTypes && options.excludeTypes.length > 0) {
+      options.excludeTypes.forEach(type => {
+        if (params.exclude_types) {
+          params.exclude_types.push(type);
+        } else {
+          params.exclude_types = [type];
+        }
+      });
+    }
+    
+    // Add sorting parameters
+    if (options.sortBy) {
+      params.sort_by = options.sortBy;
+    }
+    
+    if (options.sortDirection) {
+      params.sort_direction = options.sortDirection;
+    }
+    
     const response = await crocodileApiClient.get(`/datasets/${datasetName}/tables/${tableName}`, {
       params: params
     });
