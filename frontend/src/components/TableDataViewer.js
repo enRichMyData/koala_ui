@@ -4,7 +4,7 @@ import { getTableData } from '../services/apiServices';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
-  Button, Divider, Skeleton
+  Button, Divider, Skeleton, Dialog, DialogTitle, DialogContent, List, ListItem, ListItemText
 } from '@mui/material';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
@@ -13,6 +13,7 @@ import ReadMoreIcon from '@mui/icons-material/ReadMore';
 import CompressIcon from '@mui/icons-material/Compress';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import EntityDetailsModal from './EntityDetailsModal';
+import TableHeader from './TableHeader';
 
 // Component for truncating text in cells
 const TruncatedCell = ({ content, maxLength = 100, compact = false }) => {
@@ -155,7 +156,17 @@ const TableDataViewer = () => {
   const [modalData, setModalData] = useState(null);
   const [compact, setCompact] = useState(false);
   const [status, setStatus] = useState('loading');
-  
+  const [openTypeModal, setOpenTypeModal] = useState(false);
+  const [typeModalData, setTypeModalData] = useState([]);
+  const [typeModalColumn, setTypeModalColumn] = useState(null);
+
+  const handleHeaderClick = (types, index) => {
+    setTypeModalData(types);
+    setTypeModalColumn(index);
+    setOpenTypeModal(true);
+  };
+  const handleCloseTypeModal = () => setOpenTypeModal(false);
+
   // Fetch table data with cursor-based pagination
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
@@ -361,6 +372,15 @@ const TableDataViewer = () => {
 
   const hasEntity = data.rows.some(row => row.linked_entities && row.linked_entities.length > 0);
 
+  // Derive per-column classification from backend
+  const classified = data.classified_columns || { NE: {}, LIT: {} };
+  const columnTypes = data.header.map((_, idx) =>
+    classified.NE.hasOwnProperty(idx) ? 'NE'
+    : classified.LIT.hasOwnProperty(idx) ? 'LIT'
+    : ''
+  );
+  const ctaData = data.column_types || {};
+
   return (
     <Box sx={{ m: 2 }}>
       <Card elevation={3}>
@@ -469,27 +489,16 @@ const TableDataViewer = () => {
               }}
             >
               <TableHead>
-                <TableRow>
-                  {data.header.map((header, index) => (
-                    <TableCell
-                      key={index}
-                      sx={{
-                        fontWeight: 'bold',
-                        backgroundColor: '#f5f5f5',
-                        color: '#333',
-                        whiteSpace: 'nowrap',
-                        borderBottom: '2px solid #ddd',
-                        textTransform: 'uppercase',
-                        fontSize: compact ? '0.65rem' : '0.75rem',
-                        letterSpacing: '0.5px',
-                        padding: compact ? '8px 10px' : '12px 16px',
-                        minWidth: 120,
-                      }}
-                    >
-                      {header}
-                    </TableCell>
-                  ))}
-                </TableRow>
+                <TableHeader
+                  headers={data.header}
+                  sortableColumns={[]} 
+                  sortColumn={null} 
+                  sortOrder={null} 
+                  handleSort={() => {}}
+                  columnTypes={columnTypes}
+                  ctaData={ctaData}
+                  handleHeaderClick={handleHeaderClick}
+                />
               </TableHead>
               
               <TableBody>
@@ -503,21 +512,22 @@ const TableDataViewer = () => {
                     }}
                   >
                     {row.data.map((cell, colIndex) => {
+                      const isNE = columnTypes[colIndex] === 'NE';
                       const entity = findEntityForCell(row.idRow, colIndex);
                       
                       return (
                         <TableCell 
                           key={colIndex}
-                          onClick={() => handleCellClick(row.idRow, colIndex, cell)}
+                          onClick={isNE ? () => handleCellClick(row.idRow, colIndex, cell) : undefined}
                           sx={{ 
+                            cursor: isNE ? 'pointer' : 'default',
                             minWidth: 100,
                             maxWidth: compact ? 200 : 300,
                             verticalAlign: 'top',
                             padding: compact ? '6px 10px' : '10px 16px',
                             fontSize: compact ? '0.75rem' : 'inherit',
-                            cursor: 'pointer',
                             '&:hover': {
-                              backgroundColor: 'rgba(0, 0, 0, 0.04)'
+                              backgroundColor: isNE ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
                             }
                           }}
                         >
@@ -628,6 +638,19 @@ const TableDataViewer = () => {
           }}
         />
       )}
+
+      <Dialog open={openTypeModal} onClose={handleCloseTypeModal}>
+        <DialogTitle>Column {typeModalColumn} Types</DialogTitle>
+        <DialogContent dividers>
+          <List>
+            {typeModalData.map((t, i) => (
+              <ListItem key={i}>
+                <ListItemText primary={`${t.name}: ${t.frequency.toFixed(2)}`} />
+              </ListItem>
+            ))}
+          </List>
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 };
