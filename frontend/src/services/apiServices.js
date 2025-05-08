@@ -40,6 +40,30 @@ const crocodileApiClient = axios.create({
   baseURL: CROCODILE_API_URL,
 });
 
+// Add a custom params serializer to handle arrays correctly
+crocodileApiClient.interceptors.request.use(config => {
+  // If there are array parameters that need repeating (like include_types, exclude_types)
+  if (config.params) {
+    const newParams = new URLSearchParams();
+    
+    Object.entries(config.params).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        // For arrays, add each value with the same key
+        value.forEach(item => {
+          newParams.append(key, item);
+        });
+      } else if (value !== undefined && value !== null) {
+        // For non-arrays, just add the parameter
+        newParams.append(key, value);
+      }
+    });
+    
+    // Replace the serialized params string in the URL
+    config.paramsSerializer = () => newParams.toString();
+  }
+  return config;
+});
+
 // Add auth token to every Crocodile API request
 crocodileApiClient.interceptors.request.use(async config => {
   try {
@@ -224,35 +248,16 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
     
     // Add search_columns if provided
     if (options.searchColumns && options.searchColumns.length > 0) {
-      // Handle array parameters properly for axios
-      options.searchColumns.forEach(col => {
-        if (params.search_columns) {
-          params.search_columns.push(col);
-        } else {
-          params.search_columns = [col];
-        }
-      });
+      params.search_columns = options.searchColumns;
     }
     
-    // Add type filtering parameters
+    // Simplified handling for type filtering parameters
     if (options.includeTypes && options.includeTypes.length > 0) {
-      options.includeTypes.forEach(type => {
-        if (params.include_types) {
-          params.include_types.push(type);
-        } else {
-          params.include_types = [type];
-        }
-      });
+      params.include_types = options.includeTypes;
     }
     
     if (options.excludeTypes && options.excludeTypes.length > 0) {
-      options.excludeTypes.forEach(type => {
-        if (params.exclude_types) {
-          params.exclude_types.push(type);
-        } else {
-          params.exclude_types = [type];
-        }
-      });
+      params.exclude_types = options.excludeTypes;
     }
     
     // Add sorting parameters
@@ -264,6 +269,7 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
       params.sort_direction = options.sortDirection;
     }
     
+    console.log('Sending params:', params);
     const response = await crocodileApiClient.get(`/datasets/${datasetName}/tables/${tableName}`, {
       params: params
     });
