@@ -4,8 +4,7 @@ import { getTableData, getTableStatus } from '../services/apiServices';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
-  Button, Divider, Skeleton, Dialog, DialogTitle, DialogContent, 
-  Grid, LinearProgress, DialogActions, Breadcrumbs, Link
+  Button, Divider, Skeleton, LinearProgress, Breadcrumbs, Link
 } from '@mui/material';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
@@ -162,9 +161,6 @@ const TableDataViewer = () => {
   const [modalData, setModalData] = useState(null);
   const [compact, setCompact] = useState(false);
   const [status, setStatus] = useState('loading');
-  const [openTypeModal, setOpenTypeModal] = useState(false);
-  const [typeModalData, setTypeModalData] = useState([]);
-  const [typeModalColumn, setTypeModalColumn] = useState('');
   const [searchText, setSearchText] = useState('');
   const [searchColumns, setSearchColumns] = useState([]);
   const [activeFilters, setActiveFilters] = useState({
@@ -181,8 +177,6 @@ const TableDataViewer = () => {
   const [selectedFilterColumn, setSelectedFilterColumn] = useState(null);
   const [availableColumnTypes, setAvailableColumnTypes] = useState([]);
   const [progressInfo, setProgressInfo] = useState(null);
-
-  const handleCloseTypeModal = () => setOpenTypeModal(false);
 
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
@@ -811,38 +805,6 @@ const TableDataViewer = () => {
             setModalData(null);
           }}
         />
-      )}
-      
-      {openTypeModal && (
-        <Dialog open={openTypeModal} onClose={handleCloseTypeModal} maxWidth="sm" fullWidth>
-          <DialogTitle>Types for Column: {typeModalColumn}</DialogTitle>
-          <DialogContent dividers>
-            <Grid container spacing={2}>
-              {typeModalData.map((t, i) => (
-                <Grid item xs={12} key={i}>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Typography sx={{ minWidth: 120, fontWeight: 'medium' }} noWrap>
-                      {t.name}
-                    </Typography>
-                    <Box sx={{ flexGrow: 1, mx: 2 }}>
-                      <LinearProgress
-                        variant="determinate"
-                        value={t.frequency * 100}
-                        sx={{ height: 8, borderRadius: 4, backgroundColor: '#eee' }}
-                      />
-                    </Box>
-                    <Typography sx={{ minWidth: 40, textAlign: 'right' }}>
-                      {(t.frequency * 100).toFixed(1)}%
-                    </Typography>
-                  </Box>
-                </Grid>
-              ))}
-            </Grid>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleCloseTypeModal}>Close</Button>
-          </DialogActions>
-        </Dialog>
       )}
     </Box>
   );
