@@ -408,6 +408,16 @@ const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityI
   }
 };
 
+const getTableStatus = async (datasetName, tableName) => {
+  try {
+    const response = await crocodileApiClient.get(`/datasets/${encodeURIComponent(datasetName)}/tables/${encodeURIComponent(tableName)}/status`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching table status:', error);
+    throw error;
+  }
+};
+
 export { 
   getDatasets, 
   getTables, 
@@ -419,5 +429,6 @@ export {
   updateAnnotation,
   deleteAnnotation,
   createDataset, 
-  uploadTable
+  uploadTable,
+  getTableStatus
 };

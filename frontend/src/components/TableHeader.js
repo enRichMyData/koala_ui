@@ -3,7 +3,6 @@ import { TableCell, TableRow, Tooltip, IconButton, Box, Typography } from '@mui/
 import SortIcon from '@mui/icons-material/Sort';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
-import InfoIcon from '@mui/icons-material/Info';
 import FilterListIcon from '@mui/icons-material/FilterList';
 
 const TableHeader = ({
@@ -14,6 +13,8 @@ const TableHeader = ({
     {headers.map((header, index) => {
       const isNE = columnTypes[index] === 'NE';
       const types = Array.isArray(ctaData[index]) ? ctaData[index] : ctaData[index]?.types || [];
+      // Sort types by frequency (descending)
+      const sortedTypes = [...types].sort((a, b) => b.frequency - a.frequency);
       const bg = isNE ? '#e8f5e9' : '#fff9c4';
 
       return (
@@ -50,24 +51,12 @@ const TableHeader = ({
             )}
           </Box>
           <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center', gap: 1 }}>
-            {types.length > 0 && (
+            {isNE && sortedTypes.length > 0 && (
               <IconButton
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleHeaderClick(types, header);
-                }}
-                title="View column type statistics"
-              >
-                <InfoIcon fontSize="small" />
-              </IconButton>
-            )}
-            {isNE && (
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleHeaderClick(types, header, index);
+                  handleHeaderClick(sortedTypes, header, index);
                 }}
                 title="Filter by entity types in this column"
               >

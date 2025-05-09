@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getTableData } from '../services/apiServices';
+import { getTableData, getTableStatus } from '../services/apiServices';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
@@ -14,7 +14,6 @@ import ReadMoreIcon from '@mui/icons-material/ReadMore';
 import CompressIcon from '@mui/icons-material/Compress';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import FilterIcon from '@mui/icons-material/FilterList';
-import ClearIcon from '@mui/icons-material/Clear';
 import EntityDetailsModal from './EntityDetailsModal';
 import TableHeader from './TableHeader';
 import TableSearch from './TableSearch';
@@ -181,6 +180,7 @@ const TableDataViewer = () => {
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
   const [selectedFilterColumn, setSelectedFilterColumn] = useState(null);
   const [availableColumnTypes, setAvailableColumnTypes] = useState([]);
+  const [progressInfo, setProgressInfo] = useState(null);
 
   const handleHeaderClick = (types, columnName) => {
     const sorted = types
@@ -230,14 +230,34 @@ const TableDataViewer = () => {
     }
   }, [datasetName, tableName, searchText, searchColumns, activeFilters, sortParams]);
 
+  const fetchTableStatus = useCallback(async () => {
+    try {
+      const statusData = await getTableStatus(datasetName, tableName);
+      setProgressInfo(statusData);
+      setStatus(statusData.status);
+    } catch (err) {
+      console.error('Error fetching table status:', err);
+    }
+  }, [datasetName, tableName]);
+
   useEffect(() => {
     fetchTableData();
+    fetchTableStatus();
+    
     const isProcessing = status === 'DOING' || status === 'TODO' || status === 'processing';
-    const intervalId = isProcessing ? setInterval(() => fetchTableData(), 5000) : null;
+    let dataIntervalId = null;
+    let statusIntervalId = null;
+    
+    if (isProcessing) {
+      dataIntervalId = setInterval(() => fetchTableData(), 5000);
+      statusIntervalId = setInterval(() => fetchTableStatus(), 3000);
+    }
+    
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (dataIntervalId) clearInterval(dataIntervalId);
+      if (statusIntervalId) clearInterval(statusIntervalId);
     };
-  }, [fetchTableData, status]);
+  }, [fetchTableData, fetchTableStatus, status]);
 
   const handlePreviousPage = () => {
     if (prevCursor) {
@@ -493,6 +513,22 @@ const TableDataViewer = () => {
               />
               {(data?.status === 'DOING' || data?.status === 'processing') && (
                 <CircularProgress size={16} sx={{ ml: 1 }} />
+              )}
+              
+              {progressInfo && progressInfo.status !== 'DONE' && (
+                <Box sx={{ ml: 2, flexGrow: 1, maxWidth: 300 }}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+                    <Typography variant="caption">Processing progress</Typography>
+                    <Typography variant="caption">
+                      {progressInfo.completed_rows} / {progressInfo.total_rows} rows ({progressInfo.completion_percentage}%)
+                    </Typography>
+                  </Box>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={progressInfo.completion_percentage} 
+                    sx={{ height: 8, borderRadius: 2 }} 
+                  />
+                </Box>
               )}
               
               {hasEntity && (
