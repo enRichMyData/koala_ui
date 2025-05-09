@@ -182,15 +182,6 @@ const TableDataViewer = () => {
   const [availableColumnTypes, setAvailableColumnTypes] = useState([]);
   const [progressInfo, setProgressInfo] = useState(null);
 
-  const handleHeaderClick = (types, columnName) => {
-    const sorted = types
-      .filter(t => t.name)
-      .sort((a, b) => b.frequency - a.frequency);
-    setTypeModalData(sorted);
-    setTypeModalColumn(columnName);
-    setOpenTypeModal(true);
-  };
-
   const handleCloseTypeModal = () => setOpenTypeModal(false);
 
   const fetchTableData = useCallback(async (options = {}) => {
