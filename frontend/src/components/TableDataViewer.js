@@ -490,10 +490,11 @@ const TableDataViewer = () => {
 
   const hasEntity = data.rows.some(row => row.linked_entities && row.linked_entities.length > 0);
 
+  // Add null check for the classified object to avoid errors
   const classified = data.classified_columns || { NE: {}, LIT: {} };
   const columnTypes = data.header.map((_, idx) =>
-    classified.NE.hasOwnProperty(idx) ? 'NE'
-    : classified.LIT.hasOwnProperty(idx) ? 'LIT'
+    classified && classified.NE && classified.NE.hasOwnProperty(idx) ? 'NE'
+    : classified && classified.LIT && classified.LIT.hasOwnProperty(idx) ? 'LIT'
     : ''
   );
   const rawColumnTypes = data?.column_types || {};
