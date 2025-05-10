@@ -262,12 +262,11 @@ const TableDataViewer = () => {
       return;
     }
 
-    let streaming = true;
     getTableStatus(datasetName, tableName, (progress) => {
       if (!cancelled) {
         setProgressInfo(progress);
         if (progress?.status === 'DONE') {
-          streaming = false;
+          return;
         }
       }
     }).catch(() => {
@@ -276,7 +275,6 @@ const TableDataViewer = () => {
 
     return () => {
       cancelled = true;
-      streaming = false;
     };
     // Only rerun if datasetName or tableName changes
     // eslint-disable-next-line
