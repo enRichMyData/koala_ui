@@ -408,13 +408,53 @@ const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityI
   }
 };
 
-const getTableStatus = async (datasetName, tableName) => {
-  try {
-    const response = await crocodileApiClient.get(`/datasets/${encodeURIComponent(datasetName)}/tables/${encodeURIComponent(tableName)}/status`);
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching table status:', error);
-    throw error;
+// Streaming status fetcher for table progress
+const getTableStatus = async (datasetName, tableName, onProgress) => {
+  // onProgress: function to call with each progress update (parsed JSON)
+  const CROCODILE_API_URL = process.env.REACT_APP_CROCODILE_URL;
+  const url = `${CROCODILE_API_URL.replace(/\/$/, '')}/datasets/${encodeURIComponent(datasetName)}/tables/${encodeURIComponent(tableName)}/status`;
+
+  // Get a fresh JWT token for the request
+  const token = await generateCrocodileToken();
+
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'accept': 'application/json, text/event-stream'
+    }
+  });
+
+  if (!response.body) throw new Error('No response body for streaming status');
+
+  const reader = response.body.getReader();
+  let buffer = '';
+  let done = false;
+
+  while (!done) {
+    const { value, done: streamDone } = await reader.read();
+    if (streamDone) break;
+    buffer += new TextDecoder().decode(value);
+
+    // Split by newlines (SSE events are separated by \n\n)
+    let parts = buffer.split('\n\n');
+    buffer = parts.pop(); // last part may be incomplete
+
+    for (const part of parts) {
+      // Each event: look for "data: {json}"
+      const match = part.match(/^data:\s*(.*)$/m);
+      if (match) {
+        try {
+          const json = JSON.parse(match[1]);
+          if (onProgress) onProgress(json.data || json);
+          if ((json.data && json.data.status === 'DONE') || json.status === 'DONE') {
+            done = true;
+            break;
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      }
+    }
   }
 };
 

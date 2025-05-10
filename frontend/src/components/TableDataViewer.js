@@ -160,7 +160,6 @@ const TableDataViewer = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState(null);
   const [compact, setCompact] = useState(false);
-  const [status, setStatus] = useState('loading');
   const [searchText, setSearchText] = useState('');
   const [searchColumns, setSearchColumns] = useState([]);
   const [activeFilters, setActiveFilters] = useState({
@@ -177,6 +176,10 @@ const TableDataViewer = () => {
   const [selectedFilterColumn, setSelectedFilterColumn] = useState(null);
   const [availableColumnTypes, setAvailableColumnTypes] = useState([]);
   const [progressInfo, setProgressInfo] = useState(null);
+
+  // --- POLLING LOGIC STATE ---
+  const [polling, setPolling] = useState(false);
+  const pollingRef = React.useRef();
 
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
@@ -201,7 +204,6 @@ const TableDataViewer = () => {
       console.log('Fetched table data:', response);
       if (response.data) {
         setData(response.data);
-        setStatus(response.data.status);
         setNextCursor(response.pagination?.next_cursor || null);
         setPrevCursor(response.pagination?.prev_cursor || null);
       } else {
@@ -215,34 +217,76 @@ const TableDataViewer = () => {
     }
   }, [datasetName, tableName, searchText, searchColumns, activeFilters, sortParams]);
 
-  const fetchTableStatus = useCallback(async () => {
-    try {
-      const statusData = await getTableStatus(datasetName, tableName);
-      setProgressInfo(statusData);
-      setStatus(statusData.status);
-    } catch (err) {
-      console.error('Error fetching table status:', err);
+  // --- POLLING EFFECT ---
+  React.useEffect(() => {
+    // Start polling if table is not DONE and data exists
+    if (data && data.status !== 'DONE') {
+      setPolling(true);
+    } else {
+      setPolling(false);
     }
-  }, [datasetName, tableName]);
+  }, [data]);
+
+  React.useEffect(() => {
+    if (!polling) return;
+
+    let cancelled = false;
+    function poll() {
+      pollingRef.current = setTimeout(async () => {
+        if (cancelled) return;
+        // Only poll if not DONE
+        if (data && data.status !== 'DONE') {
+          await fetchTableData();
+        }
+        if (!cancelled && data && data.status !== 'DONE') {
+          poll();
+        }
+      }, 3000);
+    }
+    poll();
+
+    return () => {
+      cancelled = true;
+      if (pollingRef.current) clearTimeout(pollingRef.current);
+    };
+    // eslint-disable-next-line
+  }, [polling, fetchTableData, data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProgressInfo(null);
+
+    // Only stream if table is not already DONE
+    if (data?.status === 'DONE') {
+      setProgressInfo(null);
+      return;
+    }
+
+    let streaming = true;
+    getTableStatus(datasetName, tableName, (progress) => {
+      if (!cancelled) {
+        setProgressInfo(progress);
+        if (progress?.status === 'DONE') {
+          streaming = false;
+        }
+      }
+    }).catch(() => {
+      if (!cancelled) setProgressInfo(null);
+    });
+
+    return () => {
+      cancelled = true;
+      streaming = false;
+    };
+    // Only rerun if datasetName or tableName changes
+    // eslint-disable-next-line
+  }, [datasetName, tableName, data?.status]);
 
   useEffect(() => {
     fetchTableData();
-    fetchTableStatus();
-    
-    const isProcessing = status === 'DOING' || status === 'TODO' || status === 'processing';
-    let dataIntervalId = null;
-    let statusIntervalId = null;
-    
-    if (isProcessing) {
-      dataIntervalId = setInterval(() => fetchTableData(), 5000);
-      statusIntervalId = setInterval(() => fetchTableStatus(), 3000);
-    }
-    
-    return () => {
-      if (dataIntervalId) clearInterval(dataIntervalId);
-      if (statusIntervalId) clearInterval(statusIntervalId);
-    };
-  }, [fetchTableData, fetchTableStatus, status]);
+    // Only re-run if dataset/table changes
+    // eslint-disable-next-line
+  }, [fetchTableData]);
 
   const handlePreviousPage = () => {
     if (prevCursor) {
