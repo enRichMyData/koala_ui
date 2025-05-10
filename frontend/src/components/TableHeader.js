@@ -1,85 +1,73 @@
 import React from 'react';
-import { TableCell, TableRow, Tooltip, Chip, IconButton, Box } from '@mui/material';
+import { TableCell, TableRow, Tooltip, IconButton, Box, Typography } from '@mui/material';
 import SortIcon from '@mui/icons-material/Sort';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
-import InfoIcon from '@mui/icons-material/Info';
+import FilterListIcon from '@mui/icons-material/FilterList';
 
-const TableHeader = ({ headers, sortableColumns, sortColumn, sortOrder, handleSort, columnTypes, ctaData, handleHeaderClick }) => {
-    return (
-        <TableRow>
-            {headers.map((header, index) => {
-                const isSortable = sortableColumns.includes(index);
-                const columnType = columnTypes[index];
-                const backgroundColor = columnType === 'NE' ? '#d0f0c0' : '#f0e68c';
-                const headerTooltip = columnType === 'NE' ? 'Named Entity (NE)' : 'Literal (LIT)';
-                const ctaTypes = ctaData[index] || [];
-                const mainType = ctaTypes.length > 0 ? ctaTypes[0] : null;
+const TableHeader = ({
+  headers, sortableColumns, sortColumn, sortOrder,
+  handleSort, columnTypes, ctaData, handleHeaderClick
+}) => (
+  <TableRow>
+    {headers.map((header, index) => {
+      const isNE = columnTypes[index] === 'NE';
+      const types = Array.isArray(ctaData[index]) ? ctaData[index] : ctaData[index]?.types || [];
+      // Sort types by frequency (descending)
+      const sortedTypes = [...types].sort((a, b) => b.frequency - a.frequency);
+      const bg = isNE ? '#e8f5e9' : '#fff9c4';
 
-                return (
-                    <TableCell 
-                        key={index}
-                        style={{ 
-                            backgroundColor,
-                            border: sortColumn === index ? '2px solid #3f51b5' : 'none',
-                            padding: '8px 16px',
-                            position: 'relative'
-                        }}
-                    >
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                            <Tooltip title={headerTooltip} arrow>
-                                <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0, flexGrow: 1 }}>
-                                    <span style={{ fontWeight: 'bold', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {header} {columnType ? `(${columnType})` : ''}
-                                    </span>
-                                </Box>
-                            </Tooltip>
-                            {isSortable && (
-                                <IconButton
-                                    size="small"
-                                    onClick={() => handleSort(index)}
-                                    sx={{ ml: 1 }}
-                                >
-                                    {sortColumn === index ? (
-                                        sortOrder === 'asc' ? <ArrowDropUpIcon /> : <ArrowDropDownIcon />
-                                    ) : (
-                                        <SortIcon />
-                                    )}
-                                </IconButton>
-                            )}
-                        </Box>
-                        {mainType && (
-                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-                                <Tooltip title={`ID: ${mainType.id} | Score: ${mainType.score}`} arrow>
-                                    <Chip
-                                        label={mainType.name}
-                                        component="a"
-                                        href={`https://www.wikidata.org/wiki/${mainType.id}`}
-                                        target="_blank"
-                                        clickable
-                                        color="primary"
-                                        size="small"
-                                        sx={{ ml: 1, maxWidth: '100px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                                    />
-                                </Tooltip>
-                                {ctaTypes.length > 1 && (
-                                    <Tooltip title="Show more details" arrow>
-                                        <IconButton
-                                            size="small"
-                                            onClick={() => handleHeaderClick(ctaTypes, index)}
-                                            sx={{ ml: 1 }}
-                                        >
-                                            <InfoIcon />
-                                        </IconButton>
-                                    </Tooltip>
-                                )}
-                            </Box>
-                        )}
-                    </TableCell>
-                );
-            })}
-        </TableRow>
-    );
-};
+      return (
+        <TableCell
+          key={index}
+          onClick={undefined}
+          sx={{
+            backgroundColor: bg,
+            borderBottom: '2px solid #ccc',
+            py: 1.5,
+            px: 2,
+            textAlign: 'center',
+            cursor: 'default',
+            transition: 'background 0.2s',
+            '&:hover': { backgroundColor: isNE ? '#c8e6c9' : bg }
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+            <Tooltip title={isNE ? 'Named Entity (NE)' : 'Literal (LIT)'} arrow>
+              <Typography variant="subtitle2" noWrap>
+                {header}
+              </Typography>
+            </Tooltip>
+            {sortableColumns.includes(index) && (
+              <IconButton
+                size="small"
+                onClick={(e) => { e.stopPropagation(); handleSort(index); }}
+              >
+                {sortColumn === index
+                  ? (sortOrder === 'asc' ? <ArrowDropUpIcon /> : <ArrowDropDownIcon />)
+                  : <SortIcon />
+                }
+              </IconButton>
+            )}
+          </Box>
+          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center', gap: 1 }}>
+            {isNE && sortedTypes.length > 0 && (
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleHeaderClick(sortedTypes, header, index);
+                }}
+                title="Filter by entity types in this column"
+              >
+                <FilterListIcon fontSize="small" />
+              </IconButton>
+            )}
+          </Box>
+        </TableCell>
+      );
+    })}
+  </TableRow>
+);
 
 export default TableHeader;

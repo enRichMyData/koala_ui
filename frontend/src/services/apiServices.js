@@ -40,6 +40,30 @@ const crocodileApiClient = axios.create({
   baseURL: CROCODILE_API_URL,
 });
 
+// Add a custom params serializer to handle arrays correctly
+crocodileApiClient.interceptors.request.use(config => {
+  // If there are array parameters that need repeating (like include_types, exclude_types)
+  if (config.params) {
+    const newParams = new URLSearchParams();
+    
+    Object.entries(config.params).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        // For arrays, add each value with the same key
+        value.forEach(item => {
+          newParams.append(key, item);
+        });
+      } else if (value !== undefined && value !== null) {
+        // For non-arrays, just add the parameter
+        newParams.append(key, value);
+      }
+    });
+    
+    // Replace the serialized params string in the URL
+    config.paramsSerializer = () => newParams.toString();
+  }
+  return config;
+});
+
 // Add auth token to every Crocodile API request
 crocodileApiClient.interceptors.request.use(async config => {
   try {
@@ -212,6 +236,40 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
       params.prev_cursor = options.prevCursor;
     }
     
+    // Add search parameters if provided
+    if (options.search) {
+      params.search = options.search;
+    }
+    
+    // Add column parameter if provided
+    if (options.column !== undefined && options.column !== null) {
+      params.column = options.column;
+    }
+    
+    // Add search_columns if provided
+    if (options.searchColumns && options.searchColumns.length > 0) {
+      params.search_columns = options.searchColumns;
+    }
+    
+    // Simplified handling for type filtering parameters
+    if (options.includeTypes && options.includeTypes.length > 0) {
+      params.include_types = options.includeTypes;
+    }
+    
+    if (options.excludeTypes && options.excludeTypes.length > 0) {
+      params.exclude_types = options.excludeTypes;
+    }
+    
+    // Add sorting parameters
+    if (options.sortBy) {
+      params.sort_by = options.sortBy;
+    }
+    
+    if (options.sortDirection) {
+      params.sort_direction = options.sortDirection;
+    }
+    
+    console.log('Sending params:', params);
     const response = await crocodileApiClient.get(`/datasets/${datasetName}/tables/${tableName}`, {
       params: params
     });
@@ -350,6 +408,16 @@ const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityI
   }
 };
 
+const getTableStatus = async (datasetName, tableName) => {
+  try {
+    const response = await crocodileApiClient.get(`/datasets/${encodeURIComponent(datasetName)}/tables/${encodeURIComponent(tableName)}/status`);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching table status:', error);
+    throw error;
+  }
+};
+
 export { 
   getDatasets, 
   getTables, 
@@ -361,5 +429,6 @@ export {
   updateAnnotation,
   deleteAnnotation,
   createDataset, 
-  uploadTable
+  uploadTable,
+  getTableStatus
 };

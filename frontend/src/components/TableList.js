@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { getTables, deleteTable, uploadTable } from '../services/apiServices';
 import {
   List,
@@ -18,6 +18,7 @@ import {
   DialogContentText,
   DialogTitle,
   Button,
+  Breadcrumbs,
 } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -26,6 +27,7 @@ import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 
 const TableList = () => {
+  const navigate = useNavigate();
   const { datasetName } = useParams();
   const [tables, setTables] = useState([]);
   const [error, setError] = useState('');
@@ -175,6 +177,16 @@ const TableList = () => {
 
   return (
     <Box sx={{ width: '100%', maxWidth: 1000, bgcolor: 'background.paper', margin: 'auto', p: 2 }}>
+      {/* add breadcrumb */}
+      <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
+        <Link color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer' }}>
+          Datasets
+        </Link>
+        <Typography color="text.primary" noWrap>
+          {datasetName}
+        </Typography>
+      </Breadcrumbs>
+
       <Typography variant="h6" component="div">
         Tables in Dataset: {datasetName}
       </Typography>
