@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { getTables, deleteTable, uploadTable } from '../services/apiServices';
+import Papa from 'papaparse';
 import {
   List,
   ListItem,
@@ -19,12 +20,28 @@ import {
   DialogTitle,
   Button,
   Breadcrumbs,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Grid,
+  Chip,
+  Tooltip,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
 } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import DeleteIcon from '@mui/icons-material/Delete';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
+
+const LIT_TYPES = ["NUMBER", "STRING", "DATETIME"];
+const NER_TYPES = ["LOCATION", "ORGANIZATION", "PERSON", "OTHER"];
+const COLUMN_TYPES = ["LIT", "NE", "IGNORED"];
 
 const TableList = () => {
   const navigate = useNavigate();
@@ -41,6 +58,10 @@ const TableList = () => {
   const [nextCursor, setNextCursor] = useState(null);
   const [paginationHistory, setPaginationHistory] = useState([{ page: 1, nextCursor: null }]);
   const [historyIndex, setHistoryIndex] = useState(0);
+  const [columnHeaders, setColumnHeaders] = useState([]);
+  const [columnClassification, setColumnClassification] = useState({});
+  const [showColumnTypePanel, setShowColumnTypePanel] = useState(false);
+  const [csvPreviewRows, setCsvPreviewRows] = useState([]); // NEW: preview rows
 
   const currentHistoryRef = useRef(paginationHistory[historyIndex]);
   useEffect(() => {
@@ -139,10 +160,76 @@ const TableList = () => {
     setOpenUploadDialog(false);
     setFile(null);
     setUploadProgress(0);
+    setColumnHeaders([]);
+    setColumnClassification({});
+    setShowColumnTypePanel(false);
+    setCsvPreviewRows([]); // reset preview
   };
 
   const handleFileChange = (event) => {
-    setFile(event.target.files[0]);
+    const selectedFile = event.target.files[0];
+    setFile(selectedFile);
+    setUploadProgress(0);
+    setColumnHeaders([]);
+    setColumnClassification({});
+    setShowColumnTypePanel(false);
+    setCsvPreviewRows([]); // reset preview
+
+    if (selectedFile) {
+      Papa.parse(selectedFile, {
+        preview: 5, // NEW: preview first 5 rows
+        skipEmptyLines: true,
+        complete: (results) => {
+          if (results.data && results.data.length > 0) {
+            setColumnHeaders(results.data[0]);
+            setCsvPreviewRows(results.data.slice(1, 6)); // up to 5 rows after header
+            const initialClassification = {};
+            results.data[0].forEach((_, idx) => {
+              initialClassification[idx] = { type: "IGNORED", subtype: "" };
+            });
+            setColumnClassification(initialClassification);
+            setShowColumnTypePanel(true);
+          }
+        },
+        error: (err) => {
+          setError('Failed to parse CSV: ' + err.message);
+        }
+      });
+    }
+  };
+
+  const handleColumnTypeChange = (colIdx, type) => {
+    setColumnClassification((prev) => ({
+      ...prev,
+      [colIdx]: { type, subtype: "" }
+    }));
+  };
+
+  const handleColumnSubtypeChange = (colIdx, subtype) => {
+    setColumnClassification((prev) => ({
+      ...prev,
+      [colIdx]: { ...prev[colIdx], subtype }
+    }));
+  };
+
+  const buildColumnClassificationPayload = () => {
+    const NE = {};
+    const LIT = {};
+    const IGNORED = [];
+    Object.entries(columnClassification).forEach(([idx, { type, subtype }]) => {
+      if (type === "NE" && subtype) {
+        NE[idx] = subtype;
+      } else if (type === "LIT" && subtype) {
+        LIT[idx] = subtype;
+      } else if (type === "IGNORED") {
+        IGNORED.push(idx);
+      }
+    });
+    const payload = {};
+    if (Object.keys(NE).length) payload.NE = NE;
+    if (Object.keys(LIT).length) payload.LIT = LIT;
+    if (IGNORED.length) payload.IGNORED = IGNORED;
+    return payload;
   };
 
   const handleUploadTable = async (event) => {
@@ -154,9 +241,13 @@ const TableList = () => {
 
     try {
       setUploadProgress(10);
-      await uploadTable(datasetName, file);
+      let classificationPayload = null;
+      if (showColumnTypePanel) {
+        classificationPayload = buildColumnClassificationPayload();
+      }
+      await uploadTable(datasetName, file, classificationPayload);
       setUploadProgress(100);
-      
+
       const response = await getTables(datasetName, currentPage);
       setTables(response.data);
       setError('');
@@ -177,7 +268,6 @@ const TableList = () => {
 
   return (
     <Box sx={{ width: '100%', maxWidth: 1000, bgcolor: 'background.paper', margin: 'auto', p: 2 }}>
-      {/* add breadcrumb */}
       <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
         <Link color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer' }}>
           Datasets
@@ -307,7 +397,7 @@ const TableList = () => {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={openUploadDialog} onClose={handleCloseUploadDialog}>
+      <Dialog open={openUploadDialog} onClose={handleCloseUploadDialog} maxWidth="md" fullWidth>
         <DialogTitle>Upload New Table</DialogTitle>
         <DialogContent>
           <form onSubmit={handleUploadTable}>
@@ -315,29 +405,153 @@ const TableList = () => {
               Select a CSV file to upload:
             </Typography>
             <input type="file" accept=".csv" onChange={handleFileChange} required />
-            
+
+            {/* Info about column classification */}
+            <Box sx={{ mt: 3, mb: 2 }}>
+              <Alert severity="info" sx={{ mb: 1 }}>
+                <b>Column classification is optional.</b> <br />
+                If you do <b>not</b> specify column types, Koala will <b>automatically classify columns</b> using its entity linking algorithm.
+              </Alert>
+              <Typography variant="body2" color="text.secondary">
+                <b>Tip:</b> You can preview the first 5 rows of your table below to help you decide if you want to specify column types.
+              </Typography>
+            </Box>
+
+            {/* CSV preview table */}
+            {columnHeaders.length > 0 && csvPreviewRows.length > 0 && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  <b>Preview (first 5 rows):</b>
+                </Typography>
+                <Table size="small" sx={{ border: '1px solid #eee', mb: 1 }}>
+                  <TableHead>
+                    <TableRow>
+                      {columnHeaders.map((header, idx) => (
+                        <TableCell key={idx} sx={{ fontWeight: 'bold', bgcolor: '#f5f5f5' }}>
+                          {header}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {csvPreviewRows.map((row, ridx) => (
+                      <TableRow key={ridx}>
+                        {columnHeaders.map((_, cidx) => (
+                          <TableCell key={cidx}>
+                            {row[cidx] !== undefined ? String(row[cidx]) : ''}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Box>
+            )}
+
+            {/* Column classification panel */}
+            {showColumnTypePanel && columnHeaders.length > 0 && (
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                  <b>Classify Columns</b>
+                  <Tooltip title="Specify the type for each column. IGNORED columns will not be annotated. If you skip this step, Koala will classify columns automatically.">
+                    <span style={{ marginLeft: 8, color: '#888', cursor: 'help' }}>ⓘ</span>
+                  </Tooltip>
+                </Typography>
+                <Grid container spacing={2}>
+                  {columnHeaders.map((header, idx) => (
+                    <Grid item xs={12} md={6} key={idx}>
+                      <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        border: '1px solid #eee',
+                        borderRadius: 1,
+                        p: 1,
+                        mb: 1,
+                        bgcolor: '#fafafa'
+                      }}>
+                        <Chip label={`Col ${idx}: ${header}`} sx={{ mr: 2 }} color="primary" />
+                        <FormControl size="small" sx={{ minWidth: 110, mr: 2 }}>
+                          <InputLabel>Type</InputLabel>
+                          <Select
+                            value={columnClassification[idx]?.type || "IGNORED"}
+                            label="Type"
+                            onChange={e => handleColumnTypeChange(idx, e.target.value)}
+                          >
+                            {COLUMN_TYPES.map((type) => (
+                              <MenuItem key={type} value={type}>{type}</MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        {columnClassification[idx]?.type === "NE" && (
+                          <FormControl size="small" sx={{ minWidth: 130 }}>
+                            <InputLabel>Subtype</InputLabel>
+                            <Select
+                              value={columnClassification[idx]?.subtype || ""}
+                              label="Subtype"
+                              onChange={e => handleColumnSubtypeChange(idx, e.target.value)}
+                              required
+                            >
+                              {NER_TYPES.map((subtype) => (
+                                <MenuItem key={subtype} value={subtype}>{subtype}</MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        )}
+                        {columnClassification[idx]?.type === "LIT" && (
+                          <FormControl size="small" sx={{ minWidth: 130 }}>
+                            <InputLabel>Subtype</InputLabel>
+                            <Select
+                              value={columnClassification[idx]?.subtype || ""}
+                              label="Subtype"
+                              onChange={e => handleColumnSubtypeChange(idx, e.target.value)}
+                              required
+                            >
+                              {LIT_TYPES.map((subtype) => (
+                                <MenuItem key={subtype} value={subtype}>{subtype}</MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        )}
+                      </Box>
+                    </Grid>
+                  ))}
+                </Grid>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                  <b>Tip:</b> Columns set as <b>IGNORED</b> will not be used for annotation.<br />
+                  <b>If you leave all columns as IGNORED, Koala will automatically classify columns for you.</b>
+                </Typography>
+              </Box>
+            )}
+
+            {/* Visual indicator for automatic classification */}
+            {!showColumnTypePanel || Object.values(columnClassification).every(c => c.type === "IGNORED") ? (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                <b>Automatic column classification will be applied by Koala.</b>
+              </Alert>
+            ) : null}
+
             {uploadProgress > 0 && (
               <Box sx={{ width: '100%', mt: 2 }}>
-                <Box sx={{ 
-                  width: `${uploadProgress}%`, 
-                  height: '4px', 
-                  bgcolor: 'primary.main', 
+                <Box sx={{
+                  width: `${uploadProgress}%`,
+                  height: '4px',
+                  bgcolor: 'primary.main',
                   transition: 'width 0.5s'
-                }}/>
+                }} />
                 <Typography variant="body2" align="center" sx={{ mt: 1 }}>
                   {uploadProgress < 100 ? 'Uploading...' : 'Upload complete!'}
                 </Typography>
               </Box>
             )}
-            
+
             <DialogActions>
               <Button onClick={handleCloseUploadDialog} color="secondary">
                 Cancel
               </Button>
-              <Button 
-                type="submit" 
-                color="primary" 
-                variant="contained" 
+              <Button
+                type="submit"
+                color="primary"
+                variant="contained"
                 disabled={!file || uploadProgress > 0}
                 startIcon={<FileUploadIcon />}
               >
