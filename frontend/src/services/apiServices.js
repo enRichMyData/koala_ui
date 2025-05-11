@@ -158,15 +158,16 @@ const getDatasets = async (page = 1, perPage = 10, options = {}) => {
 const uploadTable = async (datasetName, file, columnClassification = null) => {
   const formData = new FormData();
   formData.append('file', file);
-  
-  // The API expects table_name as a query parameter, not in the form data
+
   const tableName = file.name.replace(/\.[^/.]+$/, "");
-  
-  // Add column classification if provided
+
+  // Always append column_classification, as JSON string or empty string
   if (columnClassification) {
     formData.append('column_classification', JSON.stringify(columnClassification));
+  } else {
+    formData.append('column_classification', '');
   }
-  
+
   try {
     const response = await crocodileApiClient.post(`/datasets/${datasetName}/tables/csv`, formData, {
       headers: {
