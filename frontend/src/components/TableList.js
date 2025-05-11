@@ -215,20 +215,21 @@ const TableList = () => {
   const buildColumnClassificationPayload = () => {
     const NE = {};
     const LIT = {};
-    const IGNORED = [];
+    let hasClassification = false;
     Object.entries(columnClassification).forEach(([idx, { type, subtype }]) => {
       if (type === "NE" && subtype) {
         NE[idx] = subtype;
+        hasClassification = true;
       } else if (type === "LIT" && subtype) {
         LIT[idx] = subtype;
-      } else if (type === "IGNORED") {
-        IGNORED.push(idx);
+        hasClassification = true;
       }
+      // IGNORED columns are not counted as classification
     });
+    if (!hasClassification) return null; // All columns IGNORED, treat as no classification
     const payload = {};
     if (Object.keys(NE).length) payload.NE = NE;
     if (Object.keys(LIT).length) payload.LIT = LIT;
-    if (IGNORED.length) payload.IGNORED = IGNORED;
     return payload;
   };
 
