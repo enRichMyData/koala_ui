@@ -215,6 +215,7 @@ const TableList = () => {
   const buildColumnClassificationPayload = () => {
     const NE = {};
     const LIT = {};
+    const IGNORED = [];
     let hasClassification = false;
     Object.entries(columnClassification).forEach(([idx, { type, subtype }]) => {
       if (type === "NE" && subtype) {
@@ -222,7 +223,9 @@ const TableList = () => {
         hasClassification = true;
       } else if (type === "LIT" && subtype) {
         LIT[idx] = subtype;
-        hasClassification = true;
+      }
+      else {
+        IGNORED.push(idx.toString());
       }
       // IGNORED columns are not counted as classification
     });
@@ -230,6 +233,7 @@ const TableList = () => {
     const payload = {};
     if (Object.keys(NE).length) payload.NE = NE;
     if (Object.keys(LIT).length) payload.LIT = LIT;
+    if (IGNORED.length) payload.IGNORED = IGNORED;
     return payload;
   };
 
