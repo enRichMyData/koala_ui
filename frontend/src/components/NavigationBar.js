@@ -24,7 +24,6 @@ import MenuIcon from '@mui/icons-material/Menu';
 import AccountCircleIcon from '@mui/icons-material/AccountCircle';
 import LogoutIcon from '@mui/icons-material/Logout';
 import HomeIcon from '@mui/icons-material/Home';
-import TableChartIcon from '@mui/icons-material/TableChart';
 import DatasetIcon from '@mui/icons-material/Dataset';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import logo from '../assets/images/logo.png';
