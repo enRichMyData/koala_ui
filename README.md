@@ -24,7 +24,7 @@ To get started with Koala UI using Docker, follow these steps:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/roby-avo/koala_ui
+   git clone https://github.com/enRichMyData/koala_ui
    ```
 
 2. **Navigate to the project directory**
@@ -43,14 +43,15 @@ To get started with Koala UI using Docker, follow these steps:
    ```env
    # Frontend environment variables
    REACT_APP_BACKEND_URL=http://localhost:5001
-   REACT_APP_ALLIGATOR_URL=
-   REACT_APP_ALLIGATOR_TOKEN=
+   REACT_APP_CROCODILE_URL=
+   REACT_APP_CROCODILE_SECRET=
    REACT_APP_LAMAPI_URL=
    REACT_APP_LAMAPI_TOKEN=
 
    # Common environment variables
    NODE_ENV=development
    FLASK_ENV=development
+   JWT_SECRET_KEY=
 
    # Versions
    NODE_VERSION=22
@@ -63,7 +64,7 @@ To get started with Koala UI using Docker, follow these steps:
    MONGO_PORT=27017
    ```
 
-   Note: Fill in `REACT_APP_ALLIGATOR_URL`, `REACT_APP_ALLIGATOR_TOKEN`, `REACT_APP_LAMAPI_URL`, and `REACT_APP_LAMAPI_TOKEN` based on where your instances of Alligator and LamAPI are running.
+   Note: Fill in `REACT_APP_CROCODILE_URL`, `REACT_APP_CROCODILE_TOKEN`, `REACT_APP_LAMAPI_URL`, and `REACT_APP_LAMAPI_TOKEN` based on where your instances of Crocodile and LamAPI are running.
 
 5. **Build and start the containers**
    ```bash
@@ -71,13 +72,13 @@ To get started with Koala UI using Docker, follow these steps:
    ```
 
 6. **Access the application**
-   Open your browser and go to `http://localhost:3000`.
+   Open your browser and go to `http://localhost:${FRONTEND_PORT}`.
 
 ### Prerequisites
 
 Ensure you have active instances of Alligator and LamAPI running. You can find more information and instructions on setting up these services in their respective repositories:
-- [Alligator](https://github.com/roby-avo/alligator)
-- [LamAPI](https://github.com/roby-avo/lamapi)
+- [Crocodile](https://github.com/enRichMyData/crocodile)
+- [LamAPI](https://github.com/unimib-datAI/lamAPI)
 
 ## Running in Production
 
@@ -89,12 +90,12 @@ To run the application in production mode:
    ```
 
 2. Access the application:
-   - Frontend: `http://localhost:3000`
-   - Backend: `http://localhost:5001`
+   - Frontend: `http://localhost:${FRONTEND_PORT}`
+   - Backend: `http://localhost:${BACKEND_PORT}`
 
 ## Usage
 
-Once the server is running, you can access the application at `http://localhost:3000`. 
+Once the server is running, you can access the application at `http://localhost:${FRONTEND_PORT}`. 
 
 - **Login:** Use your credentials to log in.
 - **Dataset Management:** View and manage your datasets.
