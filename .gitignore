@@ -29,6 +29,7 @@ yarn.lock
 *.pyc
 *.cpython-39.pyc
 .env
+.env.production
 
 files
 data

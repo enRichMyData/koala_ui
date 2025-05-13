@@ -79,6 +79,19 @@ Ensure you have active instances of Alligator and LamAPI running. You can find m
 - [Alligator](https://github.com/roby-avo/alligator)
 - [LamAPI](https://github.com/roby-avo/lamapi)
 
+## Running in Production
+
+To run the application in production mode:
+
+1. Build and start the containers:
+   ```bash
+   docker-compose -f docker-compose.prod.yml up --build
+   ```
+
+2. Access the application:
+   - Frontend: `http://localhost:3000`
+   - Backend: `http://localhost:5001`
+
 ## Usage
 
 Once the server is running, you can access the application at `http://localhost:3000`. 
