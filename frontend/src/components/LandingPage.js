@@ -8,8 +8,6 @@ import {
   Grid, 
   Card, 
   CardContent, 
-  CardMedia,
-  Divider,
   Paper,
   useTheme,
   useMediaQuery
