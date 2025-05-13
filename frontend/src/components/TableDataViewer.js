@@ -438,6 +438,33 @@ const TableDataViewer = () => {
     activeFilters.excludeTypes?.length > 0 ||
     sortParams.sortBy;
 
+  const renderProgressBar = () => {
+    if (!progressInfo || progressInfo.status === 'DONE') return null;
+
+    const phaseLabel =
+      progressInfo.phase === "PREDICTION"
+        ? "Prediction Phase Progress"
+        : progressInfo.phase === "ML_PREDICTION"
+        ? "ML Prediction Phase Progress"
+        : "Processing Progress";
+
+    return (
+      <Box sx={{ ml: 2, flexGrow: 1, maxWidth: 300 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+          <Typography variant="caption">{phaseLabel}</Typography>
+          <Typography variant="caption">
+            {progressInfo.completed_rows} / {progressInfo.total_rows} rows ({progressInfo.completion_percentage}%)
+          </Typography>
+        </Box>
+        <LinearProgress
+          variant="determinate"
+          value={progressInfo.completion_percentage}
+          sx={{ height: 8, borderRadius: 2 }}
+        />
+      </Box>
+    );
+  };
+
   if (loading && !data) {
     return (
       <Card sx={{ m: 2, overflow: 'hidden' }}>
@@ -543,21 +570,7 @@ const TableDataViewer = () => {
                 <CircularProgress size={16} sx={{ ml: 1 }} />
               )}
               
-              {progressInfo && progressInfo.status !== 'DONE' && (
-                <Box sx={{ ml: 2, flexGrow: 1, maxWidth: 300 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-                    <Typography variant="caption">Processing progress</Typography>
-                    <Typography variant="caption">
-                      {progressInfo.completed_rows} / {progressInfo.total_rows} rows ({progressInfo.completion_percentage}%)
-                    </Typography>
-                  </Box>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={progressInfo.completion_percentage} 
-                    sx={{ height: 8, borderRadius: 2 }} 
-                  />
-                </Box>
-              )}
+              {progressInfo && progressInfo.status !== 'DONE' && renderProgressBar()}
               
               {hasEntity && (
                 <Box sx={{ ml: 2, display: 'flex', alignItems: 'center' }}>
