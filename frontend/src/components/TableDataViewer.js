@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getTableData, getTableStatus } from '../services/apiServices';
+import { getTableData, getTableStatus, exportTableCsv } from '../services/apiServices';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
-  Button, Divider, Skeleton, LinearProgress, Breadcrumbs, Link
+  Button, Divider, Skeleton, LinearProgress, Breadcrumbs, Link, Dialog, DialogTitle,
+  DialogContent, DialogActions, FormGroup, FormControlLabel, Checkbox
 } from '@mui/material';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
@@ -13,6 +14,7 @@ import ReadMoreIcon from '@mui/icons-material/ReadMore';
 import CompressIcon from '@mui/icons-material/Compress';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import FilterIcon from '@mui/icons-material/FilterList';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import EntityDetailsModal from './EntityDetailsModal';
 import TableHeader from './TableHeader';
 import TableSearch from './TableSearch';
@@ -148,6 +150,8 @@ const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
   );
 };
 
+const ANNOTATION_FIELDS = ['id', 'name', 'description', 'types', 'score'];
+
 const TableDataViewer = () => {
   const navigate = useNavigate();
   const { datasetName, tableName } = useParams();
@@ -180,6 +184,38 @@ const TableDataViewer = () => {
   // --- POLLING LOGIC STATE ---
   const [polling, setPolling] = useState(false);
   const pollingRef = React.useRef();
+
+  const [openExportDialog, setOpenExportDialog] = useState(false);
+  const [exportFields, setExportFields] = useState(ANNOTATION_FIELDS);
+
+  const handleOpenExport = () => setOpenExportDialog(true);
+  const handleCloseExport = () => setOpenExportDialog(false);
+  const handleExportFieldToggle = (field) =>
+    setExportFields(prev =>
+      prev.includes(field)
+        ? prev.filter(f => f !== field)
+        : [...prev, field]
+    );
+
+  const handleConfirmExport = async () => {
+    try {
+      setLoading(true);
+      const res = await exportTableCsv(datasetName, tableName, exportFields);
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute('download', `${datasetName}_${tableName}_export.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error('Export failed:', err);
+      setError('Export failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
+      handleCloseExport();
+    }
+  };
 
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
@@ -241,7 +277,7 @@ const TableDataViewer = () => {
         if (!cancelled && data && data.status !== 'DONE') {
           poll();
         }
-      }, 10000); // Poll every 10 seconds
+      }, 5000); // Poll every 5 seconds
     }
     poll();
 
@@ -621,12 +657,32 @@ const TableDataViewer = () => {
             </Box>
           }
           action={
-            <Box sx={{ display: 'flex' }}>
-              <Tooltip title={compact ? "Expand View" : "Compact View"}>
-                <IconButton onClick={toggleCompact} size="small">
-                  {compact ? <FullscreenIcon /> : <CompressIcon />}
-                </IconButton>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Tooltip title={data?.status !== 'DONE' ? 'Table is still processing...' : ''}>
+                <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<FileDownloadIcon />}
+                    onClick={handleOpenExport}
+                    disabled={data?.status !== 'DONE'}
+                    sx={{ width: '100%' }}
+                  >
+                    Export CSV
+                  </Button>
+                </Box>
               </Tooltip>
+              <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={compact ? <FullscreenIcon /> : <CompressIcon />}
+                  onClick={toggleCompact}
+                  sx={{ width: '100%' }}
+                >
+                  {compact ? 'Expand View' : 'Compact View'}
+                </Button>
+              </Box>
             </Box>
           }
         />
@@ -862,6 +918,33 @@ const TableDataViewer = () => {
           }}
         />
       )}
+
+      {/* Export-fields dialog */}
+      <Dialog open={openExportDialog} onClose={handleCloseExport}>
+        <DialogTitle>Select annotation fields to include</DialogTitle>
+        <DialogContent dividers>
+          <FormGroup>
+            {ANNOTATION_FIELDS.map(field => (
+              <FormControlLabel
+                key={field}
+                control={
+                  <Checkbox
+                    checked={exportFields.includes(field)}
+                    onChange={() => handleExportFieldToggle(field)}
+                  />
+                }
+                label={field}
+              />
+            ))}
+          </FormGroup>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseExport}>Cancel</Button>
+          <Button onClick={handleConfirmExport} variant="contained">
+            Export
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
