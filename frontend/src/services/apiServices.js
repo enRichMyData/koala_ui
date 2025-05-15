@@ -464,6 +464,18 @@ const getTableStatus = async (datasetName, tableName, onProgress) => {
   }
 };
 
+// Export enriched CSV for a given table
+const exportTableCsv = async (datasetName, tableName, fields = []) => {
+  const response = await crocodileApiClient.get(
+    `/datasets/${datasetName}/tables/${tableName}/export`,
+    {
+      params: { fields },
+      responseType: 'blob'
+    }
+  );
+  return response;
+};
+
 export { 
   getDatasets, 
   getTables, 
@@ -476,5 +488,6 @@ export {
   deleteAnnotation,
   createDataset, 
   uploadTable,
-  getTableStatus
+  getTableStatus,
+  exportTableCsv
 };

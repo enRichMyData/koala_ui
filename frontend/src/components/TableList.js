@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getTables, deleteTable, uploadTable } from '../services/apiServices';
+import { getTables, deleteTable, uploadTable, exportTableCsv } from '../services/apiServices';
 import Papa from 'papaparse';
 import {
   List,
@@ -32,16 +32,20 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import DeleteIcon from '@mui/icons-material/Delete';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 
 const LIT_TYPES = ["NUMBER", "STRING", "DATETIME"];
 const NER_TYPES = ["LOCATION", "ORGANIZATION", "PERSON", "OTHER"];
 const COLUMN_TYPES = ["LIT", "NE", "IGNORED"];
+const EXPORT_FIELD_OPTIONS = ['id', 'name', 'description', 'types', 'score'];
 
 const TableList = () => {
   const navigate = useNavigate();
@@ -52,6 +56,7 @@ const TableList = () => {
   const [loading, setLoading] = useState(false);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
+  const [openExportDialog, setOpenExportDialog] = useState(false);
   const [selectedTable, setSelectedTable] = useState(null);
   const [file, setFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -61,7 +66,9 @@ const TableList = () => {
   const [columnHeaders, setColumnHeaders] = useState([]);
   const [columnClassification, setColumnClassification] = useState({});
   const [showColumnTypePanel, setShowColumnTypePanel] = useState(false);
-  const [csvPreviewRows, setCsvPreviewRows] = useState([]); // NEW: preview rows
+  const [csvPreviewRows, setCsvPreviewRows] = useState([]);
+  const [exportFields, setExportFields] = useState(EXPORT_FIELD_OPTIONS);
+  const [exportTarget, setExportTarget] = useState(null);
 
   const currentHistoryRef = useRef(paginationHistory[historyIndex]);
   useEffect(() => {
@@ -163,7 +170,7 @@ const TableList = () => {
     setColumnHeaders([]);
     setColumnClassification({});
     setShowColumnTypePanel(false);
-    setCsvPreviewRows([]); // reset preview
+    setCsvPreviewRows([]);
   };
 
   const handleFileChange = (event) => {
@@ -173,16 +180,16 @@ const TableList = () => {
     setColumnHeaders([]);
     setColumnClassification({});
     setShowColumnTypePanel(false);
-    setCsvPreviewRows([]); // reset preview
+    setCsvPreviewRows([]);
 
     if (selectedFile) {
       Papa.parse(selectedFile, {
-        preview: 5, // NEW: preview first 5 rows
+        preview: 5,
         skipEmptyLines: true,
         complete: (results) => {
           if (results.data && results.data.length > 0) {
             setColumnHeaders(results.data[0]);
-            setCsvPreviewRows(results.data.slice(1, 6)); // up to 5 rows after header
+            setCsvPreviewRows(results.data.slice(1, 6));
             const initialClassification = {};
             results.data[0].forEach((_, idx) => {
               initialClassification[idx] = { type: "IGNORED", subtype: "" };
@@ -227,9 +234,8 @@ const TableList = () => {
       else {
         IGNORED.push(idx.toString());
       }
-      // IGNORED columns are not counted as classification
     });
-    if (!hasClassification) return null; // All columns IGNORED, treat as no classification
+    if (!hasClassification) return null;
     const payload = {};
     if (Object.keys(NE).length) payload.NE = NE;
     if (Object.keys(LIT).length) payload.LIT = LIT;
@@ -261,6 +267,38 @@ const TableList = () => {
       setError('Failed to upload table: ' + (error.response?.data?.detail || error.message));
     } finally {
       handleCloseUploadDialog();
+    }
+  };
+
+  const handleToggleExportField = (field) =>
+    setExportFields(prev =>
+      prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field]
+    );
+
+  const handleOpenExportDialog = (tableName) => {
+    setExportTarget(tableName);
+    setOpenExportDialog(true);
+  };
+
+  const handleCloseExportDialog = () => setOpenExportDialog(false);
+
+  const handleConfirmExport = async () => {
+    try {
+      setLoading(true);
+      const res = await exportTableCsv(datasetName, exportTarget, exportFields);
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute('download', `${datasetName}_${exportTarget}_export.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error('Export failed:', err);
+      setError('Export failed: ' + (err.message || ''));
+    } finally {
+      setLoading(false);
+      handleCloseExportDialog();
     }
   };
 
@@ -330,6 +368,19 @@ const TableList = () => {
                 }
               />
               <ListItemSecondaryAction>
+                <IconButton
+                  edge="end"
+                  aria-label="export"
+                  sx={{ mr: 1 }}
+                  disabled={table.status !== 'DONE'}
+                  onClick={e => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    handleOpenExportDialog(table.tableName);
+                  }}
+                >
+                  <FileDownloadIcon />
+                </IconButton>
                 <IconButton edge="end" aria-label="delete" onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -411,7 +462,6 @@ const TableList = () => {
             </Typography>
             <input type="file" accept=".csv" onChange={handleFileChange} required />
 
-            {/* Info about column classification */}
             <Box sx={{ mt: 3, mb: 2 }}>
               <Alert severity="info" sx={{ mb: 1 }}>
                 <b>Column classification is optional.</b> <br />
@@ -422,7 +472,6 @@ const TableList = () => {
               </Typography>
             </Box>
 
-            {/* CSV preview table */}
             {columnHeaders.length > 0 && csvPreviewRows.length > 0 && (
               <Box sx={{ mb: 3 }}>
                 <Typography variant="subtitle2" sx={{ mb: 1 }}>
@@ -453,7 +502,6 @@ const TableList = () => {
               </Box>
             )}
 
-            {/* Column classification panel */}
             {showColumnTypePanel && columnHeaders.length > 0 && (
               <Box sx={{ mt: 3 }}>
                 <Typography variant="subtitle1" sx={{ mb: 1 }}>
@@ -528,7 +576,6 @@ const TableList = () => {
               </Box>
             )}
 
-            {/* Visual indicator for automatic classification */}
             {!showColumnTypePanel || Object.values(columnClassification).every(c => c.type === "IGNORED") ? (
               <Alert severity="info" sx={{ mt: 2 }}>
                 <b>Automatic column classification will be applied by Koala.</b>
@@ -565,6 +612,30 @@ const TableList = () => {
             </DialogActions>
           </form>
         </DialogContent>
+      </Dialog>
+
+      <Dialog open={openExportDialog} onClose={handleCloseExportDialog}>
+        <DialogTitle>Select annotation fields to include</DialogTitle>
+        <DialogContent dividers>
+          {EXPORT_FIELD_OPTIONS.map(field => (
+            <FormControlLabel
+              key={field}
+              control={
+                <Checkbox
+                  checked={exportFields.includes(field)}
+                  onChange={() => handleToggleExportField(field)}
+                />
+              }
+              label={field}
+            />
+          ))}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseExportDialog}>Cancel</Button>
+          <Button variant="contained" onClick={handleConfirmExport}>
+            Export
+          </Button>
+        </DialogActions>
       </Dialog>
     </Box>
   );
