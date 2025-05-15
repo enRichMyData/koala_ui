@@ -658,23 +658,31 @@ const TableDataViewer = () => {
           }
           action={
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={<FileDownloadIcon />}
-                onClick={handleOpenExport}
-                disabled={data?.status !== 'DONE'}
-              >
-                Export CSV
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={compact ? <FullscreenIcon /> : <CompressIcon />}
-                onClick={toggleCompact}
-              >
-                {compact ? 'Expand View' : 'Compact View'}
-              </Button>
+              <Tooltip title={data?.status !== 'DONE' ? 'Table is still processing...' : ''}>
+                <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<FileDownloadIcon />}
+                    onClick={handleOpenExport}
+                    disabled={data?.status !== 'DONE'}
+                    sx={{ width: '100%' }}
+                  >
+                    Export CSV
+                  </Button>
+                </Box>
+              </Tooltip>
+              <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={compact ? <FullscreenIcon /> : <CompressIcon />}
+                  onClick={toggleCompact}
+                  sx={{ width: '100%' }}
+                >
+                  {compact ? 'Expand View' : 'Compact View'}
+                </Button>
+              </Box>
             </Box>
           }
         />
