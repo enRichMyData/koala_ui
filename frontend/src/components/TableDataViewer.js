@@ -277,7 +277,7 @@ const TableDataViewer = () => {
         if (!cancelled && data && data.status !== 'DONE') {
           poll();
         }
-      }, 10000); // Poll every 10 seconds
+      }, 5000); // Poll every 5 seconds
     }
     poll();
 
