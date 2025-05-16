@@ -156,7 +156,11 @@ const NavigationBar = ({ onLogout, profileName }) => {
                                         display: 'flex',
                                         textTransform: 'none',
                                         fontWeight: isActive(item.path) ? 'bold' : 'regular',
-                                        backgroundColor: isActive(item.path) ? 'rgba(0, 0, 0, 0.04)' : 'transparent'
+                                        backgroundColor: isActive(item.path) ? 'rgba(0, 0, 0, 0.04)' : 'transparent',
+                                        '&.active': { 
+                                            fontWeight: 'bold',
+                                            backgroundColor: 'rgba(0, 0, 0, 0.08)'
+                                        }   
                                     }}
                                 >
                                     {item.text}

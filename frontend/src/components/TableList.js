@@ -312,9 +312,11 @@ const TableList = () => {
   return (
     <Box sx={{ width: '100%', maxWidth: 1000, bgcolor: 'background.paper', margin: 'auto', p: 2 }}>
       <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
-        <Link color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer' }}>
+        <Button color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer', textTransform: 'none', padding: 0, minWidth: 0,  fontSize: 'inherit', fontWeight: 'inherit', color: 'inherit', textDecoration: 'underline',  '&:hover': {
+        textDecoration: 'underline',
+      }, }}>
           Datasets
-        </Link>
+        </Button>
         <Typography color="text.primary" noWrap>
           {datasetName}
         </Typography>

@@ -566,9 +566,11 @@ const TableDataViewer = () => {
   return (
     <Box sx={{ m: 2 }}>
       <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
-        <Link color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer' }}>
+        <Button color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer', textTransform: 'none', padding: 0, minWidth: 0,  fontSize: 'inherit', fontWeight: 'inherit', color: 'inherit', textDecoration: 'underline',  '&:hover': {
+        textDecoration: 'underline',
+      }, }}>
           Datasets
-        </Link>
+        </Button>
         <Link
           color="inherit"
           onClick={() => navigate(`/dataset/${encodeURIComponent(datasetName)}`)}
