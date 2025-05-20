@@ -16,7 +16,7 @@ import TableChartIcon from '@mui/icons-material/TableChart';
 import StorageIcon from '@mui/icons-material/Storage';
 import SearchIcon from '@mui/icons-material/Search';
 import VerifiedIcon from '@mui/icons-material/Verified';
-import logo from '../assets/images/logo.png';
+import logo from '../assets/images/koala_logo.webp';
 
 const LandingPage = ({ isLoggedIn }) => {
   const navigate = useNavigate();
@@ -39,23 +39,24 @@ const LandingPage = ({ isLoggedIn }) => {
           position: 'relative',
           backgroundColor: '#f8f9fa',
           color: '#333',
-          mb: 4,
+          mb: 2,
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          minHeight: '70vh',
+          minHeight: '45vh',
           display: 'flex',
           alignItems: 'center',
+          py: 2, // Reduced vertical padding
         }}
       >
         <Container maxWidth="lg">
-          <Grid container spacing={4} alignItems="center">
+          <Grid container spacing={3} alignItems="center">
             <Grid item xs={12} md={6}>
               <Typography
                 component="h1"
                 variant="h2"
                 color="inherit"
                 gutterBottom
-                sx={{ fontWeight: 700 }}
+                sx={{ fontWeight: 700, mb: 1 }}
               >
                 <span style={{ color: theme.palette.primary.main }}>K</span>nowledge-
                 <span style={{ color: theme.palette.primary.main }}>O</span>riented
@@ -64,20 +65,21 @@ const LandingPage = ({ isLoggedIn }) => {
                 <span style={{ color: theme.palette.primary.main }}>L</span>inking
                 <span style={{ color: theme.palette.primary.main }}>A</span>pplication
               </Typography>
-              <Typography variant="h5" color="inherit" paragraph>
+              <Typography variant="h5" color="inherit" paragraph sx={{ mb: 1.5 }}>
                 Powerful entity linking and knowledge annotation for your structured data
               </Typography>
-              <Box sx={{ mt: 4 }}>
+              <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <Button
                   variant="contained"
                   size="large"
                   onClick={handleGetStarted}
                   sx={{ 
                     px: 4,
-                    py: 1.5,
-                    fontSize: '1.1rem',
+                    py: 1.2,
+                    fontSize: '1rem',
                     fontWeight: 'bold',
-                    borderRadius: 2
+                    borderRadius: 2,
+                    mb: 2,
                   }}
                 >
                   {isLoggedIn ? 'Go to Dashboard' : 'Get Started'}
@@ -88,12 +90,12 @@ const LandingPage = ({ isLoggedIn }) => {
                   sx={{ 
                     ml: 2,
                     px: 4,
-                    py: 1.5,
-                    fontSize: '1.1rem',
+                    py: 1.2,
+                    fontSize: '1rem',
                     fontWeight: 'bold',
                     borderRadius: 2
                   }}
-                  href="https://github.com/your-repo/koala"
+                  href="https://github.com/enRichMyData/koala_ui"
                   target="_blank"
                 >
                   Learn More
@@ -106,8 +108,8 @@ const LandingPage = ({ isLoggedIn }) => {
                 src={logo}
                 alt="Koala Logo"
                 sx={{
-                  width: isMobile ? '60%' : '80%',
-                  maxWidth: 500,
+                  width: isMobile ? '50%' : '60%',
+                  maxWidth: 300,
                   height: 'auto',
                   filter: 'drop-shadow(0px 4px 8px rgba(0,0,0,0.2))'
                 }}
@@ -118,7 +120,7 @@ const LandingPage = ({ isLoggedIn }) => {
       </Paper>
 
       {/* Features Section */}
-      <Container maxWidth="lg" sx={{ my: 8 }}>
+      <Container maxWidth="lg" sx={{ my: 3 }}>
         <Typography variant="h3" align="center" gutterBottom>
           Key Features
         </Typography>
@@ -126,7 +128,7 @@ const LandingPage = ({ isLoggedIn }) => {
           Discover the powerful capabilities of Koala for your data enrichment needs
         </Typography>
         
-        <Grid container spacing={4} sx={{ mt: 4 }}>
+        <Grid container spacing={3} sx={{ mt: 1.5 }}>
           <Grid item xs={12} sm={6} md={3}>
             <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <Box sx={{ p: 2, display: 'flex', justifyContent: 'center' }}>
