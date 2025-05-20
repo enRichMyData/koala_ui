@@ -26,7 +26,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import HomeIcon from '@mui/icons-material/Home';
 import DatasetIcon from '@mui/icons-material/Dataset';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import logo from '../assets/images/koala_logo.webp';
+import logo from '../assets/images/logo.png';
 
 const NavigationBar = ({ onLogout, profileName }) => {
     const [anchorEl, setAnchorEl] = useState(null);
