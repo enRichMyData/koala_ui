@@ -102,6 +102,157 @@ Once the server is running, you can access the application at `http://localhost:
 - **Table Viewing:** Explore detailed data within tables.
 - **Data Visualization:** Visualize data trends and insights.
 
+
+## Data Format Specification
+
+Koala UI can work with any entity linking system that adopts the following data format. This specification allows other entity linking tools to integrate seamlessly with Koala UI for visualization and annotation.
+
+### Dataset Structure
+
+```json
+{
+  "data": [
+    {
+      "dataset_name": "string",
+      "total_tables": "number",
+      "total_rows": "number", 
+      "created_at": "ISO timestamp"
+    }
+  ],
+  "pagination": {
+    "next_cursor": "string|null",
+    "prev_cursor": "string|null"
+  }
+}
+```
+
+### Table Data Structure
+
+```json
+{
+  "header": ["column1", "column2", "column3"],
+  "rows": [
+    {
+      "idRow": "unique_row_identifier",
+      "data": ["cell_value_1", "cell_value_2", "cell_value_3"],
+      "linked_entities": [
+        {
+          "idColumn": 0,
+          "candidates": [
+            {
+              "id": "Q123456",
+              "name": "Entity Name",
+              "description": "Entity description",
+              "score": 0.95,
+              "types": [
+                {
+                  "id": "Q5",
+                  "name": "human"
+                }
+              ],
+              "match": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "classified_columns": {
+    "NE": {
+      "0": "PERSON",
+      "2": "LOCATION"
+    },
+    "LIT": {
+      "1": "DATE"
+    }
+  },
+  "column_types": {
+    "0": {
+      "types": [
+        {
+          "id": "Q5",
+          "name": "human",
+          "count": 15
+        }
+      ]
+    }
+  },
+  "status": "DONE|DOING|processing",
+  "total_matches": 100
+}
+```
+
+### Required Fields
+
+#### Dataset Level
+- `dataset_name`: Unique identifier for the dataset
+- `total_tables`: Number of tables in the dataset
+- `total_rows`: Total number of rows across all tables
+
+#### Table Level
+- `header`: Array of column names
+- `rows`: Array of data rows with entity linking information
+- `status`: Processing status ("DONE", "DOING", or "processing")
+
+#### Row Level
+- `idRow`: Unique identifier for the row
+- `data`: Array of cell values corresponding to header columns
+- `linked_entities`: Array of entity linking results for this row
+
+#### Entity Linking Results
+- `idColumn`: Column index (0-based) where entity was found
+- `candidates`: Array of potential entity matches
+- `id`: Entity identifier (e.g., Wikidata QID)
+- `name`: Human-readable entity name
+- `description`: Brief description of the entity
+- `score`: Confidence score (0.0 to 1.0)
+- `types`: Array of entity types with id and name
+- `match`: Boolean indicating if this is the selected/best match
+
+#### Column Classification
+- `classified_columns.NE`: Named Entity columns with their subtypes
+- `classified_columns.LIT`: Literal columns with their subtypes
+- `column_types`: Type distribution information per column
+
+### Supported Column Types
+
+#### Named Entity (NE) Types
+- `PERSON`: Person names
+- `LOCATION`: Geographic locations
+- `ORGANIZATION`: Organizations and institutions
+- `OTHER`: Other named entities
+
+#### Literal (LIT) Types
+- `DATE`: Date values
+- `NUMBER`: Numeric values
+- `STRING`: Text literals
+- `OTHER`: Other literal types
+
+### API Endpoints
+
+Your entity linking system should provide these endpoints:
+
+```
+GET /datasets                          - List datasets
+GET /datasets/{name}/tables           - List tables in dataset
+GET /datasets/{name}/tables/{table}   - Get table data
+POST /datasets/{name}/tables          - Upload new table
+DELETE /datasets/{name}/tables/{table} - Delete table
+GET /datasets/{name}/tables/{table}/status - Get processing status
+GET /datasets/{name}/tables/{table}/export - Export enriched data
+```
+
+### Example Integration
+
+To integrate your entity linking system with Koala UI:
+
+1. Implement the required API endpoints
+2. Format your data according to this specification  
+3. Configure Koala UI to point to your backend URL
+4. Optionally integrate with external knowledge bases (Wikidata, etc.)
+
+For reference implementation, see the [Crocodile](https://github.com/enRichMyData/crocodile) entity linking system.
+
 ## Screenshots
 
 ![Main Interface](./frontend/src/assets/images/splash_screen.webp)
