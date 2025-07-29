@@ -177,8 +177,7 @@ Koala UI can work with any entity linking system that adopts the following data 
       ]
     }
   },
-  "status": "DONE|DOING|processing",
-  "total_matches": 100
+  "status": "TODO|DOING|DONE"
 }
 ```
 
@@ -255,7 +254,7 @@ For reference implementation, see the [Crocodile](https://github.com/enRichMyDat
 
 ## Screenshots
 
-![Main Interface](./frontend/src/assets/images/splash_screen.webp)
+![Main Interface](./frontend/src/assets/images/screenshoot.png)
 
 ## Contributing
 
