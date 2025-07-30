@@ -604,6 +604,17 @@ function EntityDetailsModal({
             value={selectedTypes}
             onChange={(event, newValue) => setSelectedTypes(newValue)}
             onInputChange={(event, newInputValue) => setTypeQuery(newInputValue)}
+            renderOption={(props, option) => (
+              <Tooltip 
+                title={option.description || 'No description available'} 
+                arrow 
+                placement="right"
+              >
+                <li {...props}>
+                  {option.name} ({option.id})
+                </li>
+              </Tooltip>
+            )}
             renderTags={(value, getTagProps) =>
               value.map((option, index) => (
                 <Chip
