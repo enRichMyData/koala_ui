@@ -86,8 +86,7 @@ const TableList = () => {
           options.nextCursor = historyItem.nextCursor;
         }
         
-        const encodedName = encodeURIComponent(datasetName);
-        const response = await getTables(encodedName, historyItem.page, 10, options);
+        const response = await getTables(datasetName, historyItem.page, 10, options);
         
         if (response.data && response.data.length > 0) {
           setTables(response.data);

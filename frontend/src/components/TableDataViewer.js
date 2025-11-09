@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getTableData, getTableStatus, exportTableCsv } from '../services/apiServices';
+import { 
+  getTableData, 
+  getTableStatus, 
+  exportTableCsv,
+  runLinkingTask,
+  updateAnnotation
+} from '../services/apiServices';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
@@ -15,11 +21,13 @@ import CompressIcon from '@mui/icons-material/Compress';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import FilterIcon from '@mui/icons-material/FilterList';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import EntityDetailsModal from './EntityDetailsModal';
 import TableHeader from './TableHeader';
 import TableSearch from './TableSearch';
 import TableSortControls from './TableSortControls';
 import TypeFilterModal from './TypeFilterModal';
+import EntityLinkingDialog from './EntityLinkingDialog';
 
 // Component for truncating text in cells
 const TruncatedCell = ({ content, maxLength = 100, compact = false }) => {
@@ -100,6 +108,8 @@ const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
     Types: ${topCandidate.types ? topCandidate.types.map(t => t.name).join(', ') : 'N/A'}
   `;
 
+  const isPending = entityData?.pending;
+
   return (
     <Box 
       onClick={onClick} 
@@ -119,6 +129,18 @@ const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
         }
       }}
     >
+      {isPending && (
+        <Chip
+          label="Pending"
+          color="info"
+          size="small"
+          sx={{
+            position: 'absolute',
+            top: -8,
+            right: -8
+          }}
+        />
+      )}
       <Tooltip title={tooltipContent} arrow placement="top">
         <Box sx={{ width: '100%' }}>
           <Typography variant={compact ? "caption" : "body2"} sx={{ fontWeight: 'medium' }}>
@@ -180,10 +202,15 @@ const TableDataViewer = () => {
   const [selectedFilterColumn, setSelectedFilterColumn] = useState(null);
   const [availableColumnTypes, setAvailableColumnTypes] = useState([]);
   const [progressInfo, setProgressInfo] = useState(null);
+  const [linkingDialogOpen, setLinkingDialogOpen] = useState(false);
+  const [linkingLoading, setLinkingLoading] = useState(false);
+  const [linkingError, setLinkingError] = useState(null);
+  const [pendingLinkResults, setPendingLinkResults] = useState(null);
+  const [savingLinkResults, setSavingLinkResults] = useState(false);
+  const [linkSaveProgress, setLinkSaveProgress] = useState({ completed: 0, total: 0 });
+  const [linkSaveError, setLinkSaveError] = useState(null);
 
-  // --- POLLING LOGIC STATE ---
-  const [polling, setPolling] = useState(false);
-  const pollingRef = React.useRef();
+  const baseDataRef = React.useRef(null);
 
   const [openExportDialog, setOpenExportDialog] = useState(false);
   const [exportFields, setExportFields] = useState(ANNOTATION_FIELDS);
@@ -239,9 +266,12 @@ const TableDataViewer = () => {
       const response = await getTableData(datasetName, tableName, 10, fetchOptions);
       console.log('Fetched table data:', response);
       if (response.data) {
-        setData(response.data);
+        const freshData = response.data;
+        baseDataRef.current = JSON.parse(JSON.stringify(freshData));
+        setData(freshData);
         setNextCursor(response.pagination?.next_cursor || null);
         setPrevCursor(response.pagination?.prev_cursor || null);
+        setPendingLinkResults(null);
       } else {
         setError('No data available');
       }
@@ -253,74 +283,31 @@ const TableDataViewer = () => {
     }
   }, [datasetName, tableName, searchText, searchColumns, activeFilters, sortParams]);
 
-  // --- POLLING EFFECT ---
-  React.useEffect(() => {
-    // Start polling if table is not DONE and data exists
-    if (data && data.status !== 'DONE') {
-      setPolling(true);
-    } else {
-      setPolling(false);
-    }
-  }, [data]);
-
-  React.useEffect(() => {
-    if (!polling) return;
-
-    let cancelled = false;
-    function poll() {
-      pollingRef.current = setTimeout(async () => {
-        if (cancelled) return;
-        // Only poll if not DONE
-        if (data && data.status !== 'DONE') {
-          await fetchTableData();
-        }
-        if (!cancelled && data && data.status !== 'DONE') {
-          poll();
-        }
-      }, 5000); // Poll every 5 seconds
-    }
-    poll();
-
-    return () => {
-      cancelled = true;
-      if (pollingRef.current) clearTimeout(pollingRef.current);
-    };
-    // eslint-disable-next-line
-  }, [polling, fetchTableData, data]);
-
   useEffect(() => {
     let cancelled = false;
     setProgressInfo(null);
 
-    // Only stream if table is not already DONE
-    if (data?.status === 'DONE') {
-      setProgressInfo(null);
-      return;
-    }
-
-    getTableStatus(datasetName, tableName, (progress) => {
-      if (!cancelled) {
-        setProgressInfo(progress);
-        if (progress?.status === 'DONE') {
-          return;
+    getTableStatus(datasetName, tableName)
+      .then(status => {
+        if (!cancelled) {
+          setProgressInfo(status);
         }
-      }
-    }).catch(() => {
-      if (!cancelled) setProgressInfo(null);
-    });
+      })
+      .catch(() => {
+        if (!cancelled) setProgressInfo(null);
+      });
 
     return () => {
       cancelled = true;
     };
-    // Only rerun if datasetName or tableName changes
-    // eslint-disable-next-line
-  }, [datasetName, tableName, data?.status]);
+  }, [datasetName, tableName]);
 
   useEffect(() => {
     fetchTableData();
     // Only re-run if dataset/table changes
     // eslint-disable-next-line
   }, [fetchTableData]);
+
 
   const handlePreviousPage = () => {
     if (prevCursor) {
@@ -386,6 +373,191 @@ const TableDataViewer = () => {
   const toggleCompact = () => {
     setCompact(!compact);
   };
+
+  const handleOpenLinkingDialog = () => {
+    setLinkingError(null);
+    setLinkingDialogOpen(true);
+  };
+
+  const applyLinkingResults = useCallback((linkingResponse) => {
+    if (!linkingResponse || !Array.isArray(linkingResponse.cells) || !data?.header) {
+      setLinkingError('Linking service did not return any predictions.');
+      return;
+    }
+
+    const baseClone = baseDataRef.current
+      ? JSON.parse(JSON.stringify(baseDataRef.current))
+      : JSON.parse(JSON.stringify(data));
+
+    if (!baseClone?.rows) {
+      setLinkingError('Unable to merge predictions into the current table.');
+      return;
+    }
+
+    const pendingCells = [];
+    linkingResponse.cells.forEach((cell) => {
+      const rowIndex = baseClone.rows.findIndex(r => r.idRow === cell.rowId);
+      if (rowIndex === -1) return;
+      const columnIndex = cell.columnIndex;
+      if (columnIndex === undefined || columnIndex === null) return;
+
+      const candidates = (cell.candidates || []).map(candidate => ({
+        ...candidate
+      }));
+      if (candidates.length === 0) return;
+
+      if (!baseClone.rows[rowIndex].linked_entities) {
+        baseClone.rows[rowIndex].linked_entities = [];
+      }
+
+      const entityPayload = {
+        idColumn: columnIndex,
+        columnName: cell.columnName || data.header[columnIndex] || `Column ${columnIndex}`,
+        candidates,
+        pending: true,
+        source: linkingResponse.provider || 'external',
+        identifier: candidates[0]?.id
+      };
+
+      const existingIdx = baseClone.rows[rowIndex].linked_entities.findIndex(
+        entity => entity.idColumn === columnIndex
+      );
+
+      if (existingIdx > -1) {
+        baseClone.rows[rowIndex].linked_entities[existingIdx] = entityPayload;
+      } else {
+        baseClone.rows[rowIndex].linked_entities.push(entityPayload);
+      }
+
+      pendingCells.push({
+        rowId: cell.rowId,
+        columnIndex,
+        columnName: entityPayload.columnName,
+        candidates
+      });
+    });
+
+    if (pendingCells.length === 0) {
+      setLinkingError('Linking completed without returning usable predictions.');
+      return;
+    }
+
+    setData(baseClone);
+    setPendingLinkResults({
+      provider: linkingResponse.provider,
+      cells: pendingCells
+    });
+    setLinkingError(null);
+  }, [data]);
+
+  const handleStartLinking = useCallback(async ({ columnIndices = [], rowIds = [], provider = 'lion', language }) => {
+    if (!data || columnIndices.length === 0 || rowIds.length === 0) {
+      setLinkingError('Select at least one column and row to run linking.');
+      return;
+    }
+
+    setLinkingError(null);
+    setPendingLinkResults(null);
+    setLinkingLoading(true);
+
+    try {
+      const payload = {
+        provider,
+        column_indices: columnIndices,
+        row_ids: rowIds
+      };
+      if (language) {
+        payload.language = language;
+      }
+      const response = await runLinkingTask(datasetName, tableName, payload);
+      applyLinkingResults(response);
+      setLinkingDialogOpen(false);
+    } catch (err) {
+      console.error('Linking error:', err);
+      setLinkingError(err?.response?.data?.detail || err?.message || 'Failed to run linking task.');
+    } finally {
+      setLinkingLoading(false);
+    }
+  }, [data, datasetName, tableName, applyLinkingResults]);
+
+  const handleDiscardLinkResults = () => {
+    if (savingLinkResults) return;
+    setLinkSaveError(null);
+    setPendingLinkResults(null);
+    setLinkSaveProgress({ completed: 0, total: 0 });
+    if (baseDataRef.current) {
+      const restored = JSON.parse(JSON.stringify(baseDataRef.current));
+      setData(restored);
+    }
+  };
+
+  const handlePersistLinkResults = async () => {
+    if (!pendingLinkResults?.cells?.length || savingLinkResults) return;
+    setLinkSaveError(null);
+    setSavingLinkResults(true);
+    setLinkSaveProgress({
+      completed: 0,
+      total: pendingLinkResults.cells.length
+    });
+
+    const failures = [];
+
+    for (const cell of pendingLinkResults.cells) {
+      const entityToSave = cell.candidates.find(candidate => candidate.match) || cell.candidates[0];
+      if (!entityToSave) {
+        setLinkSaveProgress(prev => ({
+          ...prev,
+          completed: prev.completed + 1
+        }));
+        continue;
+      }
+
+      const winningId = entityToSave.id;
+      const normalizedCandidates = (cell.candidates || []).map(candidate => ({
+        ...candidate,
+        match: candidate.id === winningId
+      }));
+      const orderedCandidates = [];
+      const primaryCandidate = normalizedCandidates.find(candidate => candidate.id === winningId);
+      if (primaryCandidate) {
+        orderedCandidates.push(primaryCandidate);
+      }
+      orderedCandidates.push(...normalizedCandidates.filter(candidate => candidate.id !== winningId));
+
+      try {
+        await updateAnnotation(
+          datasetName,
+          tableName,
+          cell.rowId,
+          cell.columnIndex,
+          {
+            ...entityToSave,
+            match: true,
+            candidates: orderedCandidates
+          }
+        );
+      } catch (err) {
+        console.error('Failed to persist annotation:', err);
+        failures.push(err);
+      } finally {
+        setLinkSaveProgress(prev => ({
+          ...prev,
+          completed: prev.completed + 1
+        }));
+      }
+    }
+
+    setSavingLinkResults(false);
+
+    if (failures.length === 0) {
+      setPendingLinkResults(null);
+      setLinkSaveProgress({ completed: 0, total: 0 });
+      await fetchTableData();
+    } else {
+      setLinkSaveError(`Failed to save ${failures.length} cell${failures.length > 1 ? 's' : ''}.`);
+    }
+  };
+
 
   const findEntityForCell = (rowId, colId) => {
     if (!data || !data.rows) return null;
@@ -562,6 +734,11 @@ const TableDataViewer = () => {
   );
   const rawColumnTypes = data?.column_types || {};
   const ctaData = data?.header.map((_, idx) => rawColumnTypes[idx]?.types || []);
+  const columnDefinitions = data?.header?.map((headerName, idx) => ({
+    index: idx,
+    name: headerName,
+    type: columnTypes[idx] || ''
+  })) || [];
 
   return (
     <Box sx={{ m: 2 }}>
@@ -660,6 +837,19 @@ const TableDataViewer = () => {
           }
           action={
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Box component="span" sx={{ display: 'inline-flex', minWidth: 140 }}>
+                <Button
+                  variant="contained"
+                  size="small"
+                  color="primary"
+                  startIcon={<AutoFixHighIcon />}
+                  onClick={handleOpenLinkingDialog}
+                  disabled={!data?.rows?.length || loading || (pendingLinkResults?.cells?.length ?? 0) > 0}
+                  sx={{ width: '100%' }}
+                >
+                  Link entities
+                </Button>
+              </Box>
               <Tooltip title={data?.status !== 'DONE' ? 'Table is still processing...' : ''}>
                 <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
                   <Button
@@ -688,7 +878,67 @@ const TableDataViewer = () => {
             </Box>
           }
         />
-        
+        {pendingLinkResults?.cells?.length > 0 && (
+          <Box sx={{ px: 2, pb: 2 }}>
+            <Alert
+              severity="info"
+              action={
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={handlePersistLinkResults}
+                    disabled={savingLinkResults}
+                  >
+                    {savingLinkResults
+                      ? `Saving ${linkSaveProgress.completed}/${linkSaveProgress.total}`
+                      : 'Save changes'}
+                  </Button>
+                  <Button
+                    size="small"
+                    color="inherit"
+                    onClick={handleDiscardLinkResults}
+                    disabled={savingLinkResults}
+                  >
+                    Discard
+                  </Button>
+                </Box>
+              }
+            >
+              {savingLinkResults
+                ? 'Persisting entity suggestions...'
+                : `${(pendingLinkResults.provider || 'Linking service').toUpperCase()} suggestions are ready for ${pendingLinkResults.cells.length} cell${pendingLinkResults.cells.length > 1 ? 's' : ''}.`}
+              {savingLinkResults && (
+                <LinearProgress sx={{ mt: 1 }} variant="determinate" value={
+                  linkSaveProgress.total > 0
+                    ? (linkSaveProgress.completed / linkSaveProgress.total) * 100
+                    : 0
+                } />
+              )}
+            </Alert>
+            {linkSaveError && (
+              <Alert
+                severity="error"
+                sx={{ mt: 1 }}
+                onClose={() => setLinkSaveError(null)}
+              >
+                {linkSaveError}
+              </Alert>
+            )}
+          </Box>
+        )}
+
+        {linkingError && (
+          <Box sx={{ px: 2, pb: 2 }}>
+            <Alert
+              severity="error"
+              onClose={() => setLinkingError(null)}
+            >
+              {linkingError}
+            </Alert>
+          </Box>
+        )}
+
         <Divider />
         
         <CardContent sx={{ p: 2 }}>
@@ -895,6 +1145,16 @@ const TableDataViewer = () => {
         </Box>
       </Card>
       
+      <EntityLinkingDialog
+        open={linkingDialogOpen}
+        onClose={() => setLinkingDialogOpen(false)}
+        columns={columnDefinitions}
+        rows={data?.rows || []}
+        loading={linkingLoading}
+        errorMessage={linkingError}
+        onSubmit={handleStartLinking}
+      />
+
       <TypeFilterModal
         open={typeFilterOpen}
         onClose={() => setTypeFilterOpen(false)}

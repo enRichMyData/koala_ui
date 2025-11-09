@@ -15,6 +15,8 @@ Koala UI is built with React and Material-UI, offering a seamless experience for
 - Table Data Viewing
 - Pagination
 - Data Visualization
+- Native dataset & table storage in MongoDB (no Crocodile dependency)
+- LLM-assisted, page-scoped entity linking
 - Responsive Design
 - Easy Navigation
 
@@ -43,8 +45,6 @@ To get started with Koala UI using Docker, follow these steps:
    ```env
    # Frontend environment variables
    REACT_APP_BACKEND_URL=http://localhost:5001
-   REACT_APP_CROCODILE_URL=
-   REACT_APP_CROCODILE_SECRET=
    REACT_APP_LAMAPI_URL=
    REACT_APP_LAMAPI_TOKEN=
 
@@ -52,6 +52,23 @@ To get started with Koala UI using Docker, follow these steps:
    NODE_ENV=development
    FLASK_ENV=development
    JWT_SECRET_KEY=
+   LION_API_URL=
+   LION_MODEL_NAME=
+   LION_MODEL_PROVIDER=ollama
+   LION_OLLAMA_HOST=
+   LION_MODEL_API_KEY=
+   LION_CHUNK_SIZE=64
+   LION_TABLE_CTX_SIZE=1
+   LION_RETRIEVER_ENDPOINT=
+   LION_RETRIEVER_TOKEN=
+   LION_RETRIEVER_NUM_CANDIDATES=10
+   LION_RETRIEVER_KG=wikidata
+   LION_JOB_TIMEOUT=180
+   LION_STATUS_POLL_INTERVAL=2
+   LION_RESULT_PAGE_SIZE=50
+   WIKIDATA_RECONCILE_URL=https://wikidata.reconci.link/en/api
+   WIKIDATA_RECONCILE_LANG=en
+   LINKING_MAX_ROWS=200
 
    # Versions
    NODE_VERSION=22
@@ -64,7 +81,8 @@ To get started with Koala UI using Docker, follow these steps:
    MONGO_PORT=27017
    ```
 
-   Note: Fill in `REACT_APP_CROCODILE_URL`, `REACT_APP_CROCODILE_TOKEN`, `REACT_APP_LAMAPI_URL`, and `REACT_APP_LAMAPI_TOKEN` based on where your instances of Crocodile and LamAPI are running.
+   Note: Provide LamAPI credentials if you want inline candidate search within the annotation modal.
+   Lion and Wikidata reconciliation credentials are now loaded on the backend, so fill in the `LION_*` and `WIKIDATA_*` variables if you plan to use those providers.
 
 5. **Build and start the containers**
    ```bash
@@ -101,6 +119,19 @@ Once the server is running, you can access the application at `http://localhost:
 - **Dataset Management:** View and manage your datasets.
 - **Table Viewing:** Explore detailed data within tables.
 - **Data Visualization:** Visualize data trends and insights.
+
+## LLM Entity Linking Workflow
+
+Koala UI can now send the data that is visible on the current page to the backend, which in turn talks to different linker providers (Lion or Wikidata Reconcile today):
+
+1. Open any table and click **Link entities** in the header. The button becomes available when the table has at least one row and there are no unsaved suggestions.
+2. In the dialog select the columns, rows (or row subset) and the provider you want to run. Only the selected cells from the current page are submitted, preventing very large jobs on huge tables.
+3. When the task finishes the returned candidates are overlaid on the grid, marked as **Pending**, and nothing is persisted automatically.
+4. Review the candidates per cell (the usual entity modal still works). Click **Save changes** to write the matches back to MongoDB or **Discard** to return to the previous state instantly.
+
+Koala’s backend now mirrors Lion’s workflow end-to-end (submit → poll → fetch results). You can keep the default credentials in your environment or pass temporary overrides per run by sending an `options` object that contains `lionConfig`, `retrieverConfig`, or flat keys such as `model_api_key` when calling the `/linking` endpoint.
+
+> **Note:** The hosted Lion service at `lion.zooverse.dev` requires a valid `LION_MODEL_API_KEY` (and optionally a LamAPI token). Make sure those backend environment variables are populated or provide the same values through `options.lionConfig`/`options.retrieverConfig` when you trigger a linking job.
 
 
 ## Data Format Specification
