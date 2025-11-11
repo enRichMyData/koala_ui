@@ -69,6 +69,7 @@ function EntityDetailsModal({
   rowId = null,
   columnId = null,
   cellValue = "",
+  explanation = null,
   datasetName = null, 
   tableName = null,
   onAnnotationChange = null
@@ -106,30 +107,43 @@ function EntityDetailsModal({
   }, [data]);
 
   useEffect(() => {
-    const fetchData = async () => {
-      if (query.length > 2) {
-        setLoading(true);
-        try {
-          const searchOptions = { limit: 100 };
-          if (kind) searchOptions.kind = kind;
-          if (nerType) searchOptions.ner_type = nerType;
-          if (selectedTypes.length > 0) {
-            searchOptions.types = selectedTypes.map(type => type.id).join(' ');
-          }
-          const responseData = await fetchCandidates(query, searchOptions);
+    if (query.length <= 2) {
+      setCandidates([]);
+      setLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    setError(null);
+
+    const debounceFetch = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const searchOptions = { limit: 100 };
+        if (kind) searchOptions.kind = kind;
+        if (nerType) searchOptions.ner_type = nerType;
+        if (selectedTypes.length > 0) {
+          searchOptions.types = selectedTypes.map(type => type.id).join(' ');
+        }
+        const responseData = await fetchCandidates(query, searchOptions);
+        if (!isCancelled) {
           setCandidates(responseData);
-        } catch (err) {
+        }
+      } catch (err) {
+        if (!isCancelled) {
           setError(err.message || 'Error fetching candidates');
-        } finally {
+        }
+      } finally {
+        if (!isCancelled) {
           setLoading(false);
         }
-      } else {
-        setCandidates([]);
       }
-    };
+    }, 300);
 
-    const debounceFetch = setTimeout(fetchData, 300);
-    return () => clearTimeout(debounceFetch);
+    return () => {
+      isCancelled = true;
+      clearTimeout(debounceFetch);
+    };
   }, [query, kind, nerType, selectedTypes]);
 
   useEffect(() => {
@@ -225,27 +239,44 @@ function EntityDetailsModal({
         throw new Error('No entity selected');
       }
 
-      await updateAnnotation(datasetName, tableName, rowId, columnId, selectedEntity);
+      const reorderedCandidates = [
+        selectedEntity,
+        ...localData.filter(e => e.id !== selectedEntity.id)
+      ].map((candidate, index) => ({
+        ...candidate,
+        match: index === 0,
+        score: candidate.score ?? (index === 0 ? 1 : candidate.score),
+      }));
+
+      if (reorderedCandidates.length === 0) {
+        throw new Error('Unable to prepare candidate list');
+      }
+
+      const winningCandidate = {
+        ...reorderedCandidates[0],
+        explanation: explanation || reorderedCandidates[0].explanation || null
+      };
+      reorderedCandidates[0] = winningCandidate;
+
+      await updateAnnotation(datasetName, tableName, rowId, columnId, {
+        ...winningCandidate,
+        candidates: reorderedCandidates,
+        explanation: winningCandidate.explanation
+      });
       setActionSuccess('Annotation updated successfully');
       
-      // Update the selected entity with a score of 1 before updating localData
-      const topEntity = {
-        ...selectedEntity,
-        score: 1,  // Ensure top entity has score of 1
-        match: true // Mark it as the matching entity
-      };
-      
-      // Create updated local data with the selected entity at the top
-      const updatedLocalData = [
-        topEntity,
-        ...localData.filter(e => e.id !== selectedEntity.id)
-      ];
-      
-      setLocalData(updatedLocalData);
+      setLocalData(reorderedCandidates);
+      setSelectedCandidates(prev => prev.filter(candidate => candidate.id !== selectedEntity.id));
       setSelectedWinnerIndex(0);
       
       if (onAnnotationChange) {
-        onAnnotationChange('update', { rowId, columnId, entity: topEntity });
+        onAnnotationChange('update', { 
+          rowId, 
+          columnId, 
+          entity: winningCandidate,
+          candidates: reorderedCandidates,
+          explanation: winningCandidate.explanation
+        });
       }
       
       if (currentTab === 1 && searchSelectedEntity) {
@@ -870,6 +901,12 @@ function EntityDetailsModal({
               {actionError}
             </Alert>
           </Fade>
+        )}
+
+        {explanation && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            {explanation}
+          </Alert>
         )}
         
         {currentTab === 0 ? renderEntityTable() : renderSearchResults()}

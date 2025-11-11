@@ -105,6 +105,7 @@ class AnnotationPayload(BaseModel):
     notes: Optional[str] = ""
     candidate_info: Dict[str, Any]
     candidates: Optional[List[Dict[str, Any]]] = None
+    explanation: Optional[str] = None
 
 # Utility functions
 def verify_password(plain_password, hashed_password):
@@ -365,8 +366,6 @@ def build_lion_payload(
     return payload, row_id_lookup
 
 def submit_lion_job(payload: List[Dict[str, Any]]) -> Dict[str, Any]:
-    print("Submitting Lion linking job...")
-    print(f"Payload: {payload}", flush=True)
     try:
         response = requests.post(
             f"{LION_API_URL}/annotate",
@@ -428,11 +427,10 @@ def fetch_lion_results(dataset_id: str, table_id: str) -> Dict[str, Any]:
                 headers={"accept": "application/json"},
                 timeout=60
             )
-            print(f"Fetching Lion results: dataset_id={dataset_id}, table_id={table_id}, page={page}")
-            print( f"Response status code: {result_resp.status_code}" )
-            print( f"Response content: {result_resp.text}" )
+            print("Fetching Lion results:", result_resp)
             result_resp.raise_for_status()
         except requests.RequestException as exc:
+            print("Error fetching Lion results:", exc)
             raise HTTPException(status_code=502, detail=f"Lion result fetch failed: {exc}") from exc
 
         payload = result_resp.json()
@@ -447,6 +445,37 @@ def fetch_lion_results(dataset_id: str, table_id: str) -> Dict[str, Any]:
     last_payload = last_payload or {}
     last_payload["rows"] = combined_rows
     return last_payload
+
+def parse_lion_answer_field(raw_answer: Any) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    Normalize Lion's answer payload which may arrive as a list, a dict with
+    `candidate_ranking`, or a JSON-encoded string. Returns a tuple of
+    (candidates, explanation).
+    """
+    explanation: Optional[str] = None
+    parsed_answer: Any = raw_answer
+
+    if isinstance(parsed_answer, str):
+        parsed_answer = parsed_answer.strip()
+        if parsed_answer:
+            try:
+                parsed_answer = json.loads(parsed_answer)
+            except json.JSONDecodeError:
+                parsed_answer = None
+
+    candidate_entries: List[Dict[str, Any]] = []
+    if isinstance(parsed_answer, dict):
+        if isinstance(parsed_answer.get("candidate_ranking"), list):
+            candidate_entries = parsed_answer.get("candidate_ranking") or []
+            explanation = parsed_answer.get("explanation")
+        elif isinstance(parsed_answer.get("answer"), list):
+            candidate_entries = parsed_answer.get("answer") or []
+        else:
+            candidate_entries = [parsed_answer]
+    elif isinstance(parsed_answer, list):
+        candidate_entries = parsed_answer
+
+    return candidate_entries or [], explanation
 
 def transform_lion_results(
     result_data: Dict[str, Any],
@@ -463,9 +492,13 @@ def transform_lion_results(
             if column_name not in header:
                 continue
             column_index = header.index(column_name)
-            answers = prediction.get("answer", [])
+            raw_answer = prediction.get("answer")
+            answers, explanation = parse_lion_answer_field(raw_answer)
+            explanation = explanation or prediction.get("explanation")
             candidates = []
             for answer in answers:
+                if not isinstance(answer, dict):
+                    continue
                 candidates.append({
                     "id": answer.get("id"),
                     "name": answer.get("name"),
@@ -477,12 +510,16 @@ def transform_lion_results(
                     "source": "lion"
                 })
             if candidates:
-                cells.append({
+                cell_payload = {
                     "rowId": row_id,
                     "columnIndex": column_index,
                     "columnName": column_name,
-                    "candidates": candidates
-                })
+                    "candidates": candidates,
+                    "identifier": prediction.get("identifier"),
+                }
+                if explanation:
+                    cell_payload["explanation"] = explanation
+                cells.append(cell_payload)
     return cells
 
 def run_lion_linking(
@@ -504,11 +541,13 @@ def run_lion_linking(
         options,
     )
     job_info = submit_lion_job(payload)
+    print("Payload submitted to Lion:", json.dumps(payload))
     job_id = job_info.get("jobId")
     status_payload = poll_lion_job(job_id)
     dataset_id = status_payload.get("datasetId") or job_info.get("datasetId")
     table_id = status_payload.get("tableId") or job_info.get("tableId")
     result_payload = fetch_lion_results(dataset_id, table_id)
+    print("Fetched Lion results:", json.dumps(result_payload))
     metadata = {
         "jobId": job_id,
         "datasetId": dataset_id,
@@ -1146,15 +1185,26 @@ def update_annotation_endpoint(
 
     if normalized_candidates:
         normalized_candidates = deduplicate(normalized_candidates)
+        existing_candidates = entry.get("candidates", [])
+        normalized_ids = {cand.get("id") for cand in normalized_candidates if cand.get("id")}
+        existing_tail = [
+            cand for cand in existing_candidates
+            if cand.get("id") not in normalized_ids
+        ]
         primary_in_list = next((cand for cand in normalized_candidates if cand.get("id") == payload.entity_id), None)
         remaining = [cand for cand in normalized_candidates if cand is not primary_in_list]
         if primary_in_list:
-            entry["candidates"] = [primary_in_list] + remaining
+            entry["candidates"] = [primary_in_list] + remaining + existing_tail
         else:
-            entry["candidates"] = [primary_candidate] + remaining
+            entry["candidates"] = [primary_candidate] + remaining + existing_tail
     else:
         filtered_candidates = [cand for cand in entry.get("candidates", []) if cand.get("id") != payload.entity_id]
         entry["candidates"] = [primary_candidate] + filtered_candidates
+
+    if payload.explanation is not None:
+        entry["explanation"] = payload.explanation
+    elif entry.get("explanation") is None and candidate_info.get("explanation"):
+        entry["explanation"] = candidate_info.get("explanation")
 
     rows_collection.update_one(
         {

@@ -179,7 +179,8 @@ const updateAnnotation = async (datasetName, tableName, rowId, columnId, entityD
       types: entityData.types || [],
       source: entityData.source || 'manual'
     },
-    candidates: entityData.candidates || null
+    candidates: entityData.candidates || null,
+    explanation: entityData.explanation ?? null
   };
 
   const response = await backendApiClient.put(

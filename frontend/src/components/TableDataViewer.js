@@ -101,12 +101,17 @@ const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
 
   const topCandidate = entityData.candidates[0];
   const score = topCandidate.score !== undefined ? topCandidate.score : null;
-  const tooltipContent = `
-    ${topCandidate.name} (${topCandidate.id})
-    ${score !== null ? `Score: ${score.toFixed(2)}` : 'Score: N/A'}
-    ${topCandidate.description || 'No description'}
-    Types: ${topCandidate.types ? topCandidate.types.map(t => t.name).join(', ') : 'N/A'}
-  `;
+  const tooltipLines = [
+    `${topCandidate.name} (${topCandidate.id})`,
+    score !== null ? `Score: ${score.toFixed(2)}` : 'Score: N/A',
+    topCandidate.description || 'No description',
+    `Types: ${topCandidate.types ? topCandidate.types.map(t => t.name).join(', ') : 'N/A'}`
+  ];
+  if (entityData?.explanation) {
+    tooltipLines.push('');
+    tooltipLines.push(`Why: ${entityData.explanation}`);
+  }
+  const tooltipContent = tooltipLines.join('\n');
 
   const isPending = entityData?.pending;
 
@@ -410,13 +415,15 @@ const TableDataViewer = () => {
         baseClone.rows[rowIndex].linked_entities = [];
       }
 
+      const explanation = cell.explanation || null;
       const entityPayload = {
         idColumn: columnIndex,
         columnName: cell.columnName || data.header[columnIndex] || `Column ${columnIndex}`,
         candidates,
         pending: true,
         source: linkingResponse.provider || 'external',
-        identifier: candidates[0]?.id
+        identifier: cell.identifier || candidates[0]?.id,
+        explanation
       };
 
       const existingIdx = baseClone.rows[rowIndex].linked_entities.findIndex(
@@ -433,7 +440,8 @@ const TableDataViewer = () => {
         rowId: cell.rowId,
         columnIndex,
         columnName: entityPayload.columnName,
-        candidates
+        candidates,
+        explanation
       });
     });
 
@@ -533,7 +541,8 @@ const TableDataViewer = () => {
           {
             ...entityToSave,
             match: true,
-            candidates: orderedCandidates
+            candidates: orderedCandidates,
+            explanation: cell.explanation || entityToSave.explanation || null
           }
         );
       } catch (err) {
@@ -572,7 +581,8 @@ const TableDataViewer = () => {
       candidates: entity?.candidates || [],
       rowId: rowId,
       columnId: colId,
-      cellValue: cellValue
+      cellValue: cellValue,
+      explanation: entity?.explanation || null
     });
     setModalOpen(true);
   };
@@ -585,10 +595,14 @@ const TableDataViewer = () => {
         if (row.idRow === details.rowId) {
           const updatedLinkedEntities = row.linked_entities.map(entity => {
             if (entity.idColumn === details.columnId) {
-              const filteredCandidates = entity.candidates.filter(c => c.id !== details.entity.id);
+              const filteredCandidates = (entity.candidates || []).filter(c => c.id !== details.entity.id);
+              const newCandidates = (Array.isArray(details.candidates) && details.candidates.length > 0)
+                ? details.candidates
+                : [details.entity, ...filteredCandidates];
               return {
                 ...entity,
-                candidates: [details.entity, ...filteredCandidates]
+                candidates: newCandidates,
+                explanation: details.explanation ?? entity.explanation ?? null
               };
             }
             return entity;
@@ -1171,6 +1185,7 @@ const TableDataViewer = () => {
           rowId={modalData.rowId}
           columnId={modalData.columnId}
           cellValue={modalData.cellValue}
+          explanation={modalData.explanation}
           datasetName={datasetName}
           tableName={tableName}
           onAnnotationChange={handleAnnotationChange}
