@@ -1,26 +1,61 @@
 import React from 'react';
-import { TableCell, TableRow, Tooltip, IconButton, Box, Typography } from '@mui/material';
-import SortIcon from '@mui/icons-material/Sort';
-import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
-import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
-import FilterListIcon from '@mui/icons-material/FilterList';
+import { TableCell, TableRow, Tooltip, Box, Typography, Chip, Checkbox } from '@mui/material';
 
 const TableHeader = ({
-  headers, sortableColumns, sortColumn, sortOrder,
-  handleSort, columnTypes, ctaData, handleHeaderClick
+  headers,
+  columnTypes,
+  columnSubtypes,
+  columnSpecificSubtypes,
+  columnDpvAnnotations,
+  showDpvAnnotations,
+  showRowSelection,
+  showRowIndex,
+  allRowsSelected,
+  someRowsSelected,
+  onToggleAllRows
 }) => (
   <TableRow>
+    {(showRowSelection || showRowIndex) && (
+      <TableCell
+        sx={{
+          backgroundColor: '#f5f5f5',
+          borderBottom: '2px solid #ccc',
+          py: 1.5,
+          px: 1,
+          textAlign: 'center',
+          width: 56
+        }}
+      >
+        {showRowSelection ? (
+          <Checkbox
+            size="small"
+            checked={Boolean(allRowsSelected)}
+            indeterminate={Boolean(someRowsSelected)}
+            onChange={(event) => onToggleAllRows?.(event.target.checked)}
+          />
+        ) : (
+          <Typography variant="caption" color="text.secondary">
+            Row
+          </Typography>
+        )}
+      </TableCell>
+    )}
     {headers.map((header, index) => {
       const isNE = columnTypes[index] === 'NE';
-      const types = Array.isArray(ctaData[index]) ? ctaData[index] : ctaData[index]?.types || [];
-      // Sort types by frequency (descending)
-      const sortedTypes = [...types].sort((a, b) => b.frequency - a.frequency);
+      const subtype = columnSubtypes[index];
+      const specificSubtype = columnSpecificSubtypes?.[index] || '';
+      const showSpecific = specificSubtype && specificSubtype !== subtype;
       const bg = isNE ? '#e8f5e9' : '#fff9c4';
+      const dpvEntry = columnDpvAnnotations?.[index] || null;
+      const dpvType = dpvEntry?.typeId || '';
+      const dpvConfidence = typeof dpvEntry?.confidence === 'number' ? dpvEntry.confidence : null;
+      const dpvTitle = dpvConfidence !== null
+        ? `DPV confidence ${Math.round(dpvConfidence * 100)}%`
+        : 'DPV annotation';
 
       return (
         <TableCell
           key={index}
-          onClick={undefined}
           sx={{
             backgroundColor: bg,
             borderBottom: '2px solid #ccc',
@@ -38,32 +73,43 @@ const TableHeader = ({
                 {header}
               </Typography>
             </Tooltip>
-            {sortableColumns.includes(index) && (
-              <IconButton
-                size="small"
-                onClick={(e) => { e.stopPropagation(); handleSort(index); }}
-              >
-                {sortColumn === index
-                  ? (sortOrder === 'asc' ? <ArrowDropUpIcon /> : <ArrowDropDownIcon />)
-                  : <SortIcon />
-                }
-              </IconButton>
-            )}
           </Box>
-          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center', gap: 1 }}>
-            {isNE && sortedTypes.length > 0 && (
-              <IconButton
+          {subtype && (
+            <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+              <Chip
+                label={subtype}
                 size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleHeaderClick(sortedTypes, header, index);
-                }}
-                title="Filter by entity types in this column"
-              >
-                <FilterListIcon fontSize="small" />
-              </IconButton>
-            )}
-          </Box>
+                sx={{ fontSize: '0.65rem' }}
+                color={isNE ? 'success' : 'warning'}
+                variant="outlined"
+              />
+              {showSpecific && (
+                <Chip
+                  label={specificSubtype}
+                  size="small"
+                  sx={{ fontSize: '0.65rem' }}
+                  variant="outlined"
+                />
+              )}
+            </Box>
+          )}
+          {showDpvAnnotations && dpvType && (
+            <Box sx={{ mt: 0.5, display: 'flex', justifyContent: 'center' }}>
+              <Tooltip title={dpvTitle} arrow>
+                <Chip
+                  label={`DPV ${dpvType}`}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    fontSize: '0.6rem',
+                    color: '#5f6b7a',
+                    borderColor: '#d0d7de',
+                    bgcolor: '#f7f9fb'
+                  }}
+                />
+              </Tooltip>
+            </Box>
+          )}
         </TableCell>
       );
     })}

@@ -2,11 +2,11 @@
 
 <img src="./frontend/src/assets/images/koala_logo.webp" alt="Koala Logo" width="200" height="200">
 
-Koala UI is a modern, user-friendly web application designed to explore and visualize entity linking results efficiently. It features a clean interface, easy navigation, and powerful data handling capabilities.
+Koala UI is a modern, user-friendly web application designed to upload, organize, and explore tabular datasets. It features a clean interface, easy navigation, and powerful data handling capabilities.
 
 ## Description
 
-Koala UI is built with React and Material-UI, offering a seamless experience for users to manage and visualize datasets related to entity linking results. The application includes functionalities such as login authentication, dataset listing, table viewing, and detailed data visualization.
+Koala UI is built with React and Material-UI, offering a seamless experience for users to manage and visualize datasets. The application includes functionalities such as login authentication, dataset listing, table viewing, column typing, and fast filtering.
 
 ## Features
 
@@ -15,8 +15,9 @@ Koala UI is built with React and Material-UI, offering a seamless experience for
 - Table Data Viewing
 - Pagination
 - Data Visualization
-- Native dataset & table storage in MongoDB (no Crocodile dependency)
-- LLM-assisted, page-scoped entity linking
+- Native dataset & table storage in PostgreSQL
+- Column typing (NE/LIT) with manual editing
+- Search, filtering, and score-based sorting
 - Responsive Design
 - Easy Navigation
 
@@ -45,44 +46,38 @@ To get started with Koala UI using Docker, follow these steps:
    ```env
    # Frontend environment variables
    REACT_APP_BACKEND_URL=http://localhost:5001
-   REACT_APP_LAMAPI_URL=
-   REACT_APP_LAMAPI_TOKEN=
 
    # Common environment variables
    NODE_ENV=development
    FLASK_ENV=development
    JWT_SECRET_KEY=
-   LION_API_URL=
-   LION_MODEL_NAME=
-   LION_MODEL_PROVIDER=ollama
-   LION_OLLAMA_HOST=
-   LION_MODEL_API_KEY=
-   LION_CHUNK_SIZE=64
-   LION_TABLE_CTX_SIZE=1
-   LION_RETRIEVER_ENDPOINT=
-   LION_RETRIEVER_TOKEN=
-   LION_RETRIEVER_NUM_CANDIDATES=10
-   LION_RETRIEVER_KG=wikidata
-   LION_JOB_TIMEOUT=180
-   LION_STATUS_POLL_INTERVAL=2
-   LION_RESULT_PAGE_SIZE=50
-   WIKIDATA_RECONCILE_URL=https://wikidata.reconci.link/en/api
-   WIKIDATA_RECONCILE_LANG=en
-   LINKING_MAX_ROWS=200
+   POSTGRES_DB=koala_db
+   POSTGRES_USER=koala_user
+   POSTGRES_PASSWORD=
+   POSTGRES_PORT=5432
+   DATABASE_URL=postgresql+psycopg2://koala_user:<password>@postgres:5432/koala_db
+   ADMIN_EMAIL=
+   ADMIN_PASSWORD=
+   # Moose (automatic column identification)
+   MOOSE_BASE_URL=https://moose.zooverse.dev
+   MOOSE_API_KEY=
+
+   # Shared LLM service (used by Moose and other features)
+   LLM_PROVIDER=openrouter
+   LLM_MODEL=
+   LLM_API_KEY=
+   LLM_ENDPOINT=
 
    # Versions
    NODE_VERSION=22
    PYTHON_VERSION=3.12
-   MONGO_VERSION=7.0
+   POSTGRES_VERSION=16
 
    # Ports
    FRONTEND_PORT=3000
    BACKEND_PORT=5001
-   MONGO_PORT=27017
+   POSTGRES_PORT=5432
    ```
-
-   Note: Provide LamAPI credentials if you want inline candidate search within the annotation modal.
-   Lion and Wikidata reconciliation credentials are now loaded on the backend, so fill in the `LION_*` and `WIKIDATA_*` variables if you plan to use those providers.
 
 5. **Build and start the containers**
    ```bash
@@ -91,12 +86,6 @@ To get started with Koala UI using Docker, follow these steps:
 
 6. **Access the application**
    Open your browser and go to `http://localhost:${FRONTEND_PORT}`.
-
-### Prerequisites
-
-Ensure you have active instances of Alligator and LamAPI running. You can find more information and instructions on setting up these services in their respective repositories:
-- [Crocodile](https://github.com/enRichMyData/crocodile)
-- [LamAPI](https://github.com/unimib-datAI/lamAPI)
 
 ## Running in Production
 
@@ -118,25 +107,12 @@ Once the server is running, you can access the application at `http://localhost:
 - **Login:** Use your credentials to log in.
 - **Dataset Management:** View and manage your datasets.
 - **Table Viewing:** Explore detailed data within tables.
-- **Data Visualization:** Visualize data trends and insights.
-
-## LLM Entity Linking Workflow
-
-Koala UI can now send the data that is visible on the current page to the backend, which in turn talks to different linker providers (Lion or Wikidata Reconcile today):
-
-1. Open any table and click **Link entities** in the header. The button becomes available when the table has at least one row and there are no unsaved suggestions.
-2. In the dialog select the columns, rows (or row subset) and the provider you want to run. Only the selected cells from the current page are submitted, preventing very large jobs on huge tables.
-3. When the task finishes the returned candidates are overlaid on the grid, marked as **Pending**, and nothing is persisted automatically.
-4. Review the candidates per cell (the usual entity modal still works). Click **Save changes** to write the matches back to MongoDB or **Discard** to return to the previous state instantly.
-
-Koala’s backend now mirrors Lion’s workflow end-to-end (submit → poll → fetch results). You can keep the default credentials in your environment or pass temporary overrides per run by sending an `options` object that contains `lionConfig`, `retrieverConfig`, or flat keys such as `model_api_key` when calling the `/linking` endpoint.
-
-> **Note:** The hosted Lion service at `lion.zooverse.dev` requires a valid `LION_MODEL_API_KEY` (and optionally a LamAPI token). Make sure those backend environment variables are populated or provide the same values through `options.lionConfig`/`options.retrieverConfig` when you trigger a linking job.
+- **Column Typing:** Set NE/LIT types per column and request auto-identification (placeholder).
 
 
 ## Data Format Specification
 
-Koala UI can work with any entity linking system that adopts the following data format. This specification allows other entity linking tools to integrate seamlessly with Koala UI for visualization and annotation.
+Koala UI exposes a dataset/table API optimized for pagination, search, filtering, and column typing.
 
 ### Dataset Structure
 
@@ -144,10 +120,10 @@ Koala UI can work with any entity linking system that adopts the following data 
 {
   "data": [
     {
-      "dataset_name": "string",
-      "total_tables": "number",
-      "total_rows": "number", 
-      "created_at": "ISO timestamp"
+      "datasetName": "string",
+      "totalTables": "number",
+      "totalRows": "number",
+      "createdAt": "ISO timestamp"
     }
   ],
   "pagination": {
@@ -161,83 +137,70 @@ Koala UI can work with any entity linking system that adopts the following data 
 
 ```json
 {
-  "header": ["column1", "column2", "column3"],
-  "rows": [
-    {
-      "idRow": "unique_row_identifier",
-      "data": ["cell_value_1", "cell_value_2", "cell_value_3"],
-      "linked_entities": [
-        {
-          "idColumn": 0,
-          "candidates": [
-            {
-              "id": "Q123456",
-              "name": "Entity Name",
-              "description": "Entity description",
-              "score": 0.95,
-              "types": [
-                {
-                  "id": "Q5",
-                  "name": "human"
-                }
-              ],
-              "match": true
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  "classified_columns": {
-    "NE": {
-      "0": "PERSON",
-      "2": "LOCATION"
+  "data": {
+    "dataset_name": "string",
+    "table_name": "string",
+    "header": ["column1", "column2", "column3"],
+    "rows": [
+      {
+        "idRow": 0,
+        "data": ["cell_value_1", "cell_value_2", "cell_value_3"],
+        "row_score": 0.92,
+        "row_types": ["PERSON", "DATE"]
+      }
+    ],
+    "classified_columns": {
+      "NE": {
+        "0": "PERSON"
+      },
+      "LIT": {
+        "2": "DATE"
+      }
     },
-    "LIT": {
-      "1": "DATE"
-    }
+    "column_types": {
+      "0": {
+        "types": [
+          {
+            "id": "PERSON",
+            "name": "PERSON",
+            "count": 100,
+            "frequency": 1.0
+          }
+        ]
+      }
+    },
+    "classification_status": "MANUAL|AUTO_PENDING|UNSET",
+    "score_column": 3,
+    "score_column_name": "score",
+    "status": "READY",
+    "total_rows": 500,
+    "total_matches": 50
   },
-  "column_types": {
-    "0": {
-      "types": [
-        {
-          "id": "Q5",
-          "name": "human",
-          "count": 15
-        }
-      ]
-    }
-  },
-  "status": "TODO|DOING|DONE"
+  "pagination": {
+    "next_cursor": "string|null",
+    "prev_cursor": "string|null"
+  }
 }
 ```
 
 ### Required Fields
 
 #### Dataset Level
-- `dataset_name`: Unique identifier for the dataset
-- `total_tables`: Number of tables in the dataset
-- `total_rows`: Total number of rows across all tables
+- `datasetName`: Unique identifier for the dataset
+- `totalTables`: Number of tables in the dataset
+- `totalRows`: Total number of rows across all tables
 
 #### Table Level
 - `header`: Array of column names
-- `rows`: Array of data rows with entity linking information
-- `status`: Processing status ("DONE", "DOING", or "processing")
+- `rows`: Array of data rows
+- `status`: Processing status ("READY")
+- `classification_status`: Column typing status ("MANUAL", "AUTO_PENDING", "UNSET")
 
 #### Row Level
 - `idRow`: Unique identifier for the row
 - `data`: Array of cell values corresponding to header columns
-- `linked_entities`: Array of entity linking results for this row
-
-#### Entity Linking Results
-- `idColumn`: Column index (0-based) where entity was found
-- `candidates`: Array of potential entity matches
-- `id`: Entity identifier (e.g., Wikidata QID)
-- `name`: Human-readable entity name
-- `description`: Brief description of the entity
-- `score`: Confidence score (0.0 to 1.0)
-- `types`: Array of entity types with id and name
-- `match`: Boolean indicating if this is the selected/best match
+- `row_score`: Parsed numeric score (if score column is detected)
+- `row_types`: Array of column type labels present in the row
 
 #### Column Classification
 - `classified_columns.NE`: Named Entity columns with their subtypes
@@ -260,28 +223,30 @@ Koala UI can work with any entity linking system that adopts the following data 
 
 ### API Endpoints
 
-Your entity linking system should provide these endpoints:
+Koala UI exposes the following endpoints:
 
 ```
 GET /datasets                          - List datasets
 GET /datasets/{name}/tables           - List tables in dataset
 GET /datasets/{name}/tables/{table}   - Get table data
-POST /datasets/{name}/tables          - Upload new table
+POST /datasets/{name}/tables/upload   - Upload new table
 DELETE /datasets/{name}/tables/{table} - Delete table
 GET /datasets/{name}/tables/{table}/status - Get processing status
-GET /datasets/{name}/tables/{table}/export - Export enriched data
+GET /datasets/{name}/tables/{table}/export - Export CSV
+PUT /datasets/{name}/tables/{table}/columns/classification - Update column types
+POST /datasets/{name}/tables/{table}/columns/identify - Request auto-identification (placeholder)
 ```
 
 ### Example Integration
 
-To integrate your entity linking system with Koala UI:
+To integrate your data source with Koala UI:
 
 1. Implement the required API endpoints
-2. Format your data according to this specification  
+2. Format your data according to this specification
 3. Configure Koala UI to point to your backend URL
-4. Optionally integrate with external knowledge bases (Wikidata, etc.)
+4. Add reconciliation integrations later if needed
 
-For reference implementation, see the [Crocodile](https://github.com/enRichMyData/crocodile) entity linking system.
+For future reconciliation integration, add your linker behind the placeholder endpoint.
 
 ## Screenshots
 

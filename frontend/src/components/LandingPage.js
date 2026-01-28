@@ -58,15 +58,10 @@ const LandingPage = ({ isLoggedIn }) => {
                 gutterBottom
                 sx={{ fontWeight: 700, mb: 1 }}
               >
-                <span style={{ color: theme.palette.primary.main }}>K</span>nowledge-
-                <span style={{ color: theme.palette.primary.main }}>O</span>riented
-                <br />
-                <span style={{ color: theme.palette.primary.main }}>A</span>nnotation and
-                <span style={{ color: theme.palette.primary.main }}>L</span>inking
-                <span style={{ color: theme.palette.primary.main }}>A</span>pplication
+                Koala UI
               </Typography>
               <Typography variant="h5" color="inherit" paragraph sx={{ mb: 1.5 }}>
-                Powerful entity linking and knowledge annotation for your structured data
+                Upload, organize, and explore datasets with fast search, filters, and column typing.
               </Typography>
               <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                 <Button
@@ -125,7 +120,7 @@ const LandingPage = ({ isLoggedIn }) => {
           Key Features
         </Typography>
         <Typography variant="h6" align="center" color="text.secondary" paragraph>
-          Discover the powerful capabilities of Koala for your data enrichment needs
+          Everything you need to manage tabular datasets end-to-end
         </Typography>
         
         <Grid container spacing={3} sx={{ mt: 1.5 }}>
@@ -139,7 +134,7 @@ const LandingPage = ({ isLoggedIn }) => {
                   Table Processing
                 </Typography>
                 <Typography align="center">
-                  Upload and process tabular data with automatic entity detection.
+                  Upload CSV tables and keep them organized by dataset.
                 </Typography>
               </CardContent>
             </Card>
@@ -152,10 +147,10 @@ const LandingPage = ({ isLoggedIn }) => {
               </Box>
               <CardContent sx={{ flexGrow: 1 }}>
                 <Typography gutterBottom variant="h5" component="h2" align="center">
-                  Knowledge Base
+                  Dataset Storage
                 </Typography>
                 <Typography align="center">
-                  Link entities to Wikidata knowledge base for enriched data.
+                  Persist tables with pagination and fast retrieval.
                 </Typography>
               </CardContent>
             </Card>
@@ -168,10 +163,10 @@ const LandingPage = ({ isLoggedIn }) => {
               </Box>
               <CardContent sx={{ flexGrow: 1 }}>
                 <Typography gutterBottom variant="h5" component="h2" align="center">
-                  Entity Search
+                  Search & Filters
                 </Typography>
                 <Typography align="center">
-                  Powerful search and filtering to find the right entities.
+                  Find rows by text, types, and score sorting.
                 </Typography>
               </CardContent>
             </Card>
@@ -184,10 +179,10 @@ const LandingPage = ({ isLoggedIn }) => {
               </Box>
               <CardContent sx={{ flexGrow: 1 }}>
                 <Typography gutterBottom variant="h5" component="h2" align="center">
-                  Data Verification
+                  Column Typing
                 </Typography>
                 <Typography align="center">
-                  Verify and correct entity links with intuitive interface.
+                  Classify columns as NE or LIT with editable subtypes.
                 </Typography>
               </CardContent>
             </Card>
@@ -199,10 +194,10 @@ const LandingPage = ({ isLoggedIn }) => {
       <Box sx={{ bgcolor: 'primary.main', color: 'white', py: 8 }}>
         <Container maxWidth="md">
           <Typography variant="h4" align="center" gutterBottom>
-            Ready to enhance your data?
+            Ready to organize your data?
           </Typography>
           <Typography variant="h6" align="center" paragraph>
-            Start linking your data to the knowledge graph today.
+            Start building datasets and exploring them today.
           </Typography>
           <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
             <Button 
@@ -241,7 +236,7 @@ const LandingPage = ({ isLoggedIn }) => {
             color="text.secondary"
             component="p"
           >
-            Knowledge-Oriented Annotation and Linking Application
+            Dataset management and exploration workspace
           </Typography>
           <Typography variant="body2" color="text.secondary" align="center">
             {'© '}

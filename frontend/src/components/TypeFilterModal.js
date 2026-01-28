@@ -27,13 +27,11 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
 import FilterListIcon from '@mui/icons-material/FilterList';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 
 const TypeFilterModal = ({
   open,
   onClose,
   onApplyFilter,
-  columnIndex,
   columnName,
   availableTypes = [],
   loading = false
@@ -78,14 +76,12 @@ const TypeFilterModal = ({
     if (filterMode === 'include') {
       onApplyFilter({
         includeTypes: typeIds,
-        excludeTypes: [],
-        column: columnIndex
+        excludeTypes: []
       });
     } else {
       onApplyFilter({
         includeTypes: [],
-        excludeTypes: typeIds,
-        column: columnIndex
+        excludeTypes: typeIds
       });
     }
     onClose();
@@ -99,8 +95,7 @@ const TypeFilterModal = ({
   const handleClearAndClose = () => {
     onApplyFilter({
       includeTypes: [],
-      excludeTypes: [],
-      column: null
+      excludeTypes: []
     });
     onClose();
   };
@@ -122,11 +117,11 @@ const TypeFilterModal = ({
       }}>
         <Box>
           <Typography variant="h6">
-            {filterMode === 'include' ? 'Include' : 'Exclude'} Entity Types
+            {filterMode === 'include' ? 'Include' : 'Exclude'} Semantic Types
           </Typography>
           {columnName && (
             <Typography variant="subtitle1" color="text.secondary">
-              Column: {columnName}
+              Scope: {columnName || 'All columns'}
             </Typography>
           )}
         </Box>
@@ -152,9 +147,9 @@ const TypeFilterModal = ({
                 control={<Radio />} 
                 label={
                   <Typography variant="body2">
-                    Include rows with these types
+                    Include rows that contain these types
                     <Typography variant="caption" display="block" color="text.secondary">
-                      (Show only rows that have ANY of the selected types)
+                      (Types come from KG entities on NE columns)
                     </Typography>
                   </Typography>
                 } 
@@ -164,9 +159,9 @@ const TypeFilterModal = ({
                 control={<Radio />} 
                 label={
                   <Typography variant="body2">
-                    Exclude rows with these types
+                    Exclude rows that contain these types
                     <Typography variant="caption" display="block" color="text.secondary">
-                      (Hide rows that have ANY of the selected types)
+                      (Types come from KG entities on NE columns)
                     </Typography>
                   </Typography>
                 } 
@@ -259,16 +254,7 @@ const TypeFilterModal = ({
                             color={type.frequency > 0.5 ? "success" : "default"}
                           />
                         )}
-                        <IconButton
-                          size="small"
-                          href={`https://www.wikidata.org/wiki/${type.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          sx={{ ml: 'auto' }}
-                        >
-                          <OpenInNewIcon fontSize="small" />
-                        </IconButton>
+                        <Box sx={{ ml: 'auto' }} />
                       </Box>
                     } 
                     secondary={type.description}

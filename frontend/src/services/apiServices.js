@@ -1,10 +1,11 @@
 import axios from 'axios';
 
 const BACKEND_API_URL = process.env.REACT_APP_BACKEND_URL;
-const LAMAPI_URL = process.env.REACT_APP_LAMAPI_URL;
-const LAMAPI_TOKEN = process.env.REACT_APP_LAMAPI_TOKEN;
-
 const encodeSegment = (value = '') => encodeURIComponent(value);
+
+const authClient = axios.create({
+  baseURL: BACKEND_API_URL
+});
 
 const backendApiClient = axios.create({
   baseURL: BACKEND_API_URL
@@ -35,15 +36,82 @@ backendApiClient.interceptors.request.use(config => {
   return config;
 });
 
-const lamapiClient = axios.create({
-  baseURL: LAMAPI_URL,
-});
+let isRefreshing = false;
+let refreshQueue = [];
 
-lamapiClient.interceptors.request.use(config => {
-  config.params = config.params || {};
-  config.params.token = LAMAPI_TOKEN;
-  return config;
-});
+const queueRefresh = (callback) => {
+  refreshQueue.push(callback);
+};
+
+const resolveRefreshQueue = (token) => {
+  refreshQueue.forEach(callback => callback(token));
+  refreshQueue = [];
+};
+
+const refreshAccessToken = async () => {
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) {
+    throw new Error('Missing refresh token');
+  }
+  const response = await authClient.post('/refresh', {
+    refresh_token: refreshToken
+  });
+  const newAccessToken = response.data?.access_token;
+  const newRefreshToken = response.data?.refresh_token;
+  if (newAccessToken) {
+    localStorage.setItem('token', newAccessToken);
+  }
+  if (newRefreshToken) {
+    localStorage.setItem('refresh_token', newRefreshToken);
+  }
+  return newAccessToken;
+};
+
+backendApiClient.interceptors.response.use(
+  response => response,
+  async error => {
+    const originalRequest = error.config;
+    if (!originalRequest || originalRequest._retry) {
+      return Promise.reject(error);
+    }
+    if (originalRequest.url?.includes('/login') || originalRequest.url?.includes('/refresh')) {
+      return Promise.reject(error);
+    }
+    if (error.response?.status === 401) {
+      if (isRefreshing) {
+        return new Promise(resolve => {
+          queueRefresh((token) => {
+            if (token) {
+              originalRequest.headers = originalRequest.headers || {};
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
+            resolve(backendApiClient(originalRequest));
+          });
+        });
+      }
+      originalRequest._retry = true;
+      isRefreshing = true;
+      try {
+        const token = await refreshAccessToken();
+        isRefreshing = false;
+        resolveRefreshQueue(token);
+        if (token) {
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+        }
+        return backendApiClient(originalRequest);
+      } catch (refreshError) {
+        isRefreshing = false;
+        refreshQueue = [];
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
+        return Promise.reject(refreshError);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 
 const buildPaginationParams = (page, perPage, options = {}) => {
   const params = {
@@ -76,12 +144,24 @@ const deleteDataset = async (datasetName) => {
   return response.data;
 };
 
-const uploadTable = async (datasetName, file, columnClassification = null) => {
+const uploadTable = async (datasetName, file, columnClassification = null, options = {}) => {
+  const resolvedOptions = typeof options === 'boolean'
+    ? { autoDetect: options }
+    : options;
   const formData = new FormData();
   formData.append('file', file);
 
   if (columnClassification) {
     formData.append('column_classification', JSON.stringify(columnClassification));
+  }
+  if (resolvedOptions.autoDetect) {
+    formData.append('auto_detect', 'true');
+  }
+  if (resolvedOptions.llmProvider) {
+    formData.append('llm_provider', resolvedOptions.llmProvider);
+  }
+  if (resolvedOptions.llmModel) {
+    formData.append('llm_model', resolvedOptions.llmModel);
   }
 
   const response = await backendApiClient.post(
@@ -113,7 +193,6 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
     per_page: perPage,
     page: options.page || 1,
     search: options.search,
-    column: options.column,
     sort_by: options.sortBy,
     sort_direction: options.sortDirection
   };
@@ -140,89 +219,118 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
   return response.data;
 };
 
-const getTableStatus = async (datasetName, tableName) => {
-  const response = await backendApiClient.get(
-    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/status`
-  );
-  return response.data;
-};
-
-const exportTableCsv = async (datasetName, tableName, fields = []) => {
+const exportTableCsv = async (datasetName, tableName) => {
   const response = await backendApiClient.get(
     `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/export`,
     {
-      params: { fields },
       responseType: 'blob'
     }
   );
   return response;
 };
 
-const runLinkingTask = async (datasetName, tableName, payload) => {
+const updateColumnClassification = async (datasetName, tableName, classification) => {
+  const response = await backendApiClient.put(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/classification`,
+    { classification }
+  );
+  return response.data;
+};
+
+const requestColumnIdentification = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.llmProvider) {
+    params.llm_provider = options.llmProvider;
+  }
+  if (options.llmModel) {
+    params.llm_model = options.llmModel;
+  }
   const response = await backendApiClient.post(
-    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/linking`,
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/identify`,
+    null,
+    { params }
+  );
+  return response.data;
+};
+
+const requestDpvAnnotation = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.llmProvider) {
+    params.llm_provider = options.llmProvider;
+  }
+  if (options.llmModel) {
+    params.llm_model = options.llmModel;
+  }
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/dpv/annotate`,
+    null,
+    { params }
+  );
+  return response.data;
+};
+
+const getColumnIdentifyStatus = async (datasetName, tableName) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/identify/status`
+  );
+  return response.data;
+};
+
+const getDpvStatus = async (datasetName, tableName) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/dpv/status`
+  );
+  return response.data;
+};
+
+const getLlmSettings = async () => {
+  const response = await backendApiClient.get('/users/me/llm-settings');
+  return response.data;
+};
+
+const updateLlmSettings = async (settings = {}) => {
+  const response = await backendApiClient.put('/users/me/llm-settings', settings);
+  return response.data;
+};
+
+const getReconciliationSettings = async () => {
+  const response = await backendApiClient.get('/users/me/reconciliation-settings');
+  return response.data;
+};
+
+const updateReconciliationSettings = async (settings = {}) => {
+  const response = await backendApiClient.put('/users/me/reconciliation-settings', settings);
+  return response.data;
+};
+
+const createReconciliationJob = async (datasetName, tableName, payload = {}) => {
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile`,
     payload
   );
   return response.data;
 };
 
-const updateAnnotation = async (datasetName, tableName, rowId, columnId, entityData) => {
-  const requestBody = {
-    entity_id: entityData.id,
-    match: entityData.match ?? true,
-    score: entityData.score ?? 1,
-    notes: entityData.notes ?? '',
-    candidate_info: {
-      id: entityData.id,
-      name: entityData.name || '',
-      description: entityData.description || '',
-      types: entityData.types || [],
-      source: entityData.source || 'manual'
-    },
-    candidates: entityData.candidates || null,
-    explanation: entityData.explanation ?? null
-  };
+const getReconciliationStatus = async (datasetName, tableName, jobId) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/${jobId}/status`
+  );
+  return response.data;
+};
 
+const getReconciliationCandidates = async (datasetName, tableName, row, col) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/candidates`,
+    { params: { row, col } }
+  );
+  return response.data;
+};
+
+const updateReconciliationCell = async (datasetName, tableName, payload = {}) => {
   const response = await backendApiClient.put(
-    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/rows/${rowId}/columns/${columnId}`,
-    requestBody
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/cell`,
+    payload
   );
-  return response.data;
-};
-
-const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityId) => {
-  const response = await backendApiClient.delete(
-    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/rows/${rowId}/columns/${columnId}/candidates/${entityId}`
-  );
-  return response.data;
-};
-
-const fetchCandidates = async (query, options = {}) => {
-  const params = {
-    name: query,
-    limit: options.limit || 100,
-    kg: 'wikidata',
-    cache: false
-  };
-
-  if (options.kind) params.kind = options.kind;
-  if (options.ner_type) params.ner_type = options.ner_type;
-  if (options.types) params.types = options.types;
-
-  const response = await lamapiClient.get('/lookup/entity-retrieval', { params });
-  return response.data;
-};
-
-const fetchEntityTypes = async (query) => {
-  const response = await lamapiClient.get('/lookup/entity-retrieval', {
-    params: {
-      name: query,
-      limit: 50,
-      kg: 'wikidata',
-      cache: false,
-      kind: 'type'
-    }
-  });
   return response.data;
 };
 
@@ -234,11 +342,18 @@ export {
   getTables,
   deleteTable,
   getTableData,
-  getTableStatus,
   exportTableCsv,
-  runLinkingTask,
-  updateAnnotation,
-  deleteAnnotation,
-  fetchCandidates,
-  fetchEntityTypes
+  updateColumnClassification,
+  requestColumnIdentification,
+  requestDpvAnnotation,
+  getColumnIdentifyStatus,
+  getDpvStatus,
+  getLlmSettings,
+  updateLlmSettings,
+  getReconciliationSettings,
+  updateReconciliationSettings,
+  createReconciliationJob,
+  getReconciliationStatus,
+  getReconciliationCandidates,
+  updateReconciliationCell
 };

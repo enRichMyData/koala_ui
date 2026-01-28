@@ -36,16 +36,20 @@ services:
     environment:
       - FLASK_ENV=${FLASK_ENV}
     depends_on:
-      - mongo
+      - postgres
 
-  mongo:
-    image: mongo:${MONGO_VERSION}
-    container_name: koala_mongo
+  postgres:
+    image: postgres:${POSTGRES_VERSION}
+    container_name: koala_postgres
     restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
-      - ./data/mongo:/data/db
+      - ./data/postgres:/var/lib/postgresql
     ports:
-      - "${MONGO_PORT}:27017"
+      - "${POSTGRES_PORT}:5432"
 
 volumes:
   frontend_node_modules:

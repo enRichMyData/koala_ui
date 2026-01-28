@@ -6,10 +6,13 @@ import TableDataViewer from './components/TableDataViewer';
 import Login from './components/Login';
 import NavigationBar from './components/NavigationBar';
 import LandingPage from './components/LandingPage';
+import Profile from './components/Profile';
 import { CssBaseline } from '@mui/material';
 
 function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
+  const [isLoggedIn, setIsLoggedIn] = useState(
+    !!(localStorage.getItem('token') || localStorage.getItem('refresh_token'))
+  );
   // Display the logged-in user's email or fallback to userId
   const profileName =
     localStorage.getItem('userEmail')
@@ -18,6 +21,9 @@ function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('userEmail');
+    localStorage.removeItem('userId');
     setIsLoggedIn(false);
   };
 
@@ -29,6 +35,7 @@ function App() {
         <Route path="/" element={<LandingPage isLoggedIn={isLoggedIn} />} />
         <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/dataset" />} />
         <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
+        <Route path="/profile" element={isLoggedIn ? <Profile /> : <Navigate replace to="/login" />} />
         <Route path="/dataset/:datasetName" element={isLoggedIn ? <TableList /> : <Navigate replace to="/login" />} />
         <Route path="/dataset/:datasetName/table/:tableName" element={isLoggedIn ? <TableDataViewer /> : <Navigate replace to="/login" />} />
       </Routes>
