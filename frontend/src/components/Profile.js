@@ -46,12 +46,17 @@ const Profile = () => {
   const [lamapiKg, setLamapiKg] = useState('');
   const [lamapiNumCandidates, setLamapiNumCandidates] = useState(10);
   const [lamapiToken, setLamapiToken] = useState('');
+  const [lionBaseUrl, setLionBaseUrl] = useState('');
+  const [crocodileBaseUrl, setCrocodileBaseUrl] = useState('');
+  const [crocodileApiKey, setCrocodileApiKey] = useState('');
   const [lionHasApiKey, setLionHasApiKey] = useState(false);
   const [lionHasLlmApiKey, setLionHasLlmApiKey] = useState(false);
   const [lamapiHasToken, setLamapiHasToken] = useState(false);
+  const [crocodileHasApiKey, setCrocodileHasApiKey] = useState(false);
   const [showLionApiKeyInput, setShowLionApiKeyInput] = useState(false);
   const [showLionLlmApiKeyInput, setShowLionLlmApiKeyInput] = useState(false);
   const [showLamapiTokenInput, setShowLamapiTokenInput] = useState(false);
+  const [showCrocodileApiKeyInput, setShowCrocodileApiKeyInput] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -83,12 +88,25 @@ const Profile = () => {
         setShowLionLlmApiKeyInput(!lionHasLlmKey);
         setLionModelProvider(reconciliation?.model_api_provider || '');
         setLionModelName(reconciliation?.model_name || '');
+        setLionBaseUrl(
+          reconciliation?.lion_linker?.base_url ||
+          reconciliation?.lion_base_url ||
+          ''
+        );
         setLamapiEndpoint(reconciliation?.lamapi_endpoint || '');
         setLamapiKg(reconciliation?.lamapi_kg || '');
         setLamapiNumCandidates(reconciliation?.lamapi_num_candidates || 10);
         const hasLamapiToken = Boolean(reconciliation?.has_lamapi_token);
         setLamapiHasToken(hasLamapiToken);
         setShowLamapiTokenInput(!hasLamapiToken);
+        setCrocodileBaseUrl(
+          reconciliation?.crocodile?.base_url ||
+          reconciliation?.crocodile_base_url ||
+          ''
+        );
+        const hasCrocKey = Boolean(reconciliation?.crocodile?.has_api_key || reconciliation?.crocodile_has_api_key);
+        setCrocodileHasApiKey(hasCrocKey);
+        setShowCrocodileApiKeyInput(!hasCrocKey);
         setError(null);
       } catch (err) {
         if (!isMounted) return;
@@ -118,7 +136,10 @@ const Profile = () => {
         payload.api_key = llmApiKey.trim();
       }
       const requests = [updateLlmSettings(payload)];
-      const reconPayload = {
+      const reconRequests = [];
+      const lionPayload = {
+        provider: 'lion_linker',
+        base_url: lionBaseUrl.trim(),
         model_api_provider: lionModelProvider || null,
         model_name: lionModelName || null,
         lamapi_endpoint: lamapiEndpoint || null,
@@ -128,35 +149,28 @@ const Profile = () => {
           : null
       };
       if (showLionApiKeyInput) {
-        reconPayload.api_key = lionApiKey.trim();
+        lionPayload.api_key = lionApiKey.trim();
       }
       if (showLionLlmApiKeyInput) {
-        reconPayload.llm_api_key = lionLlmApiKey.trim();
+        lionPayload.llm_api_key = lionLlmApiKey.trim();
       }
       if (showLamapiTokenInput && lamapiToken.trim()) {
-        reconPayload.lamapi_token = lamapiToken.trim();
+        lionPayload.lamapi_token = lamapiToken.trim();
       }
-      if (
-        showLionApiKeyInput ||
-        showLionLlmApiKeyInput ||
-        showLamapiTokenInput ||
-        reconPayload.model_api_provider !== null ||
-        reconPayload.model_name !== null ||
-        reconPayload.lamapi_endpoint !== null ||
-        reconPayload.lamapi_kg !== null ||
-        reconPayload.lamapi_num_candidates !== null
-      ) {
-        if (showLionApiKeyInput) {
-          reconPayload.api_key = lionApiKey.trim();
-        }
-        if (showLionLlmApiKeyInput) {
-          reconPayload.llm_api_key = lionLlmApiKey.trim();
-        }
-        requests.push(updateReconciliationSettings(reconPayload));
+      reconRequests.push(updateReconciliationSettings(lionPayload));
+
+      const crocodilePayload = {
+        provider: 'crocodile',
+        base_url: crocodileBaseUrl.trim()
+      };
+      if (showCrocodileApiKeyInput && crocodileApiKey.trim()) {
+        crocodilePayload.api_key = crocodileApiKey.trim();
       }
-      const responses = await Promise.all(requests);
+      reconRequests.push(updateReconciliationSettings(crocodilePayload));
+
+      const responses = await Promise.all([...requests, ...reconRequests]);
       const updated = responses[0];
-      const updatedRecon = responses[1];
+      const updatedRecon = reconRequests.length > 0 ? responses[responses.length - 1] : null;
       setHasApiKey(Boolean(updated?.has_api_key));
       setLlmApiKey('');
       setShowApiKeyInput(false);
@@ -164,10 +178,12 @@ const Profile = () => {
         setLionHasApiKey(Boolean(updatedRecon?.has_api_key));
         setLionHasLlmApiKey(Boolean(updatedRecon?.has_llm_api_key));
         setLamapiHasToken(Boolean(updatedRecon?.has_lamapi_token));
+        setCrocodileHasApiKey(Boolean(updatedRecon?.crocodile?.has_api_key || updatedRecon?.crocodile_has_api_key));
       }
       setLionApiKey('');
       setLionLlmApiKey('');
       setLamapiToken('');
+      setCrocodileApiKey('');
       if (showLionApiKeyInput) {
         setShowLionApiKeyInput(false);
       }
@@ -176,6 +192,9 @@ const Profile = () => {
       }
       if (showLamapiTokenInput) {
         setShowLamapiTokenInput(false);
+      }
+      if (showCrocodileApiKeyInput) {
+        setShowCrocodileApiKeyInput(false);
       }
       setSuccess('Profile updated.');
     } catch (err) {
@@ -329,6 +348,16 @@ const Profile = () => {
               />
             </Grid>
             <Grid item xs={12}>
+              <TextField
+                label="Lion Linker base URL"
+                fullWidth
+                value={lionBaseUrl}
+                placeholder="https://lion.zooverse.dev"
+                onChange={(e) => setLionBaseUrl(e.target.value)}
+                helperText="Leave blank to use the server default."
+              />
+            </Grid>
+            <Grid item xs={12}>
               {!showLionApiKeyInput && lionHasApiKey ? (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Typography variant="body2" color="text.secondary">
@@ -419,6 +448,47 @@ const Profile = () => {
                   placeholder={lamapiHasToken ? 'Stored in profile (leave blank to keep)' : 'Enter Lamapi token'}
                   onChange={(e) => setLamapiToken(e.target.value)}
                   helperText={lamapiHasToken ? 'Token is stored for your profile.' : 'Token will be stored for your profile.'}
+                />
+              )}
+            </Grid>
+            <Grid item xs={12}>
+              <Divider sx={{ my: 1 }} />
+            </Grid>
+            <Grid item xs={12}>
+              <Typography variant="subtitle1">Crocodile</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Configure credentials for the Crocodile reconciler.
+              </Typography>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                label="Crocodile base URL"
+                fullWidth
+                value={crocodileBaseUrl}
+                placeholder="https://crocodile.zooverse.dev"
+                onChange={(e) => setCrocodileBaseUrl(e.target.value)}
+                helperText="Leave blank to use the server default."
+              />
+            </Grid>
+            <Grid item xs={12}>
+              {!showCrocodileApiKeyInput && crocodileHasApiKey ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Crocodile API key is stored for your profile.
+                  </Typography>
+                  <Button size="small" onClick={() => setShowCrocodileApiKeyInput(true)}>
+                    Update key
+                  </Button>
+                </Box>
+              ) : (
+                <TextField
+                  label="Crocodile API key"
+                  type="password"
+                  fullWidth
+                  value={crocodileApiKey}
+                  placeholder={crocodileHasApiKey ? 'Stored in profile (leave blank to keep)' : 'Enter Crocodile API key'}
+                  onChange={(e) => setCrocodileApiKey(e.target.value)}
+                  helperText={crocodileHasApiKey ? 'Key is stored for your profile.' : 'Key will be stored for your profile.'}
                 />
               )}
             </Grid>

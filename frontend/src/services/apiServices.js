@@ -211,6 +211,9 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
   if (options.excludeTypes?.length) {
     params.exclude_types = options.excludeTypes;
   }
+  if (options.reconciliationProvider) {
+    params.reconciliation_provider = options.reconciliationProvider;
+  }
 
   const response = await backendApiClient.get(
     `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}`,
@@ -318,10 +321,10 @@ const getReconciliationStatus = async (datasetName, tableName, jobId) => {
   return response.data;
 };
 
-const getReconciliationCandidates = async (datasetName, tableName, row, col) => {
+const getReconciliationCandidates = async (datasetName, tableName, row, col, provider) => {
   const response = await backendApiClient.get(
     `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/candidates`,
-    { params: { row, col } }
+    { params: { row, col, provider } }
   );
   return response.data;
 };

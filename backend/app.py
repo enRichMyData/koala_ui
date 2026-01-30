@@ -110,6 +110,7 @@ class UserServiceCredential(Base):
     id = Column(Integer, primary_key=True)
     user_email = Column(String(320), ForeignKey("users.email", ondelete="CASCADE"), nullable=False, index=True)
     service = Column(String(64), nullable=False)
+    base_url = Column(Text, nullable=True)
     api_key = Column(Text, nullable=True)
     llm_api_key = Column(Text, nullable=True)
     model_api_provider = Column(String(64), nullable=True)
@@ -316,6 +317,7 @@ class LLMSettingsUpdate(BaseModel):
 
 class ReconciliationSettingsUpdate(BaseModel):
     provider: Optional[str] = None
+    base_url: Optional[str] = None
     api_key: Optional[str] = None
     llm_api_key: Optional[str] = None
     model_api_provider: Optional[str] = None
@@ -344,6 +346,7 @@ class ReconciliationCellUpdate(BaseModel):
     row: int
     col: int
     final: Dict[str, Any]
+    provider: Optional[str] = None
 
 
 def verify_password(plain_password, hashed_password):
@@ -413,6 +416,16 @@ def normalize_optional_value(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+RECONCILIATION_PROVIDERS = {"lion_linker", "crocodile"}
+
+
+def normalize_reconciliation_provider(value: Optional[str]) -> str:
+    provider = normalize_optional_value(value) or "lion_linker"
+    if provider not in RECONCILIATION_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported reconciliation provider.")
+    return provider
+
+
 def parse_csv_env(value: Optional[str]) -> List[str]:
     if not value:
         return []
@@ -469,6 +482,11 @@ LION_POLL_TIMEOUT_SECONDS = 300
 LION_INLINE_ROW_LIMIT = 200
 LION_UPLOAD_TIMEOUT_SECONDS = 300
 LION_LAMAPI_CLASS_PATH = "lion_linker.retrievers.LamapiClient"
+
+CROCODILE_DEFAULT_BASE_URL = "https://crocodile.zooverse.dev"
+CROCODILE_REQUEST_TIMEOUT_SECONDS = 30
+CROCODILE_POLL_INTERVAL_SECONDS = 2
+CROCODILE_POLL_TIMEOUT_SECONDS = 300
 
 
 def load_llm_config(
@@ -578,8 +596,12 @@ def load_lion_config(
     db: Session,
     user_email: str
 ) -> Dict[str, Any]:
-    base_url = (os.getenv("LION_LINKER_BASE_URL") or LION_DEFAULT_BASE_URL).rstrip("/")
     credentials = get_user_service_credentials(db, user_email, "lion_linker")
+    base_url = normalize_optional_value(credentials.base_url) if credentials and credentials.base_url else None
+    if not base_url:
+        base_url = (os.getenv("LION_LINKER_BASE_URL") or LION_DEFAULT_BASE_URL).rstrip("/")
+    else:
+        base_url = base_url.rstrip("/")
     api_key = normalize_optional_value(credentials.api_key) if credentials and credentials.api_key else None
     llm_api_key = normalize_optional_value(credentials.llm_api_key) if credentials and credentials.llm_api_key else None
     if not api_key:
@@ -655,6 +677,34 @@ def load_lion_retriever_config(
     }
 
 
+def load_crocodile_config(
+    db: Session,
+    user_email: str
+) -> Dict[str, Any]:
+    credentials = get_user_service_credentials(db, user_email, "crocodile")
+    base_url = normalize_optional_value(credentials.base_url) if credentials and credentials.base_url else None
+    if not base_url:
+        base_url = (os.getenv("CROCODILE_BASE_URL") or CROCODILE_DEFAULT_BASE_URL).rstrip("/")
+    else:
+        base_url = base_url.rstrip("/")
+    api_key = normalize_optional_value(credentials.api_key) if credentials and credentials.api_key else None
+    if not api_key:
+        api_key = normalize_optional_value(os.getenv("CROCODILE_API_KEY"))
+
+    missing = []
+    if not api_key:
+        missing.append("Crocodile API key")
+
+    return {
+        "base_url": base_url,
+        "api_key": api_key,
+        "request_timeout": CROCODILE_REQUEST_TIMEOUT_SECONDS,
+        "poll_interval": CROCODILE_POLL_INTERVAL_SECONDS,
+        "poll_timeout": CROCODILE_POLL_TIMEOUT_SECONDS,
+        "missing": missing
+    }
+
+
 def build_lion_headers(config: Dict[str, Any]) -> Dict[str, str]:
     headers = {
         "Accept": "application/json",
@@ -663,6 +713,13 @@ def build_lion_headers(config: Dict[str, Any]) -> Dict[str, str]:
     if config.get("llm_api_key"):
         headers["X-LLM-API-Key"] = config["llm_api_key"]
     return headers
+
+
+def build_crocodile_headers(config: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "X-API-Key": config["api_key"]
+    }
 
 
 def create_lion_job(config: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -696,6 +753,102 @@ def get_lion_job_results(
         response = client.get(url, headers=build_lion_headers(config), params=params)
     response.raise_for_status()
     return response.json()
+
+
+def create_crocodile_job(config: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    url = f"{config['base_url']}/jobs"
+    with httpx.Client(timeout=config["request_timeout"]) as client:
+        response = client.post(url, json=payload, headers=build_crocodile_headers(config))
+    response.raise_for_status()
+    return response.json()
+
+
+def get_crocodile_job_status(config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
+    url = f"{config['base_url']}/jobs/{job_id}"
+    with httpx.Client(timeout=config["request_timeout"]) as client:
+        response = client.get(url, headers=build_crocodile_headers(config))
+    response.raise_for_status()
+    return response.json()
+
+
+def get_crocodile_job_results(
+    config: Dict[str, Any],
+    job_id: str,
+    cursor: Optional[str] = None,
+    limit: int = 200
+) -> Dict[str, Any]:
+    url = f"{config['base_url']}/jobs/{job_id}/results"
+    params: Dict[str, Any] = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    with httpx.Client(timeout=config["request_timeout"]) as client:
+        response = client.get(url, headers=build_crocodile_headers(config), params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+def serialize_reconciliation_settings(db: Session, user_email: str) -> Dict[str, Any]:
+    lion_credentials = get_user_service_credentials(db, user_email, "lion_linker")
+    crocodile_credentials = get_user_service_credentials(db, user_email, "crocodile")
+    server_api_key = normalize_optional_value(os.getenv("LION_LINKER_API_KEY"))
+    server_llm_key = normalize_optional_value(os.getenv("LION_LINKER_LLM_API_KEY"))
+    croc_server_key = normalize_optional_value(os.getenv("CROCODILE_API_KEY"))
+    retriever_config = load_lion_retriever_config(db, user_email)
+    lion_base_url = (
+        normalize_optional_value(lion_credentials.base_url)
+        if lion_credentials and lion_credentials.base_url
+        else None
+    )
+    if not lion_base_url:
+        lion_base_url = (os.getenv("LION_LINKER_BASE_URL") or LION_DEFAULT_BASE_URL).rstrip("/")
+    else:
+        lion_base_url = lion_base_url.rstrip("/")
+    crocodile_base_url = (
+        normalize_optional_value(crocodile_credentials.base_url)
+        if crocodile_credentials and crocodile_credentials.base_url
+        else None
+    )
+    if not crocodile_base_url:
+        crocodile_base_url = (os.getenv("CROCODILE_BASE_URL") or CROCODILE_DEFAULT_BASE_URL).rstrip("/")
+    else:
+        crocodile_base_url = crocodile_base_url.rstrip("/")
+
+    lion_payload = {
+        "base_url": lion_base_url,
+        "has_api_key": bool((lion_credentials and lion_credentials.api_key) or server_api_key),
+        "has_llm_api_key": bool((lion_credentials and lion_credentials.llm_api_key) or server_llm_key),
+        "has_lamapi_token": bool(retriever_config.get("token")),
+        "model_api_provider": retriever_config.get("model_api_provider"),
+        "model_name": retriever_config.get("model_name"),
+        "lamapi_endpoint": retriever_config.get("endpoint"),
+        "lamapi_kg": retriever_config.get("kg"),
+        "lamapi_num_candidates": retriever_config.get("num_candidates")
+    }
+
+    crocodile_payload = {
+        "base_url": crocodile_base_url,
+        "has_api_key": bool(
+            (crocodile_credentials and crocodile_credentials.api_key) or croc_server_key
+        )
+    }
+
+    return {
+        "provider": "lion_linker",
+        "available_providers": ["lion_linker", "crocodile"],
+        "lion_base_url": lion_base_url,
+        "crocodile_base_url": crocodile_base_url,
+        "has_api_key": lion_payload["has_api_key"],
+        "has_llm_api_key": lion_payload["has_llm_api_key"],
+        "has_lamapi_token": lion_payload["has_lamapi_token"],
+        "model_api_provider": lion_payload["model_api_provider"],
+        "model_name": lion_payload["model_name"],
+        "lamapi_endpoint": lion_payload["lamapi_endpoint"],
+        "lamapi_kg": lion_payload["lamapi_kg"],
+        "lamapi_num_candidates": lion_payload["lamapi_num_candidates"],
+        "crocodile_has_api_key": crocodile_payload["has_api_key"],
+        "lion_linker": lion_payload,
+        "crocodile": crocodile_payload
+    }
 
 
 def create_lion_upload(config: Dict[str, Any], content_length: int, content_type: str) -> Dict[str, Any]:
@@ -1114,25 +1267,47 @@ def map_reconciliation_row(job: ReconciliationJobDB, row_index: Optional[int]) -
     return row_value
 
 
-def map_reconciliation_col(job: ReconciliationJobDB, col_index: Optional[int]) -> Optional[int]:
+def map_reconciliation_col(
+    job: ReconciliationJobDB,
+    col_index: Optional[Any],
+    header_map: Optional[Dict[str, int]] = None,
+    header_map_lower: Optional[Dict[str, int]] = None
+) -> Optional[int]:
     if col_index is None:
         return None
-    try:
-        col_value = int(col_index)
-    except (TypeError, ValueError):
+
+    def resolve_numeric(value: Any) -> Optional[int]:
+        try:
+            col_value = int(value)
+        except (TypeError, ValueError):
+            return None
+        if job.col_map:
+            if 0 <= col_value < len(job.col_map):
+                try:
+                    return int(job.col_map[col_value])
+                except (TypeError, ValueError):
+                    return None
+            if col_value in job.col_map:
+                return col_value
+        return col_value
+
+    if isinstance(col_index, str):
+        stripped = col_index.strip()
+        if stripped:
+            numeric = resolve_numeric(stripped)
+            if numeric is not None:
+                return numeric
+            if header_map and stripped in header_map:
+                return header_map[stripped]
+            lowered = stripped.lower()
+            if header_map_lower and lowered in header_map_lower:
+                return header_map_lower[lowered]
         return None
-    if job.col_map:
-        if 0 <= col_value < len(job.col_map):
-            try:
-                return int(job.col_map[col_value])
-            except (TypeError, ValueError):
-                return None
-        if col_value in job.col_map:
-            return col_value
-    return col_value
+
+    return resolve_numeric(col_index)
 
 
-def sync_reconciliation_results(
+def sync_lion_results(
     db: Session,
     job: ReconciliationJobDB,
     config: Dict[str, Any]
@@ -1202,6 +1377,91 @@ def sync_reconciliation_results(
     db.commit()
 
 
+def sync_crocodile_results(
+    db: Session,
+    job: ReconciliationJobDB,
+    config: Dict[str, Any]
+) -> None:
+    cursor = None
+    table = db.query(TableDB).filter(TableDB.id == job.table_id).first()
+    header = table.header if table else []
+    selected_columns = job.selected_columns or []
+    header_map: Dict[str, int] = {}
+    header_map_lower: Dict[str, int] = {}
+    for idx in selected_columns:
+        if idx is None or idx >= len(header) or idx < 0:
+            continue
+        name = str(header[idx])
+        header_map[name] = idx
+        header_map_lower[name.strip().lower()] = idx
+
+    while True:
+        payload = get_crocodile_job_results(config, job.external_job_id, cursor=cursor, limit=200)
+        results = payload.get("results") or []
+        for entry in results:
+            row_idx = entry.get("row_id", entry.get("row"))
+            col_idx = entry.get("col_id", entry.get("col"))
+            mapped_row = map_reconciliation_row(job, row_idx)
+            mapped_col = map_reconciliation_col(job, col_idx, header_map, header_map_lower)
+            if mapped_row is None or mapped_col is None:
+                continue
+            cell = (
+                db.query(ReconciliationCellDB)
+                .filter(
+                    ReconciliationCellDB.table_id == job.table_id,
+                    ReconciliationCellDB.row_id == mapped_row,
+                    ReconciliationCellDB.col_idx == mapped_col,
+                    ReconciliationCellDB.provider == job.provider
+                )
+                .first()
+            )
+            if not cell:
+                cell = ReconciliationCellDB(
+                    table_id=job.table_id,
+                    row_id=mapped_row,
+                    col_idx=mapped_col,
+                    provider=job.provider
+                )
+                db.add(cell)
+
+            candidates = entry.get("candidates") or []
+            candidate_ranking = []
+            for rank, candidate in enumerate(candidates, start=1):
+                metadata = candidate.get("metadata") or {}
+                candidate_ranking.append({
+                    "rank": rank,
+                    "id": candidate.get("entity_id"),
+                    "name": candidate.get("label"),
+                    "label": candidate.get("label"),
+                    "confidence_score": candidate.get("score"),
+                    "score": candidate.get("score"),
+                    "description": metadata.get("description"),
+                    "types": metadata.get("types") or [],
+                    "metadata": metadata
+                })
+
+            cell.job_id = job.id
+            cell.external_job_id = job.external_job_id
+            cell.mention = entry.get("mention")
+            cell.cell_id = entry.get("cell_id")
+            cell.final = cell.final or {}
+            cell.candidate_ranking = candidate_ranking
+            cell.explanation = entry.get("explanation") or entry.get("meta", {}).get("explanation")
+            cell.updated_at = datetime.utcnow()
+        db.commit()
+
+        cursor = payload.get("next_cursor")
+        has_more = payload.get("has_more")
+        if not cursor:
+            if not has_more:
+                break
+            break
+
+    job.synced_at = datetime.utcnow()
+    job.updated_at = datetime.utcnow()
+    db.commit()
+
+
 def process_reconciliation_sync(job_id: int) -> None:
     db = SessionLocal()
     try:
@@ -1217,14 +1477,31 @@ def process_reconciliation_sync(job_id: int) -> None:
         if not dataset:
             logger.warning("Dataset not found for reconciliation sync %s.", job_id)
             return
-        config = load_lion_config(db, dataset.owner_email)
-        if config["missing"]:
+        provider = job.provider or "lion_linker"
+        if provider == "lion_linker":
+            config = load_lion_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing Lion Linker configuration", "missing": config["missing"]}
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                return
+            sync_lion_results(db, job, config)
+        elif provider == "crocodile":
+            config = load_crocodile_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing Crocodile configuration", "missing": config["missing"]}
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                return
+            sync_crocodile_results(db, job, config)
+        else:
             job.status = "error"
-            job.error = {"detail": "Missing Lion Linker configuration", "missing": config["missing"]}
+            job.error = {"detail": f"Unsupported reconciliation provider '{provider}'."}
             job.updated_at = datetime.utcnow()
             db.commit()
             return
-        sync_reconciliation_results(db, job, config)
     except Exception as exc:
         logger.exception("Reconciliation sync %s failed: %s", job_id, exc)
     finally:
@@ -1256,41 +1533,89 @@ def process_reconciliation_job(job_id: int) -> None:
             logger.warning("Dataset not found for reconciliation job %s.", job_id)
             return
 
-        config = load_lion_config(db, dataset.owner_email)
-        if config["missing"]:
-            job.status = "error"
-            job.error = {"detail": "Missing Lion Linker configuration", "missing": config["missing"]}
+        provider = job.provider or "lion_linker"
+        if provider == "lion_linker":
+            config = load_lion_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing Lion Linker configuration", "missing": config["missing"]}
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                return
+
+            success_statuses = {"completed", "succeeded", "success", "done", "finished"}
+            failure_statuses = {"failed", "error", "canceled", "cancelled"}
+            deadline = time.time() + config["poll_timeout"]
+            while time.time() < deadline:
+                payload = get_lion_job_status(config, job.external_job_id)
+                status = (payload.get("status") or "").lower()
+                if status:
+                    job.status = status
+                    job.updated_at = datetime.utcnow()
+                    db.commit()
+                if status in success_statuses:
+                    try:
+                        sync_lion_results(db, job, config)
+                    except Exception as exc:
+                        job.status = "sync_failed"
+                        job.error = {"detail": str(exc)}
+                        job.updated_at = datetime.utcnow()
+                        db.commit()
+                    return
+                if status in failure_statuses:
+                    job.error = payload.get("error") or {"detail": f"Job ended with status '{status}'."}
+                    job.updated_at = datetime.utcnow()
+                    db.commit()
+                    return
+                time.sleep(config["poll_interval"])
+            job.status = "timeout"
+            job.error = {"detail": "Reconciliation job timed out."}
             job.updated_at = datetime.utcnow()
             db.commit()
             return
 
-        success_statuses = {"completed", "succeeded", "success", "done", "finished"}
-        failure_statuses = {"failed", "error", "canceled", "cancelled"}
-        deadline = time.time() + config["poll_timeout"]
-        while time.time() < deadline:
-            payload = get_lion_job_status(config, job.external_job_id)
-            status = (payload.get("status") or "").lower()
-            if status:
-                job.status = status
+        if provider == "crocodile":
+            config = load_crocodile_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing Crocodile configuration", "missing": config["missing"]}
                 job.updated_at = datetime.utcnow()
                 db.commit()
-            if status in success_statuses:
-                try:
-                    sync_reconciliation_results(db, job, config)
-                except Exception as exc:
-                    job.status = "sync_failed"
-                    job.error = {"detail": str(exc)}
+                return
+
+            success_statuses = {"done", "completed", "succeeded", "success", "finished"}
+            failure_statuses = {"failed", "error", "canceled", "cancelled"}
+            deadline = time.time() + config["poll_timeout"]
+            while time.time() < deadline:
+                payload = get_crocodile_job_status(config, job.external_job_id)
+                status = (payload.get("status") or "").lower()
+                if status:
+                    job.status = status
                     job.updated_at = datetime.utcnow()
                     db.commit()
-                return
-            if status in failure_statuses:
-                job.error = payload.get("error") or {"detail": f"Job ended with status '{status}'."}
-                job.updated_at = datetime.utcnow()
-                db.commit()
-                return
-            time.sleep(config["poll_interval"])
-        job.status = "timeout"
-        job.error = {"detail": "Reconciliation job timed out."}
+                if status in success_statuses:
+                    try:
+                        sync_crocodile_results(db, job, config)
+                    except Exception as exc:
+                        job.status = "sync_failed"
+                        job.error = {"detail": str(exc)}
+                        job.updated_at = datetime.utcnow()
+                        db.commit()
+                    return
+                if status in failure_statuses:
+                    job.error = payload.get("error") or {"detail": f"Job ended with status '{status}'."}
+                    job.updated_at = datetime.utcnow()
+                    db.commit()
+                    return
+                time.sleep(config["poll_interval"])
+            job.status = "timeout"
+            job.error = {"detail": "Reconciliation job timed out."}
+            job.updated_at = datetime.utcnow()
+            db.commit()
+            return
+
+        job.status = "error"
+        job.error = {"detail": f"Unsupported reconciliation provider '{provider}'."}
         job.updated_at = datetime.utcnow()
         db.commit()
     except Exception as exc:
@@ -1642,6 +1967,7 @@ def ensure_user_service_credentials_schema():
         return
     existing_columns = {col["name"] for col in inspector.get_columns("user_service_credentials")}
     columns_to_add = {
+        "base_url": "TEXT",
         "api_key": "TEXT",
         "llm_api_key": "TEXT",
         "model_api_provider": "VARCHAR(64)",
@@ -1813,22 +2139,7 @@ def get_reconciliation_settings(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    credentials = get_user_service_credentials(db, current_user["email"], "lion_linker")
-    server_api_key = normalize_optional_value(os.getenv("LION_LINKER_API_KEY"))
-    server_llm_key = normalize_optional_value(os.getenv("LION_LINKER_LLM_API_KEY"))
-    retriever_config = load_lion_retriever_config(db, current_user["email"])
-    return {
-        "provider": "lion_linker",
-        "has_api_key": bool((credentials and credentials.api_key) or server_api_key),
-        "has_llm_api_key": bool((credentials and credentials.llm_api_key) or server_llm_key),
-        "has_lamapi_token": bool(retriever_config.get("token")),
-        "model_api_provider": retriever_config.get("model_api_provider"),
-        "model_name": retriever_config.get("model_name"),
-        "lamapi_endpoint": retriever_config.get("endpoint"),
-        "lamapi_kg": retriever_config.get("kg"),
-        "lamapi_num_candidates": retriever_config.get("num_candidates"),
-        "available_providers": ["lion_linker"]
-    }
+    return serialize_reconciliation_settings(db, current_user["email"])
 
 
 @app.put("/users/me/reconciliation-settings", response_model=dict)
@@ -1837,46 +2148,37 @@ def update_reconciliation_settings(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    provider = normalize_optional_value(payload.provider) or "lion_linker"
-    if provider != "lion_linker":
-        raise HTTPException(status_code=400, detail="Only Lion Linker is supported.")
+    provider = normalize_reconciliation_provider(payload.provider)
 
     credentials = get_user_service_credentials(db, current_user["email"], provider)
     if not credentials:
         credentials = UserServiceCredential(user_email=current_user["email"], service=provider)
         db.add(credentials)
 
+    if payload.base_url is not None:
+        credentials.base_url = normalize_optional_value(payload.base_url)
     if payload.api_key is not None:
         credentials.api_key = normalize_optional_value(payload.api_key)
-    if payload.llm_api_key is not None:
-        credentials.llm_api_key = normalize_optional_value(payload.llm_api_key)
-    if payload.model_api_provider is not None:
-        credentials.model_api_provider = normalize_optional_value(payload.model_api_provider)
-    if payload.model_name is not None:
-        credentials.model_name = normalize_optional_value(payload.model_name)
-    if payload.lamapi_endpoint is not None:
-        credentials.lamapi_endpoint = normalize_optional_value(payload.lamapi_endpoint)
-    if payload.lamapi_token is not None:
-        credentials.lamapi_token = normalize_optional_value(payload.lamapi_token)
-    if payload.lamapi_kg is not None:
-        credentials.lamapi_kg = normalize_optional_value(payload.lamapi_kg)
-    if payload.lamapi_num_candidates is not None:
-        credentials.lamapi_num_candidates = payload.lamapi_num_candidates
+    if provider == "lion_linker":
+        if payload.llm_api_key is not None:
+            credentials.llm_api_key = normalize_optional_value(payload.llm_api_key)
+        if payload.model_api_provider is not None:
+            credentials.model_api_provider = normalize_optional_value(payload.model_api_provider)
+        if payload.model_name is not None:
+            credentials.model_name = normalize_optional_value(payload.model_name)
+        if payload.lamapi_endpoint is not None:
+            credentials.lamapi_endpoint = normalize_optional_value(payload.lamapi_endpoint)
+        if payload.lamapi_token is not None:
+            credentials.lamapi_token = normalize_optional_value(payload.lamapi_token)
+        if payload.lamapi_kg is not None:
+            credentials.lamapi_kg = normalize_optional_value(payload.lamapi_kg)
+        if payload.lamapi_num_candidates is not None:
+            credentials.lamapi_num_candidates = payload.lamapi_num_candidates
 
     credentials.updated_at = datetime.utcnow()
     db.commit()
 
-    return {
-        "provider": provider,
-        "has_api_key": bool(credentials.api_key),
-        "has_llm_api_key": bool(credentials.llm_api_key),
-        "has_lamapi_token": bool(credentials.lamapi_token),
-        "model_api_provider": credentials.model_api_provider,
-        "model_name": credentials.model_name,
-        "lamapi_endpoint": credentials.lamapi_endpoint,
-        "lamapi_kg": credentials.lamapi_kg,
-        "lamapi_num_candidates": credentials.lamapi_num_candidates
-    }
+    return serialize_reconciliation_settings(db, current_user["email"])
 
 
 @app.post("/upload-users", response_model=dict)
@@ -2224,6 +2526,7 @@ def get_table_data(
     sort_direction: Optional[str] = None,
     next_cursor: Optional[str] = Query(None),
     prev_cursor: Optional[str] = Query(None),
+    reconciliation_provider: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2304,17 +2607,25 @@ def get_table_data(
     serialized_rows = [serialize_row(row) for row in rows]
     row_ids = [row.id_row for row in rows]
     reconciliation_map: Dict[int, Dict[int, Any]] = {}
+    provider_filter = normalize_optional_value(reconciliation_provider)
+    if provider_filter:
+        provider_filter = normalize_reconciliation_provider(provider_filter)
     if row_ids:
-        recon_cells = (
+        recon_query = (
             db.query(ReconciliationCellDB)
             .filter(
                 ReconciliationCellDB.table_id == table.id,
                 ReconciliationCellDB.row_id.in_(row_ids)
             )
-            .all()
         )
+        if provider_filter:
+            recon_query = recon_query.filter(ReconciliationCellDB.provider == provider_filter)
+        recon_query = recon_query.order_by(ReconciliationCellDB.updated_at.desc().nulls_last())
+        recon_cells = recon_query.all()
         for cell in recon_cells:
             row_entry = reconciliation_map.setdefault(cell.row_id, {})
+            if cell.col_idx in row_entry:
+                continue
             top_candidates = cell.candidate_ranking or []
             if isinstance(top_candidates, list):
                 top_candidates = top_candidates[:5]
@@ -2349,7 +2660,7 @@ def get_table_data(
             "total_matches": total_matches,
             "row_type_summary": row_type_summary,
             "reconciliation": {
-                "provider": "lion_linker",
+                "provider": provider_filter or "all",
                 "cells": reconciliation_map
             }
         },
@@ -2715,25 +3026,7 @@ def reconcile_table(
     db: Session = Depends(get_db)
 ):
     table = get_table_or_404(dataset_name, table_name, current_user["email"], db)
-    provider = normalize_optional_value(payload.provider) or "lion_linker"
-    if provider != "lion_linker":
-        raise HTTPException(status_code=400, detail="Only Lion Linker is supported.")
-
-    config = load_lion_config(db, current_user["email"])
-    if config["missing"]:
-        missing = ", ".join(config["missing"])
-        raise HTTPException(status_code=500, detail=f"Missing Lion Linker configuration: {missing}")
-    retriever_config = load_lion_retriever_config(db, current_user["email"])
-    if retriever_config["missing"]:
-        missing = ", ".join(retriever_config["missing"])
-        raise HTTPException(status_code=500, detail=f"Missing Lamapi configuration: {missing}")
-    model_provider = retriever_config.get("model_api_provider")
-    model_name = retriever_config.get("model_name")
-    if not model_provider or not model_name:
-        raise HTTPException(
-            status_code=400,
-            detail="Lion Linker model provider and model name are required. Set them in the profile or env."
-        )
+    provider = normalize_reconciliation_provider(payload.provider)
 
     header = table.header or []
     if not header:
@@ -2839,37 +3132,75 @@ def reconcile_table(
             detail="No NE columns selected for reconciliation. Classify columns first."
         )
     link_columns = [header[idx] for idx in ne_selected_columns]
-    lion_config = {
-        "model_api_provider": model_provider,
-        "model_name": model_name
-    }
+    job_payload: Dict[str, Any]
+    job_response: Dict[str, Any]
 
-    retriever_payload = {
-        "endpoint": retriever_config.get("endpoint"),
-        "token": retriever_config.get("token"),
-        "kg": retriever_config.get("kg"),
-        "num_candidates": retriever_config.get("num_candidates")
-    }
+    if provider == "lion_linker":
+        config = load_lion_config(db, current_user["email"])
+        if config["missing"]:
+            missing = ", ".join(config["missing"])
+            raise HTTPException(status_code=500, detail=f"Missing Lion Linker configuration: {missing}")
+        retriever_config = load_lion_retriever_config(db, current_user["email"])
+        if retriever_config["missing"]:
+            missing = ", ".join(retriever_config["missing"])
+            raise HTTPException(status_code=500, detail=f"Missing Lamapi configuration: {missing}")
+        model_provider = retriever_config.get("model_api_provider")
+        model_name = retriever_config.get("model_name")
+        if not model_provider or not model_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Lion Linker model provider and model name are required. Set them in the profile or env."
+            )
 
-    job_payload = {
-        "input": input_payload,
-        "link_columns": link_columns,
-        "top_k": payload.top_k,
-        "execution": "async",
-        "config": {
-            "lion": lion_config,
-            "retriever": retriever_payload
+        lion_config = {
+            "model_api_provider": model_provider,
+            "model_name": model_name
         }
-    }
 
-    try:
-        job_response = create_lion_job(config, job_payload)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Unable to create Lion Linker job: {exc}")
+        retriever_payload = {
+            "endpoint": retriever_config.get("endpoint"),
+            "token": retriever_config.get("token"),
+            "kg": retriever_config.get("kg"),
+            "num_candidates": retriever_config.get("num_candidates")
+        }
+
+        job_payload = {
+            "input": input_payload,
+            "link_columns": link_columns,
+            "top_k": payload.top_k,
+            "execution": "async",
+            "config": {
+                "lion": lion_config,
+                "retriever": retriever_payload
+            }
+        }
+
+        try:
+            job_response = create_lion_job(config, job_payload)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to create Lion Linker job: {exc}")
+    else:
+        config = load_crocodile_config(db, current_user["email"])
+        if config["missing"]:
+            missing = ", ".join(config["missing"])
+            raise HTTPException(status_code=500, detail=f"Missing Crocodile configuration: {missing}")
+        job_payload = {
+            "mode": "inline",
+            "header": inline_table.get("header") or [],
+            "rows": inline_table.get("rows") or [],
+            "link_columns": link_columns,
+            "config": {}
+        }
+        if payload.top_k is not None:
+            job_payload["top_k"] = payload.top_k
+        try:
+            job_response = create_crocodile_job(config, job_payload)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to create Crocodile job: {exc}")
 
     external_job_id = job_response.get("job_id")
     if not external_job_id:
-        raise HTTPException(status_code=502, detail="Lion Linker did not return a job_id.")
+        raise HTTPException(status_code=502, detail=f"{provider} did not return a job_id.")
     status = (job_response.get("status") or "queued").lower()
 
     job = ReconciliationJobDB(
@@ -2924,6 +3255,7 @@ def get_reconciliation_status(
     return {
         "job_id": job.id,
         "external_job_id": job.external_job_id,
+        "provider": job.provider,
         "status": job.status,
         "synced": bool(job.synced_at),
         "error": job.error
@@ -2936,20 +3268,25 @@ def get_reconciliation_candidates(
     table_name: str,
     row: int = Query(...),
     col: int = Query(...),
+    provider: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     table = get_table_or_404(dataset_name, table_name, current_user["email"], db)
-    cell = (
+    provider_filter = normalize_optional_value(provider)
+    if provider_filter:
+        provider_filter = normalize_reconciliation_provider(provider_filter)
+    query = (
         db.query(ReconciliationCellDB)
         .filter(
             ReconciliationCellDB.table_id == table.id,
             ReconciliationCellDB.row_id == row,
             ReconciliationCellDB.col_idx == col
         )
-        .order_by(ReconciliationCellDB.updated_at.desc())
-        .first()
     )
+    if provider_filter:
+        query = query.filter(ReconciliationCellDB.provider == provider_filter)
+    cell = query.order_by(ReconciliationCellDB.updated_at.desc()).first()
     if not cell:
         raise HTTPException(status_code=404, detail="No reconciliation results found for this cell.")
     job = None
@@ -2963,12 +3300,14 @@ def get_reconciliation_candidates(
         "cell_id": cell.cell_id,
         "mention": cell.mention,
         "candidate_ranking": (cell.candidate_ranking or [])[:5],
-        "explanation": cell.explanation
+        "explanation": cell.explanation,
+        "provider": cell.provider
     }
 
     return {
         "job_id": job.id,
         "external_job_id": job.external_job_id,
+        "provider": cell.provider,
         "row": row,
         "col": col,
         "payload": payload
@@ -2984,6 +3323,7 @@ def update_reconciliation_cell(
     db: Session = Depends(get_db)
 ):
     table = get_table_or_404(dataset_name, table_name, current_user["email"], db)
+    provider = normalize_reconciliation_provider(payload.provider)
     row_idx = int(payload.row)
     col_idx = int(payload.col)
     if row_idx < 0 or col_idx < 0:
@@ -3002,7 +3342,7 @@ def update_reconciliation_cell(
             ReconciliationCellDB.table_id == table.id,
             ReconciliationCellDB.row_id == row_idx,
             ReconciliationCellDB.col_idx == col_idx,
-            ReconciliationCellDB.provider == "lion_linker"
+            ReconciliationCellDB.provider == provider
         )
         .first()
     )
@@ -3011,7 +3351,7 @@ def update_reconciliation_cell(
             table_id=table.id,
             row_id=row_idx,
             col_idx=col_idx,
-            provider="lion_linker"
+            provider=provider
         )
         db.add(cell)
 
@@ -3022,5 +3362,6 @@ def update_reconciliation_cell(
     return {
         "row": row_idx,
         "col": col_idx,
+        "provider": provider,
         "final": cell.final
     }

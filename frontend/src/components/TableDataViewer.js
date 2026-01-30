@@ -248,10 +248,17 @@ const TableDataViewer = () => {
   const [reconcileStatus, setReconcileStatus] = useState(null);
   const [reconcileSubmitting, setReconcileSubmitting] = useState(false);
   const [reconcilePolling, setReconcilePolling] = useState(false);
+  const [reconcileProvider, setReconcileProvider] = useState('lion_linker');
   const [reconcileSettings, setReconcileSettings] = useState({
-    hasApiKey: false,
-    hasLlmApiKey: false,
-    hasLamapiToken: false
+    availableProviders: ['lion_linker'],
+    lion: {
+      hasApiKey: false,
+      hasLlmApiKey: false,
+      hasLamapiToken: false
+    },
+    crocodile: {
+      hasApiKey: false
+    }
   });
   const [candidateDialogOpen, setCandidateDialogOpen] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
@@ -347,11 +354,30 @@ const TableDataViewer = () => {
         setLlmSettingsError(
           providerValid ? null : 'Saved LLM provider is not supported by this server.'
         );
+        const availableProviders = reconSettings?.available_providers || ['lion_linker'];
+        const lionSettings = reconSettings?.lion_linker || {
+          has_api_key: reconSettings?.has_api_key,
+          has_llm_api_key: reconSettings?.has_llm_api_key,
+          has_lamapi_token: reconSettings?.has_lamapi_token
+        };
+        const crocSettings = reconSettings?.crocodile || {
+          has_api_key: reconSettings?.crocodile_has_api_key
+        };
         setReconcileSettings({
-          hasApiKey: Boolean(reconSettings?.has_api_key),
-          hasLlmApiKey: Boolean(reconSettings?.has_llm_api_key),
-          hasLamapiToken: Boolean(reconSettings?.has_lamapi_token)
+          availableProviders,
+          lion: {
+            hasApiKey: Boolean(lionSettings?.has_api_key),
+            hasLlmApiKey: Boolean(lionSettings?.has_llm_api_key),
+            hasLamapiToken: Boolean(lionSettings?.has_lamapi_token)
+          },
+          crocodile: {
+            hasApiKey: Boolean(crocSettings?.has_api_key)
+          }
         });
+        const defaultProvider = availableProviders.includes(reconSettings?.provider)
+          ? reconSettings.provider
+          : (availableProviders[0] || 'lion_linker');
+        setReconcileProvider(defaultProvider);
       } catch (err) {
         const storedProvider = localStorage.getItem('koala.llmProvider') || '';
         const storedModel = localStorage.getItem('koala.llmModel') || '';
@@ -364,10 +390,17 @@ const TableDataViewer = () => {
         setShowLlmApiKeyInput(true);
         setLlmSettingsError('Unable to load LLM settings from the profile.');
         setReconcileSettings({
-          hasApiKey: false,
-          hasLlmApiKey: false,
-          hasLamapiToken: false
+          availableProviders: ['lion_linker'],
+          lion: {
+            hasApiKey: false,
+            hasLlmApiKey: false,
+            hasLamapiToken: false
+          },
+          crocodile: {
+            hasApiKey: false
+          }
         });
+        setReconcileProvider('lion_linker');
       }
     };
     loadSettings();
@@ -644,7 +677,7 @@ const TableDataViewer = () => {
 
   const buildReconcilePayload = () => {
     const payload = {
-      provider: 'lion_linker',
+      provider: reconcileProvider,
       scope: reconcileScope,
       top_k: reconcileTopK || undefined
     };
@@ -669,9 +702,18 @@ const TableDataViewer = () => {
 
   const handleReconcile = async () => {
     setReconcileStatus(null);
-    if (!reconcileSettings.hasApiKey || !reconcileSettings.hasLlmApiKey || !reconcileSettings.hasLamapiToken) {
-      setReconcileStatus('Missing Lion Linker or Lamapi credentials. Update your profile first.');
-      return;
+    if (reconcileProvider === 'lion_linker') {
+      if (!reconcileSettings.lion.hasApiKey ||
+        !reconcileSettings.lion.hasLlmApiKey ||
+        !reconcileSettings.lion.hasLamapiToken) {
+        setReconcileStatus('Missing Lion Linker or Lamapi credentials. Update your profile first.');
+        return;
+      }
+    } else if (reconcileProvider === 'crocodile') {
+      if (!reconcileSettings.crocodile.hasApiKey) {
+        setReconcileStatus('Missing Crocodile API key. Update your profile first.');
+        return;
+      }
     }
     if (reconcileScope === 'cell' && selectedCells.size === 0) {
       setReconcileStatus('Select at least one cell to reconcile.');
@@ -768,7 +810,7 @@ const TableDataViewer = () => {
     return rowEntry[colIndex] || rowEntry[String(colIndex)] || null;
   };
 
-  const openCandidates = async (event, rowId, colIndex, cellValue) => {
+  const openCandidates = async (event, rowId, colIndex, cellValue, providerOverride) => {
     event.stopPropagation();
     setCandidateDialogOpen(true);
     setCandidateLoading(true);
@@ -776,13 +818,15 @@ const TableDataViewer = () => {
     setCandidatePayload(null);
     setCandidateSaveError(null);
     setCandidateSelection(null);
+    const provider = providerOverride || reconcileProvider;
     setCandidateCellMeta({
       rowId,
       colIndex,
-      value: cellValue
+      value: cellValue,
+      provider
     });
     try {
-      const response = await getReconciliationCandidates(datasetName, tableName, rowId, colIndex);
+      const response = await getReconciliationCandidates(datasetName, tableName, rowId, colIndex, provider);
       setCandidatePayload(response?.payload || null);
       const current = getReconciliationEntry(rowId, colIndex)?.final;
       if (current?.id || current?.name) {
@@ -818,8 +862,8 @@ const TableDataViewer = () => {
     const finalPayload = {
       id: selected?.id || selected?.entity_id || null,
       name: selected?.name || selected?.label || null,
-      types: selected?.types || null,
-      description: selected?.description || null,
+      types: selected?.types || selected?.metadata?.types || null,
+      description: selected?.description || selected?.metadata?.description || null,
       confidence_label: selected?.confidence_label || null,
       confidence_score: selected?.confidence_score ?? selected?.score ?? null,
       label: selected?.label || null
@@ -828,6 +872,7 @@ const TableDataViewer = () => {
       await updateReconciliationCell(datasetName, tableName, {
         row: candidateCellMeta.rowId,
         col: candidateCellMeta.colIndex,
+        provider: candidateCellMeta.provider,
         final: finalPayload
       });
       await fetchTableData();
@@ -847,6 +892,7 @@ const TableDataViewer = () => {
       await updateReconciliationCell(datasetName, tableName, {
         row: candidateCellMeta.rowId,
         col: candidateCellMeta.colIndex,
+        provider: candidateCellMeta.provider,
         final: {}
       });
       await fetchTableData();
@@ -992,7 +1038,10 @@ const TableDataViewer = () => {
 
   const candidateList = candidatePayload?.candidate_ranking || candidatePayload?.candidates || [];
   const hasCandidateMatch = candidateList.some((candidate) => candidate.match === true);
-  const isNilCandidateSet = candidateList.length > 0 && !hasCandidateMatch;
+  const candidateProvider = candidatePayload?.provider ||
+    candidateCellMeta?.provider ||
+    reconcileProvider;
+  const isNilCandidateSet = candidateProvider === 'lion_linker' && candidateList.length > 0 && !hasCandidateMatch;
   const currentFinal = candidateCellMeta
     ? getReconciliationEntry(candidateCellMeta.rowId, candidateCellMeta.colIndex)?.final
     : null;
@@ -1064,6 +1113,12 @@ const TableDataViewer = () => {
       : reconcileStatus && reconcileStatus.toLowerCase().includes('missing')
         ? 'error'
         : 'success';
+  const reconcileProviderLabel = reconcileProvider === 'crocodile' ? 'Crocodile' : 'Lion Linker';
+  const missingReconcileCredentials = reconcileProvider === 'crocodile'
+    ? !reconcileSettings.crocodile.hasApiKey
+    : (!reconcileSettings.lion.hasApiKey ||
+      !reconcileSettings.lion.hasLlmApiKey ||
+      !reconcileSettings.lion.hasLamapiToken);
 
   const showRowSelection = reconcileScope === 'rows';
   const showRowIndex = reconcileScope === 'rows' || reconcileScope === 'cell';
@@ -1240,7 +1295,7 @@ const TableDataViewer = () => {
         <CardContent sx={{ px: 2, pb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
             <Box>
-              <Typography variant="subtitle1">Reconciliation (Lion Linker)</Typography>
+              <Typography variant="subtitle1">Reconciliation ({reconcileProviderLabel})</Typography>
               <Typography variant="body2" color="text.secondary">
                 Choose a scope and run entity linking on a subset of the table.
               </Typography>
@@ -1254,12 +1309,30 @@ const TableDataViewer = () => {
               {reconcileSubmitting ? 'Starting...' : 'Run reconciliation'}
             </Button>
           </Box>
-          {(!reconcileSettings.hasApiKey || !reconcileSettings.hasLlmApiKey || !reconcileSettings.hasLamapiToken) && (
+          {missingReconcileCredentials && (
             <Alert severity="warning" sx={{ mt: 2 }}>
-              Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.
+              {reconcileProvider === 'crocodile'
+                ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
+                : 'Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.'}
             </Alert>
           )}
           <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12} md={3}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Provider</InputLabel>
+                <Select
+                  label="Provider"
+                  value={reconcileProvider}
+                  onChange={(e) => setReconcileProvider(e.target.value)}
+                >
+                  {(reconcileSettings.availableProviders || ['lion_linker']).map((provider) => (
+                    <MenuItem key={provider} value={provider}>
+                      {provider === 'crocodile' ? 'Crocodile' : 'Lion Linker'}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
             <Grid item xs={12} md={3}>
               <FormControl fullWidth size="small">
                 <InputLabel>Scope</InputLabel>
@@ -1275,7 +1348,7 @@ const TableDataViewer = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} md={4}>
               <FormControl fullWidth size="small" disabled={reconcileScope === 'cell'}>
                 <InputLabel>Columns</InputLabel>
                 <Select
@@ -1307,7 +1380,7 @@ const TableDataViewer = () => {
                 </FormHelperText>
               </FormControl>
             </Grid>
-            <Grid item xs={12} md={3}>
+            <Grid item xs={12} md={2}>
               <TextField
                 label="Top K"
                 type="number"
@@ -1475,7 +1548,14 @@ const TableDataViewer = () => {
                             id: type.id || type.entity_id || '',
                             name: type.name || type.label || ''
                           }))
-                          : [];
+                          : Array.isArray(candidate.metadata?.types)
+                            ? candidate.metadata.types.map((type) => ({
+                              id: type.id || type.entity_id || '',
+                              name: type.name || type.label || ''
+                            }))
+                            : [];
+                        const descriptionValue = candidate.description || candidate.metadata?.description;
+                        const scoreValue = candidate.confidence_score ?? candidate.score;
                         return (
                           <Paper
                             key={`${candidate.entity_id || candidate.id || candidate.rank}-${candidate.rank}`}
@@ -1499,9 +1579,11 @@ const TableDataViewer = () => {
                                 </Typography>
                               </Box>
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Typography variant="caption" color="text.secondary">
-                                  Rank {candidate.rank}
-                                </Typography>
+                                {candidate.rank !== undefined && candidate.rank !== null && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    Rank {candidate.rank}
+                                  </Typography>
+                                )}
                                 {isWinner && (
                                   <Chip size="small" label="Winner" color="success" />
                                 )}
@@ -1518,10 +1600,10 @@ const TableDataViewer = () => {
                               {candidate.confidence_label && (
                                 <Chip size="small" label={`Confidence: ${candidate.confidence_label}`} />
                               )}
-                              {(candidate.confidence_score ?? candidate.score) !== null && (
+                              {scoreValue !== null && scoreValue !== undefined && (
                                 <Chip
                                   size="small"
-                                  label={`Score: ${candidate.confidence_score ?? candidate.score}`}
+                                  label={`Score: ${scoreValue}`}
                                 />
                               )}
                               {candidate.label && (
@@ -1550,9 +1632,9 @@ const TableDataViewer = () => {
                                 ))}
                               </Box>
                             )}
-                            {candidate.description && (
+                            {descriptionValue && (
                               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                                {candidate.description}
+                                {descriptionValue}
                               </Typography>
                             )}
                           </Paper>
@@ -1684,6 +1766,7 @@ const TableDataViewer = () => {
                             ? reconEntry.candidate_ranking.some((candidate) => candidate.match === true)
                             : false;
                           const reconConfidence = reconEntry?.final?.confidence_score;
+                          const providerTag = reconEntry?.provider === 'crocodile' ? 'Croc' : 'LL';
                           const reconTitle = reconLabel
                             ? `${reconLabel}${typeof reconConfidence === 'number'
                               ? ` (${Math.round(reconConfidence * 100)}%)`
@@ -1691,7 +1774,8 @@ const TableDataViewer = () => {
                             : '';
                           const isCellSelected = selectedCells.has(`${row.idRow}:${colIndex}`);
                           const isReconciled = Boolean(reconLabel);
-                          const isNil = !reconLabel && hasCandidates && !hasMatch;
+                          const isNil = reconEntry?.provider !== 'crocodile' && !reconLabel && hasCandidates && !hasMatch;
+                          const showCandidatesChip = !reconLabel && hasCandidates && !isNil;
                           return (
                         <TableCell
                           key={colIndex}
@@ -1718,10 +1802,10 @@ const TableDataViewer = () => {
                           {reconLabel && (
                             <Tooltip title={reconTitle || 'Linked entity'} arrow>
                               <Chip
-                                label={`LL: ${reconLabel}`}
+                                label={`${providerTag}: ${reconLabel}`}
                                 size="small"
                                 variant="outlined"
-                                onClick={(event) => openCandidates(event, row.idRow, colIndex, cell)}
+                                onClick={(event) => openCandidates(event, row.idRow, colIndex, cell, reconEntry?.provider)}
                                 sx={{
                                   mt: 0.5,
                                   fontSize: '0.6rem',
@@ -1734,16 +1818,31 @@ const TableDataViewer = () => {
                           )}
                           {isNil && (
                             <Chip
-                              label="LL: NIL"
+                              label={`${providerTag}: NIL`}
                               size="small"
                               variant="outlined"
-                              onClick={(event) => openCandidates(event, row.idRow, colIndex, cell)}
+                              onClick={(event) => openCandidates(event, row.idRow, colIndex, cell, reconEntry?.provider)}
                               sx={{
                                 mt: 0.5,
                                 fontSize: '0.6rem',
                                 color: '#9a6700',
                                 borderColor: '#f3d19e',
                                 bgcolor: '#fff8e1'
+                              }}
+                            />
+                          )}
+                          {showCandidatesChip && (
+                            <Chip
+                              label={`${providerTag}: candidates`}
+                              size="small"
+                              variant="outlined"
+                              onClick={(event) => openCandidates(event, row.idRow, colIndex, cell, reconEntry?.provider)}
+                              sx={{
+                                mt: 0.5,
+                                fontSize: '0.6rem',
+                                color: '#4a5568',
+                                borderColor: '#d4d8df',
+                                bgcolor: '#f5f7fb'
                               }}
                             />
                           )}
