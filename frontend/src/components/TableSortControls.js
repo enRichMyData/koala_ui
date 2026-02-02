@@ -85,6 +85,7 @@ const TableSortControls = ({
           onClick={handleClick}
           size="small"
           color={currentSortParams.sortBy ? 'primary' : 'inherit'}
+          sx={{ minHeight: 30, py: 0, px: 1, fontSize: '0.76rem', textTransform: 'none' }}
         >
           Sort
         </Button>
@@ -113,6 +114,7 @@ const TableSortControls = ({
           size="small"
           startIcon={<FilterListOffIcon />}
           onClick={onClearFilters}
+          sx={{ minHeight: 30, py: 0, px: 1, fontSize: '0.76rem', textTransform: 'none' }}
         >
           Clear Filters
         </Button>

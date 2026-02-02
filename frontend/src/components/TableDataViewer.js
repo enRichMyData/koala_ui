@@ -47,6 +47,9 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
   Tooltip,
   TextField,
   Checkbox,
@@ -58,6 +61,9 @@ import BuildIcon from '@mui/icons-material/Build';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import PolicyIcon from '@mui/icons-material/Policy';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import AutoGraphIcon from '@mui/icons-material/AutoGraph';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import TableHeader from './TableHeader';
 import TableSearch from './TableSearch';
 import TableSortControls from './TableSortControls';
@@ -206,6 +212,8 @@ const TableDataViewer = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [nextCursor, setNextCursor] = useState(null);
   const [prevCursor, setPrevCursor] = useState(null);
+  const [reconcilePanelExpanded, setReconcilePanelExpanded] = useState(false);
+  const [tableToolsExpanded, setTableToolsExpanded] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchColumns, setSearchColumns] = useState([]);
   const [activeFilters, setActiveFilters] = useState({
@@ -1238,6 +1246,26 @@ const TableDataViewer = () => {
       : reconcileScope === 'page'
         ? `Page mode: ${(data?.rows?.length || 0)} rows in scope.`
         : `Table mode: ${(data?.total_rows || 0)} rows in scope.`;
+  const compactActionButtonSx = {
+    py: 0,
+    px: 0.9,
+    minHeight: 26,
+    fontSize: '0.74rem',
+    textTransform: 'none'
+  };
+  const compactPanelButtonSx = {
+    py: 0,
+    px: 1,
+    minHeight: 28,
+    fontSize: '0.76rem',
+    textTransform: 'none'
+  };
+  const compactIconButtonSx = {
+    minWidth: 30,
+    width: 30,
+    height: 30,
+    p: 0
+  };
 
   return (
     <Box sx={{ m: 2 }}>
@@ -1273,6 +1301,15 @@ const TableDataViewer = () => {
 
       <Card elevation={3}>
         <CardHeader
+          sx={{
+            alignItems: 'flex-start',
+            '& .MuiCardHeader-action': {
+              alignSelf: 'center',
+              mt: 0,
+              mr: 0,
+              overflow: 'hidden'
+            }
+          }}
           title={
             <Typography variant="h5" component="div">
               {tableName}
@@ -1313,53 +1350,60 @@ const TableDataViewer = () => {
             </Box>
           }
           action={
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-              <Box component="span" sx={{ display: 'inline-flex', minWidth: 140 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<BuildIcon />}
-                  onClick={handleOpenColumnEditor}
-                  sx={{ width: '100%' }}
-                >
-                  Edit columns
-                </Button>
-              </Box>
-              <Box component="span" sx={{ display: 'inline-flex', minWidth: 160 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<AutoFixHighIcon />}
-                  onClick={handleAutoIdentifyColumns}
-                  disabled={loading || classificationStatus === 'AUTO_PENDING'}
-                  sx={{ width: '100%' }}
-                >
-                  {classificationStatus === 'AUTO_PENDING' ? 'Auto-identifying…' : 'Auto identify'}
-                </Button>
-              </Box>
-              <Box component="span" sx={{ display: 'inline-flex', minWidth: 160 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<PolicyIcon />}
-                  onClick={handleOpenDpvAnnotation}
-                  disabled={loading || dpvStatus === 'DPV_PENDING'}
-                  sx={{ width: '100%' }}
-                >
-                  {dpvStatus === 'DPV_PENDING' ? 'Annotating DPV...' : 'Annotate DPV'}
-                </Button>
-              </Box>
-              <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={<FileDownloadIcon />}
-                  onClick={handleExport}
-                  sx={{ width: '100%' }}
-                >
-                  Export CSV
-                </Button>
-              </Box>
+            <Box
+              sx={{
+                display: 'inline-flex',
+                flexDirection: 'row',
+                flexWrap: 'nowrap',
+                alignItems: 'center',
+                gap: 0.5,
+                whiteSpace: 'nowrap',
+                overflowX: 'auto',
+                maxWidth: '100%',
+                '& .MuiButton-root': {
+                  width: 'auto',
+                  flex: '0 0 auto'
+                }
+              }}
+            >
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<BuildIcon fontSize="small" />}
+                onClick={handleOpenColumnEditor}
+                sx={compactActionButtonSx}
+              >
+                Edit columns
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<AutoFixHighIcon fontSize="small" />}
+                onClick={handleAutoIdentifyColumns}
+                disabled={loading || classificationStatus === 'AUTO_PENDING'}
+                sx={compactActionButtonSx}
+              >
+                {classificationStatus === 'AUTO_PENDING' ? 'Auto-identifying...' : 'Auto identify'}
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<PolicyIcon fontSize="small" />}
+                onClick={handleOpenDpvAnnotation}
+                disabled={loading || dpvStatus === 'DPV_PENDING'}
+                sx={compactActionButtonSx}
+              >
+                {dpvStatus === 'DPV_PENDING' ? 'Annotating DPV...' : 'Annotate DPV'}
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<FileDownloadIcon fontSize="small" />}
+                onClick={handleExport}
+                sx={compactActionButtonSx}
+              >
+                Export CSV
+              </Button>
             </Box>
           }
         />
@@ -1403,203 +1447,234 @@ const TableDataViewer = () => {
           </Box>
         )}
 
-        <CardContent sx={{ px: 2, py: 1.5 }}>
-          <Paper
-            variant="outlined"
+        <CardContent sx={{ px: 2, py: 1 }}>
+          <Accordion
+            disableGutters
+            elevation={0}
+            expanded={reconcilePanelExpanded}
+            onChange={(_, expanded) => setReconcilePanelExpanded(expanded)}
             sx={{
-              p: 1.5,
-              borderColor: '#d9e2f0',
-              bgcolor: '#fbfdff'
+              border: '1px solid #d9e2f0',
+              borderRadius: '8px',
+              bgcolor: '#fbfdff',
+              '&:before': { display: 'none' }
             }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-              <Chip
-                size="small"
-                color="primary"
-                variant="outlined"
-                label={`Reconciliation · ${reconcileProviderLabel}`}
-              />
-              <FormControl size="small" sx={{ minWidth: 165 }}>
-                <InputLabel>Provider</InputLabel>
-                <Select
-                  label="Provider"
-                  value={reconcileProvider}
-                  onChange={(e) => setReconcileProvider(e.target.value)}
-                >
-                  {(reconcileSettings.availableProviders || ['lion_linker']).map((provider) => (
-                    <MenuItem key={provider} value={provider}>
-                      {provider === 'crocodile' ? 'Crocodile' : 'Lion Linker'}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ minWidth: 175 }}>
-                <InputLabel>Scope</InputLabel>
-                <Select
-                  label="Scope"
-                  value={reconcileScope}
-                  onChange={(e) => setReconcileScope(e.target.value)}
-                >
-                  <MenuItem value="cell">Selected cells</MenuItem>
-                  <MenuItem value="rows">Selected rows</MenuItem>
-                  <MenuItem value="page">Current page</MenuItem>
-                  <MenuItem value="table">Whole table</MenuItem>
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ minWidth: 250, flex: 1 }} disabled={reconcileScope === 'cell'}>
-                <InputLabel>Columns</InputLabel>
-                <Select
-                  label="Columns"
-                  multiple
-                  value={reconcileColumns}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    const parsed = (Array.isArray(value) ? value : [value]).map((entry) => Number(entry));
-                    setReconcileColumns(parsed);
-                  }}
-                  renderValue={(selected) => {
-                    if (!selected?.length) return 'No columns';
-                    if (selected.length === (data?.header || []).length) return 'All columns';
-                    return `${selected.length} columns`;
-                  }}
-                >
-                  {(data?.header || []).map((header, idx) => (
-                    <MenuItem key={`${header}-${idx}`} value={idx}>
-                      <Checkbox checked={reconcileColumns.includes(idx)} />
-                      <Typography variant="body2">{header}</Typography>
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <TextField
-                label="Top K"
-                type="number"
-                size="small"
-                value={reconcileTopK}
-                inputProps={{ min: 1, max: 100 }}
-                onChange={(e) => setReconcileTopK(Number(e.target.value) || 1)}
-                sx={{ width: 96 }}
-              />
-              <Button
-                variant="contained"
-                size="small"
-                onClick={handleReconcile}
-                disabled={reconcileSubmitting || loading}
-              >
-                {reconcileSubmitting ? 'Starting...' : 'Run'}
-              </Button>
-            </Box>
-
-            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
-              <Typography variant="caption" color="text.secondary">
-                {reconcileSelectionSummary}
-              </Typography>
-              {(reconcileScope === 'cell' || reconcileScope === 'rows') && (
-                <Button
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              sx={{ minHeight: 40, px: 1.25 }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', flexWrap: 'wrap' }}>
+                <Chip
                   size="small"
-                  onClick={() => {
-                    setSelectedRows(new Set());
-                    setSelectedCells(new Set());
-                  }}
-                >
-                  Clear selection
-                </Button>
-              )}
-            </Box>
-            <FormHelperText sx={{ mt: 0.5 }}>
-              {reconcileScope === 'cell'
-                ? 'Columns are derived from selected cells.'
-                : 'Link columns must be NE columns; Koala maps row/column indexes back automatically.'}
-            </FormHelperText>
-
-            {missingReconcileCredentials && (
-              <Alert severity="warning" sx={{ mt: 1 }}>
-                {reconcileProvider === 'crocodile'
-                  ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
-                  : 'Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.'}
-              </Alert>
-            )}
-
-            <Divider sx={{ my: 1.25 }} />
-
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-              <Typography variant="subtitle2">NE type ranking</Typography>
-              <Chip size="small" color={columnTypeStatusColor} label={columnTypeStatus} />
-              {columnTypeSampling?.sampled_cells !== undefined && (
+                  color="primary"
+                  variant="outlined"
+                  label={`Linking · ${reconcileProviderLabel}`}
+                />
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={`Scope: ${reconcileScope}`}
+                />
                 <Typography variant="caption" color="text.secondary">
-                  {columnTypeSampling.sampled_cells}/{columnTypeSampling.total_cells} cells ({columnTypeSampling.strategy})
+                  {reconcileSelectionSummary}
+                </Typography>
+                <Box sx={{ flex: 1 }} />
+                <Chip size="small" color={columnTypeStatusColor} label={`NE rank: ${columnTypeStatus}`} />
+                <Tooltip title="Run reconciliation" arrow>
+                  <span>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleReconcile();
+                      }}
+                      onFocus={(event) => event.stopPropagation()}
+                      disabled={reconcileSubmitting || loading}
+                      sx={compactIconButtonSx}
+                    >
+                      {reconcileSubmitting ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon fontSize="small" />}
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 1.25, py: 1 }}>
+              {missingReconcileCredentials && (
+                <Alert severity="warning" sx={{ mb: 1 }}>
+                  {reconcileProvider === 'crocodile'
+                    ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
+                    : 'Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.'}
+                </Alert>
+              )}
+
+              <Grid container spacing={1}>
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Provider</InputLabel>
+                    <Select
+                      label="Provider"
+                      value={reconcileProvider}
+                      onChange={(e) => setReconcileProvider(e.target.value)}
+                    >
+                      {(reconcileSettings.availableProviders || ['lion_linker']).map((provider) => (
+                        <MenuItem key={provider} value={provider}>
+                          {provider === 'crocodile' ? 'Crocodile' : 'Lion Linker'}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Scope</InputLabel>
+                    <Select
+                      label="Scope"
+                      value={reconcileScope}
+                      onChange={(e) => setReconcileScope(e.target.value)}
+                    >
+                      <MenuItem value="cell">Selected cells</MenuItem>
+                      <MenuItem value="rows">Selected rows</MenuItem>
+                      <MenuItem value="page">Current page</MenuItem>
+                      <MenuItem value="table">Whole table</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <FormControl fullWidth size="small" disabled={reconcileScope === 'cell'}>
+                    <InputLabel>Columns</InputLabel>
+                    <Select
+                      label="Columns"
+                      multiple
+                      value={reconcileColumns}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        const parsed = (Array.isArray(value) ? value : [value]).map((entry) => Number(entry));
+                        setReconcileColumns(parsed);
+                      }}
+                      renderValue={(selected) => {
+                        if (!selected?.length) return 'No columns';
+                        if (selected.length === (data?.header || []).length) return 'All columns';
+                        return `${selected.length} columns`;
+                      }}
+                    >
+                      {(data?.header || []).map((header, idx) => (
+                        <MenuItem key={`${header}-${idx}`} value={idx}>
+                          <Checkbox checked={reconcileColumns.includes(idx)} />
+                          <Typography variant="body2">{header}</Typography>
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={2}>
+                  <TextField
+                    label="Top K"
+                    type="number"
+                    size="small"
+                    fullWidth
+                    value={reconcileTopK}
+                    inputProps={{ min: 1, max: 100 }}
+                    onChange={(e) => setReconcileTopK(Number(e.target.value) || 1)}
+                  />
+                </Grid>
+              </Grid>
+
+              <Box sx={{ mt: 0.75, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+                <FormHelperText sx={{ m: 0 }}>
+                  {reconcileScope === 'cell'
+                    ? 'Columns are derived from selected cells.'
+                    : 'Link columns must be NE columns; Koala maps row/column indexes back automatically.'}
+                </FormHelperText>
+                {(reconcileScope === 'cell' || reconcileScope === 'rows') && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setSelectedRows(new Set());
+                      setSelectedCells(new Set());
+                    }}
+                    sx={compactPanelButtonSx}
+                  >
+                    Clear selection
+                  </Button>
+                )}
+              </Box>
+
+              <Divider sx={{ my: 1 }} />
+
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="subtitle2">NE type ranking</Typography>
+                {columnTypeSampling?.sampled_cells !== undefined && (
+                  <Typography variant="caption" color="text.secondary">
+                    {columnTypeSampling.sampled_cells}/{columnTypeSampling.total_cells} cells ({columnTypeSampling.strategy})
+                  </Typography>
+                )}
+                {!columnTypeSampling?.sampled_cells && reconcileColumnTypesConfig?.sample_strategy && (
+                  <Typography variant="caption" color="text.secondary">
+                    {reconcileColumnTypesConfig.sample_strategy} sampling
+                  </Typography>
+                )}
+                {reconcileColumnTypesJobId && (
+                  <Typography variant="caption" color="text.secondary">
+                    job {reconcileColumnTypesJobId.slice(0, 8)}
+                  </Typography>
+                )}
+                <Box sx={{ flex: 1 }} />
+                <FormControl size="small" sx={{ minWidth: 120 }}>
+                  <InputLabel>Sampling</InputLabel>
+                  <Select
+                    label="Sampling"
+                    value={reconcileTypeSampleStrategy}
+                    onChange={(event) => setReconcileTypeSampleStrategy(event.target.value)}
+                    disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+                  >
+                    <MenuItem value="auto">Auto</MenuItem>
+                    <MenuItem value="latest">Latest</MenuItem>
+                    <MenuItem value="random">Random</MenuItem>
+                    <MenuItem value="all">All</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField
+                  size="small"
+                  type="number"
+                  label="Sample"
+                  value={reconcileTypeSampleSize}
+                  inputProps={{ min: 1, max: 50000 }}
+                  onChange={(event) => setReconcileTypeSampleSize(Math.max(1, Number(event.target.value) || 1))}
+                  sx={{ width: 96 }}
+                  disabled={reconcileTypeSampleStrategy === 'all' || reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+                />
+                <Tooltip title="Compute NE type ranking" arrow>
+                  <span>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={handleTriggerColumnTypeRanking}
+                      disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+                      sx={compactIconButtonSx}
+                    >
+                      {reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)
+                        ? <CircularProgress size={14} />
+                        : <AutoGraphIcon fontSize="small" />}
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Box>
+
+              {reconcileColumnTypesError && (
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  {reconcileColumnTypesError}
+                </Alert>
+              )}
+              {!reconcileColumnTypesError && columnTypeStatus === 'UNSET' && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  No ranking computed yet. Click any NE header after running compute.
                 </Typography>
               )}
-              {!columnTypeSampling?.sampled_cells && reconcileColumnTypesConfig?.sample_strategy && (
-                <Typography variant="caption" color="text.secondary">
-                  {reconcileColumnTypesConfig.sample_strategy} sampling
-                </Typography>
-              )}
-              {reconcileColumnTypesJobId && (
-                <Typography variant="caption" color="text.secondary">
-                  job {reconcileColumnTypesJobId.slice(0, 8)}
-                </Typography>
-              )}
-              <Box sx={{ flex: 1 }} />
-              <FormControl size="small" sx={{ minWidth: 120 }}>
-                <InputLabel>Sampling</InputLabel>
-                <Select
-                  label="Sampling"
-                  value={reconcileTypeSampleStrategy}
-                  onChange={(event) => setReconcileTypeSampleStrategy(event.target.value)}
-                  disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
-                >
-                  <MenuItem value="auto">Auto</MenuItem>
-                  <MenuItem value="latest">Latest</MenuItem>
-                  <MenuItem value="random">Random</MenuItem>
-                  <MenuItem value="all">All</MenuItem>
-                </Select>
-              </FormControl>
-              <TextField
-                size="small"
-                type="number"
-                label="Sample"
-                value={reconcileTypeSampleSize}
-                inputProps={{ min: 1, max: 50000 }}
-                onChange={(event) => setReconcileTypeSampleSize(Math.max(1, Number(event.target.value) || 1))}
-                sx={{ width: 92 }}
-                disabled={reconcileTypeSampleStrategy === 'all' || reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
-              />
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={handleTriggerColumnTypeRanking}
-                disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
-              >
-                {reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)
-                  ? 'Computing...'
-                  : 'Compute'}
-              </Button>
-            </Box>
-
-            {reconcileColumnTypesError && (
-              <Alert severity="warning" sx={{ mt: 1 }}>
-                {reconcileColumnTypesError}
-              </Alert>
-            )}
-            {!reconcileColumnTypesError && columnTypeStatus === 'UNSET' && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                No ranking computed yet. Click any NE header after running compute.
-              </Typography>
-            )}
-          </Paper>
+            </AccordionDetails>
+          </Accordion>
         </CardContent>
-
-        {hasActiveFilters && (
-          <Box sx={{ px: 2, pb: 1 }}>
-            <Chip
-              label="Filters Active"
-              size="small"
-              color="secondary"
-              onDelete={handleClearFilters}
-            />
-          </Box>
-        )}
 
         <Divider />
 
@@ -1613,38 +1688,70 @@ const TableDataViewer = () => {
             initialSearchColumns={searchColumns}
           />
 
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            <TableSortControls
-              scoreColumnName={data?.score_column_name}
-              onSort={handleSortChange}
-              currentSortParams={sortParams}
-              hasActiveFilters={hasActiveFilters}
-              onClearFilters={handleClearFilters}
-            />
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => setTypeFilterOpen(true)}
-              disabled={availableTypes.length === 0}
+          <Accordion
+            disableGutters
+            elevation={0}
+            expanded={tableToolsExpanded}
+            onChange={(_, expanded) => setTableToolsExpanded(expanded)}
+            sx={{
+              border: '1px solid #e4e8ef',
+              borderRadius: '8px',
+              '&:before': { display: 'none' },
+              mb: 1
+            }}
+          >
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              sx={{ minHeight: 36, px: 1.25 }}
             >
-              Filter by semantic types
-            </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => setShowDpvAnnotations(prev => !prev)}
-              disabled={!hasDpvAnnotations}
-            >
-              {showDpvAnnotations ? 'Hide DPV annotations' : 'Show DPV annotations'}
-            </Button>
-            {availableTypes.length === 0 && (
-              <Tooltip title="No semantic (KG) types available for filtering.">
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                <Typography variant="subtitle2">Table tools</Typography>
+                {hasActiveFilters && (
+                  <Chip label="Filters active" size="small" color="secondary" variant="outlined" />
+                )}
+                <Box sx={{ flex: 1 }} />
                 <Typography variant="caption" color="text.secondary">
-                  No types available
+                  Sort, semantic filters, DPV display
                 </Typography>
-              </Tooltip>
-            )}
-          </Box>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 1.5, py: 1 }}>
+              <TableSortControls
+                scoreColumnName={data?.score_column_name}
+                onSort={handleSortChange}
+                currentSortParams={sortParams}
+                hasActiveFilters={hasActiveFilters}
+                onClearFilters={handleClearFilters}
+              />
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setTypeFilterOpen(true)}
+                  disabled={availableTypes.length === 0}
+                  sx={compactPanelButtonSx}
+                >
+                  Filter semantic types
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setShowDpvAnnotations(prev => !prev)}
+                  disabled={!hasDpvAnnotations}
+                  sx={compactPanelButtonSx}
+                >
+                  {showDpvAnnotations ? 'Hide DPV' : 'Show DPV'}
+                </Button>
+                {availableTypes.length === 0 && (
+                  <Tooltip title="No semantic (KG) types available for filtering.">
+                    <Typography variant="caption" color="text.secondary">
+                      No types available
+                    </Typography>
+                  </Tooltip>
+                )}
+              </Box>
+            </AccordionDetails>
+          </Accordion>
         </CardContent>
 
         <Divider />

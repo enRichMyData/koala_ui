@@ -65,13 +65,14 @@ const TableSearch = ({
   };
 
   return (
-    <Paper sx={{ p: 1.5, mb: 1.5 }}>
+    <Paper sx={{ p: 1, mb: 1 }}>
       <form onSubmit={handleSubmitSearch}>
-        <Grid container spacing={1.5} alignItems="center">
-          <Grid item xs={12} sm={8}>
+        <Grid container spacing={1} alignItems="center">
+          <Grid item xs={12} md={8}>
             <TextField
               fullWidth
               label="Search table content"
+              size="small"
               value={searchText}
               onChange={handleSearchChange}
               placeholder="Enter text to search across rows..."
@@ -98,32 +99,38 @@ const TableSearch = ({
             />
           </Grid>
           
-          <Grid item xs={6} sm={2}>
+          <Grid item xs={6} md={2}>
             <Button
               fullWidth
               onClick={toggleFilters}
               startIcon={showFilters ? <ExpandLessIcon /> : <ExpandMoreIcon />}
               variant="outlined"
               color="primary"
+              size="small"
+              sx={{ minHeight: 32, py: 0, px: 1, fontSize: '0.76rem', textTransform: 'none' }}
             >
-              {showFilters ? 'Hide Columns' : 'Select Columns'}
+              {showFilters ? 'Hide columns' : 'Columns'}
             </Button>
           </Grid>
           
-          <Grid item xs={6} sm={2}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+          <Grid item xs={6} md={2}>
+            <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+              <Tooltip title="Search">
               <Button 
-                fullWidth
                 type="submit" 
                 variant="contained" 
                 color="primary"
+                size="small"
                 disabled={loading}
+                aria-label="search"
+                sx={{ minWidth: 36, width: 36, height: 32, p: 0 }}
               >
-                Search
+                <SearchIcon fontSize="small" />
               </Button>
+              </Tooltip>
               {(searchText || selectedColumns.length > 0) && (
                 <Tooltip title="Clear search">
-                  <IconButton onClick={handleClearSearch} color="default">
+                  <IconButton onClick={handleClearSearch} color="default" size="small">
                     <ClearIcon />
                   </IconButton>
                 </Tooltip>
