@@ -65,9 +65,9 @@ const TableSearch = ({
   };
 
   return (
-    <Paper sx={{ p: 2, mb: 3 }}>
+    <Paper sx={{ p: 1.5, mb: 1.5 }}>
       <form onSubmit={handleSubmitSearch}>
-        <Grid container spacing={2} alignItems="center">
+        <Grid container spacing={1.5} alignItems="center">
           <Grid item xs={12} sm={8}>
             <TextField
               fullWidth

@@ -321,6 +321,26 @@ const getReconciliationStatus = async (datasetName, tableName, jobId) => {
   return response.data;
 };
 
+const triggerReconciliationColumnTypes = async (datasetName, tableName, payload = {}) => {
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/column-types`,
+    payload
+  );
+  return response.data;
+};
+
+const getReconciliationColumnTypes = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.provider) {
+    params.provider = options.provider;
+  }
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/column-types`,
+    { params }
+  );
+  return response.data;
+};
+
 const getReconciliationCandidates = async (datasetName, tableName, row, col, provider) => {
   const response = await backendApiClient.get(
     `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/candidates`,
@@ -357,6 +377,8 @@ export {
   updateReconciliationSettings,
   createReconciliationJob,
   getReconciliationStatus,
+  triggerReconciliationColumnTypes,
+  getReconciliationColumnTypes,
   getReconciliationCandidates,
   updateReconciliationCell
 };

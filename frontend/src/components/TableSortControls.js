@@ -77,7 +77,7 @@ const TableSortControls = ({
   };
 
   return (
-    <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Button
           variant="outlined"

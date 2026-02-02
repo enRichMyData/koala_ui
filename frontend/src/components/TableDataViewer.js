@@ -13,6 +13,8 @@ import {
   getReconciliationSettings,
   createReconciliationJob,
   getReconciliationStatus,
+  triggerReconciliationColumnTypes,
+  getReconciliationColumnTypes,
   getReconciliationCandidates,
   updateReconciliationCell
 } from '../services/apiServices';
@@ -260,6 +262,15 @@ const TableDataViewer = () => {
       hasApiKey: false
     }
   });
+  const [reconcileColumnTypes, setReconcileColumnTypes] = useState(null);
+  const [reconcileColumnTypesStatus, setReconcileColumnTypesStatus] = useState('UNSET');
+  const [reconcileColumnTypesJobId, setReconcileColumnTypesJobId] = useState(null);
+  const [reconcileColumnTypesConfig, setReconcileColumnTypesConfig] = useState(null);
+  const [reconcileColumnTypesTriggering, setReconcileColumnTypesTriggering] = useState(false);
+  const [reconcileColumnTypesError, setReconcileColumnTypesError] = useState(null);
+  const [reconcileTypeSampleStrategy, setReconcileTypeSampleStrategy] = useState('auto');
+  const [reconcileTypeSampleSize, setReconcileTypeSampleSize] = useState(5000);
+  const [selectedNeColumn, setSelectedNeColumn] = useState(null);
   const [candidateDialogOpen, setCandidateDialogOpen] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidateError, setCandidateError] = useState(null);
@@ -296,9 +307,33 @@ const TableDataViewer = () => {
     }
   }, [datasetName, tableName, searchText, searchColumns, activeFilters, sortParams]);
 
+  const fetchReconciliationColumnTypes = useCallback(async () => {
+    try {
+      const response = await getReconciliationColumnTypes(datasetName, tableName);
+      setReconcileColumnTypes(response?.result || null);
+      setReconcileColumnTypesStatus(response?.status || 'UNSET');
+      setReconcileColumnTypesJobId(response?.job_id || null);
+      setReconcileColumnTypesConfig(response?.config || null);
+      if (response?.error?.detail || response?.error) {
+        setReconcileColumnTypesError(response?.error?.detail || response?.error);
+      } else {
+        setReconcileColumnTypesError(null);
+      }
+    } catch (err) {
+      setReconcileColumnTypesError(
+        err?.response?.data?.detail || err?.message || 'Unable to load NE column type ranking.'
+      );
+      setReconcileColumnTypesStatus('FAILED');
+    }
+  }, [datasetName, tableName]);
+
   useEffect(() => {
     fetchTableData();
   }, [fetchTableData]);
+
+  useEffect(() => {
+    fetchReconciliationColumnTypes();
+  }, [fetchReconciliationColumnTypes]);
 
   useEffect(() => {
     if (data?.header) {
@@ -741,6 +776,28 @@ const TableDataViewer = () => {
     }
   };
 
+  const handleTriggerColumnTypeRanking = async () => {
+    try {
+      setReconcileColumnTypesTriggering(true);
+      const response = await triggerReconciliationColumnTypes(datasetName, tableName, {
+        provider: null,
+        sample_strategy: reconcileTypeSampleStrategy,
+        sample_size: reconcileTypeSampleSize,
+        max_types: 10
+      });
+      setReconcileColumnTypesStatus(response?.status || 'PENDING');
+      setReconcileColumnTypesJobId(response?.job_id || null);
+      setReconcileColumnTypesConfig(response?.config || null);
+      setReconcileColumnTypesError(null);
+    } catch (err) {
+      setReconcileColumnTypesError(
+        err?.response?.data?.detail || err?.message || 'Unable to start NE column type ranking job.'
+      );
+    } finally {
+      setReconcileColumnTypesTriggering(false);
+    }
+  };
+
   useEffect(() => {
     if (!reconcilePolling || !reconcileJobId) return;
     let cancelled = false;
@@ -756,6 +813,7 @@ const TableDataViewer = () => {
           setReconcileStatus('Reconciliation completed.');
           setReconcileJobId(null);
           await fetchTableData();
+          await fetchReconciliationColumnTypes();
           return;
         }
         if (failureStatuses.includes(resolved)) {
@@ -778,7 +836,22 @@ const TableDataViewer = () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [reconcilePolling, reconcileJobId, datasetName, tableName, fetchTableData]);
+  }, [reconcilePolling, reconcileJobId, datasetName, tableName, fetchTableData, fetchReconciliationColumnTypes]);
+
+  useEffect(() => {
+    if (!['PENDING', 'RUNNING'].includes(reconcileColumnTypesStatus)) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      await fetchReconciliationColumnTypes();
+    };
+    const timer = setInterval(poll, 3000);
+    poll();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [reconcileColumnTypesStatus, fetchReconciliationColumnTypes]);
 
   const availableTypes = useMemo(() => {
     return data?.row_type_summary || [];
@@ -803,6 +876,27 @@ const TableDataViewer = () => {
   }, [data?.dpv_annotations, data?.header]);
 
   const hasDpvAnnotations = columnDpvAnnotations.some(Boolean);
+
+  const reconciliationColumnTypeColumns = useMemo(() => {
+    return reconcileColumnTypes?.columns || {};
+  }, [reconcileColumnTypes]);
+
+  const reconciliationColumnTypeTopByIndex = useMemo(() => {
+    const map = {};
+    Object.entries(reconciliationColumnTypeColumns).forEach(([idx, payload]) => {
+      if (payload?.top_type) {
+        map[Number(idx)] = payload.top_type;
+      }
+    });
+    return map;
+  }, [reconciliationColumnTypeColumns]);
+
+  const selectedNeColumnSummary = useMemo(() => {
+    if (selectedNeColumn === null || selectedNeColumn === undefined) return null;
+    return reconciliationColumnTypeColumns?.[selectedNeColumn] ||
+      reconciliationColumnTypeColumns?.[String(selectedNeColumn)] ||
+      null;
+  }, [selectedNeColumn, reconciliationColumnTypeColumns]);
 
   const getReconciliationEntry = (rowId, colIndex) => {
     const rowEntry = reconciliationCells?.[rowId] || reconciliationCells?.[String(rowId)];
@@ -876,6 +970,7 @@ const TableDataViewer = () => {
         final: finalPayload
       });
       await fetchTableData();
+      await fetchReconciliationColumnTypes();
       setCandidateDialogOpen(false);
     } catch (err) {
       setCandidateSaveError(err?.response?.data?.detail || err?.message || 'Failed to save selection.');
@@ -896,6 +991,7 @@ const TableDataViewer = () => {
         final: {}
       });
       await fetchTableData();
+      await fetchReconciliationColumnTypes();
       setCandidateDialogOpen(false);
     } catch (err) {
       setCandidateSaveError(err?.response?.data?.detail || err?.message || 'Failed to clear selection.');
@@ -1042,9 +1138,6 @@ const TableDataViewer = () => {
     candidateCellMeta?.provider ||
     reconcileProvider;
   const isNilCandidateSet = candidateProvider === 'lion_linker' && candidateList.length > 0 && !hasCandidateMatch;
-  const currentFinal = candidateCellMeta
-    ? getReconciliationEntry(candidateCellMeta.rowId, candidateCellMeta.colIndex)?.final
-    : null;
 
   const classified = data.classified_columns || { NE: {}, LIT: {} };
   const columnTypes = data.header.map((_, idx) =>
@@ -1113,6 +1206,17 @@ const TableDataViewer = () => {
       : reconcileStatus && reconcileStatus.toLowerCase().includes('missing')
         ? 'error'
         : 'success';
+  const columnTypeStatus = reconcileColumnTypesStatus || 'UNSET';
+  const columnTypeStatusColor = ['READY'].includes(columnTypeStatus)
+    ? 'success'
+    : ['FAILED'].includes(columnTypeStatus)
+      ? 'error'
+      : ['PENDING', 'RUNNING'].includes(columnTypeStatus)
+        ? 'info'
+        : ['STALE'].includes(columnTypeStatus)
+          ? 'warning'
+          : 'default';
+  const columnTypeSampling = reconcileColumnTypes?.sampling || null;
   const reconcileProviderLabel = reconcileProvider === 'crocodile' ? 'Crocodile' : 'Lion Linker';
   const missingReconcileCredentials = reconcileProvider === 'crocodile'
     ? !reconcileSettings.crocodile.hasApiKey
@@ -1127,6 +1231,13 @@ const TableDataViewer = () => {
   const allRowsSelected = data?.rows?.length > 0 && selectedRowCount === data.rows.length;
   const someRowsSelected = selectedRowCount > 0 && selectedRowCount < (data?.rows?.length || 0);
   const showDpvStatusChip = dpvStatus !== 'UNSET' || hasDpvAnnotations;
+  const reconcileSelectionSummary = reconcileScope === 'cell'
+    ? `Cell mode: ${selectedCellCount} selected.`
+    : reconcileScope === 'rows'
+      ? `Row mode: ${selectedRowCount} selected.`
+      : reconcileScope === 'page'
+        ? `Page mode: ${(data?.rows?.length || 0)} rows in scope.`
+        : `Table mode: ${(data?.total_rows || 0)} rows in scope.`;
 
   return (
     <Box sx={{ m: 2 }}>
@@ -1292,33 +1403,23 @@ const TableDataViewer = () => {
           </Box>
         )}
 
-        <CardContent sx={{ px: 2, pb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-            <Box>
-              <Typography variant="subtitle1">Reconciliation ({reconcileProviderLabel})</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Choose a scope and run entity linking on a subset of the table.
-              </Typography>
-            </Box>
-            <Button
-              variant="contained"
-              size="small"
-              onClick={handleReconcile}
-              disabled={reconcileSubmitting || loading}
-            >
-              {reconcileSubmitting ? 'Starting...' : 'Run reconciliation'}
-            </Button>
-          </Box>
-          {missingReconcileCredentials && (
-            <Alert severity="warning" sx={{ mt: 2 }}>
-              {reconcileProvider === 'crocodile'
-                ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
-                : 'Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.'}
-            </Alert>
-          )}
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={12} md={3}>
-              <FormControl fullWidth size="small">
+        <CardContent sx={{ px: 2, py: 1.5 }}>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 1.5,
+              borderColor: '#d9e2f0',
+              bgcolor: '#fbfdff'
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Chip
+                size="small"
+                color="primary"
+                variant="outlined"
+                label={`Reconciliation · ${reconcileProviderLabel}`}
+              />
+              <FormControl size="small" sx={{ minWidth: 165 }}>
                 <InputLabel>Provider</InputLabel>
                 <Select
                   label="Provider"
@@ -1332,9 +1433,7 @@ const TableDataViewer = () => {
                   ))}
                 </Select>
               </FormControl>
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <FormControl fullWidth size="small">
+              <FormControl size="small" sx={{ minWidth: 175 }}>
                 <InputLabel>Scope</InputLabel>
                 <Select
                   label="Scope"
@@ -1347,9 +1446,7 @@ const TableDataViewer = () => {
                   <MenuItem value="table">Whole table</MenuItem>
                 </Select>
               </FormControl>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <FormControl fullWidth size="small" disabled={reconcileScope === 'cell'}>
+              <FormControl size="small" sx={{ minWidth: 250, flex: 1 }} disabled={reconcileScope === 'cell'}>
                 <InputLabel>Columns</InputLabel>
                 <Select
                   label="Columns"
@@ -1373,58 +1470,124 @@ const TableDataViewer = () => {
                     </MenuItem>
                   ))}
                 </Select>
-                <FormHelperText>
-                  {reconcileScope === 'cell'
-                    ? 'Columns are derived from the selected cells.'
-                    : 'Choose which columns to reconcile.'}
-                </FormHelperText>
               </FormControl>
-            </Grid>
-            <Grid item xs={12} md={2}>
               <TextField
                 label="Top K"
                 type="number"
                 size="small"
-                fullWidth
                 value={reconcileTopK}
                 inputProps={{ min: 1, max: 100 }}
                 onChange={(e) => setReconcileTopK(Number(e.target.value) || 1)}
+                sx={{ width: 96 }}
               />
-            </Grid>
-          </Grid>
-          <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            {reconcileScope === 'cell' && (
-              <Typography variant="caption" color="text.secondary">
-                Click table cells to select them ({selectedCellCount} selected).
-              </Typography>
-            )}
-            {reconcileScope === 'rows' && (
-              <Typography variant="caption" color="text.secondary">
-                Use row checkboxes to select rows ({selectedRowCount} selected).
-              </Typography>
-            )}
-            {reconcileScope === 'page' && (
-              <Typography variant="caption" color="text.secondary">
-                Current page selected ({data?.rows?.length || 0} rows).
-              </Typography>
-            )}
-            {reconcileScope === 'table' && (
-              <Typography variant="caption" color="text.secondary">
-                Whole table selected ({data?.total_rows || 0} rows).
-              </Typography>
-            )}
-            {(reconcileScope === 'cell' || reconcileScope === 'rows') && (
               <Button
+                variant="contained"
                 size="small"
-                onClick={() => {
-                  setSelectedRows(new Set());
-                  setSelectedCells(new Set());
-                }}
+                onClick={handleReconcile}
+                disabled={reconcileSubmitting || loading}
               >
-                Clear selection
+                {reconcileSubmitting ? 'Starting...' : 'Run'}
               </Button>
+            </Box>
+
+            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+              <Typography variant="caption" color="text.secondary">
+                {reconcileSelectionSummary}
+              </Typography>
+              {(reconcileScope === 'cell' || reconcileScope === 'rows') && (
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setSelectedRows(new Set());
+                    setSelectedCells(new Set());
+                  }}
+                >
+                  Clear selection
+                </Button>
+              )}
+            </Box>
+            <FormHelperText sx={{ mt: 0.5 }}>
+              {reconcileScope === 'cell'
+                ? 'Columns are derived from selected cells.'
+                : 'Link columns must be NE columns; Koala maps row/column indexes back automatically.'}
+            </FormHelperText>
+
+            {missingReconcileCredentials && (
+              <Alert severity="warning" sx={{ mt: 1 }}>
+                {reconcileProvider === 'crocodile'
+                  ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
+                  : 'Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.'}
+              </Alert>
             )}
-          </Box>
+
+            <Divider sx={{ my: 1.25 }} />
+
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Typography variant="subtitle2">NE type ranking</Typography>
+              <Chip size="small" color={columnTypeStatusColor} label={columnTypeStatus} />
+              {columnTypeSampling?.sampled_cells !== undefined && (
+                <Typography variant="caption" color="text.secondary">
+                  {columnTypeSampling.sampled_cells}/{columnTypeSampling.total_cells} cells ({columnTypeSampling.strategy})
+                </Typography>
+              )}
+              {!columnTypeSampling?.sampled_cells && reconcileColumnTypesConfig?.sample_strategy && (
+                <Typography variant="caption" color="text.secondary">
+                  {reconcileColumnTypesConfig.sample_strategy} sampling
+                </Typography>
+              )}
+              {reconcileColumnTypesJobId && (
+                <Typography variant="caption" color="text.secondary">
+                  job {reconcileColumnTypesJobId.slice(0, 8)}
+                </Typography>
+              )}
+              <Box sx={{ flex: 1 }} />
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Sampling</InputLabel>
+                <Select
+                  label="Sampling"
+                  value={reconcileTypeSampleStrategy}
+                  onChange={(event) => setReconcileTypeSampleStrategy(event.target.value)}
+                  disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+                >
+                  <MenuItem value="auto">Auto</MenuItem>
+                  <MenuItem value="latest">Latest</MenuItem>
+                  <MenuItem value="random">Random</MenuItem>
+                  <MenuItem value="all">All</MenuItem>
+                </Select>
+              </FormControl>
+              <TextField
+                size="small"
+                type="number"
+                label="Sample"
+                value={reconcileTypeSampleSize}
+                inputProps={{ min: 1, max: 50000 }}
+                onChange={(event) => setReconcileTypeSampleSize(Math.max(1, Number(event.target.value) || 1))}
+                sx={{ width: 92 }}
+                disabled={reconcileTypeSampleStrategy === 'all' || reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+              />
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleTriggerColumnTypeRanking}
+                disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+              >
+                {reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)
+                  ? 'Computing...'
+                  : 'Compute'}
+              </Button>
+            </Box>
+
+            {reconcileColumnTypesError && (
+              <Alert severity="warning" sx={{ mt: 1 }}>
+                {reconcileColumnTypesError}
+              </Alert>
+            )}
+            {!reconcileColumnTypesError && columnTypeStatus === 'UNSET' && (
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                No ranking computed yet. Click any NE header after running compute.
+              </Typography>
+            )}
+          </Paper>
         </CardContent>
 
         {hasActiveFilters && (
@@ -1487,6 +1650,66 @@ const TableDataViewer = () => {
         <Divider />
 
         <CardContent sx={{ p: 0 }}>
+          <Dialog
+            open={selectedNeColumn !== null}
+            onClose={() => setSelectedNeColumn(null)}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle>
+              NE Column Ranking
+            </DialogTitle>
+            <DialogContent dividers>
+              {selectedNeColumn !== null && (
+                <Box>
+                  <Typography variant="subtitle2">
+                    Col {selectedNeColumn}: {data?.header?.[selectedNeColumn] || 'Unknown'}
+                  </Typography>
+                  {!selectedNeColumnSummary ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      No computed evidence for this column. Run "Compute ranking" first.
+                    </Typography>
+                  ) : (
+                    <>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        Evidence cells: {selectedNeColumnSummary.evidence_cells}
+                      </Typography>
+                      <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {(selectedNeColumnSummary.ranking || []).slice(0, 10).map((entry, idx) => (
+                          <Paper
+                            key={`ne-rank-${selectedNeColumn}-${entry.id || entry.name || idx}`}
+                            variant="outlined"
+                            sx={{ p: 1, bgcolor: idx === 0 ? '#eef5ff' : 'transparent', borderColor: idx === 0 ? '#9fc0eb' : undefined }}
+                          >
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+                              <Typography variant="body2" sx={{ fontWeight: idx === 0 ? 700 : 500 }}>
+                                #{idx + 1} {entry.name || entry.id}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {entry.frequency !== undefined
+                                  ? `${Math.round(entry.frequency * 100)}% freq`
+                                  : entry.probability !== undefined
+                                    ? `${Math.round(entry.probability * 100)}%`
+                                    : ''}
+                              </Typography>
+                            </Box>
+                            {entry.probability !== undefined && (
+                              <Typography variant="caption" color="text.secondary">
+                                Weighted share: {Math.round(entry.probability * 100)}%
+                              </Typography>
+                            )}
+                          </Paper>
+                        ))}
+                      </Box>
+                    </>
+                  )}
+                </Box>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setSelectedNeColumn(null)}>Close</Button>
+            </DialogActions>
+          </Dialog>
           <Dialog
             open={candidateDialogOpen}
             onClose={() => setCandidateDialogOpen(false)}
@@ -1704,7 +1927,10 @@ const TableDataViewer = () => {
                 columnSubtypes={columnSubtypes}
                 columnSpecificSubtypes={columnSpecificSubtypes}
                 columnDpvAnnotations={columnDpvAnnotations}
+                columnReconciliationTypes={reconciliationColumnTypeTopByIndex}
                 showDpvAnnotations={showDpvAnnotations}
+                onNeColumnClick={(colIndex) => setSelectedNeColumn(colIndex)}
+                activeNeColumn={selectedNeColumn}
                 showRowSelection={showRowSelection}
                 showRowIndex={showRowIndex}
                 allRowsSelected={allRowsSelected}

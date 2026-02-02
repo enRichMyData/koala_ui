@@ -7,7 +7,10 @@ const TableHeader = ({
   columnSubtypes,
   columnSpecificSubtypes,
   columnDpvAnnotations,
+  columnReconciliationTypes,
   showDpvAnnotations,
+  onNeColumnClick,
+  activeNeColumn,
   showRowSelection,
   showRowIndex,
   allRowsSelected,
@@ -52,6 +55,20 @@ const TableHeader = ({
       const dpvTitle = dpvConfidence !== null
         ? `DPV confidence ${Math.round(dpvConfidence * 100)}%`
         : 'DPV annotation';
+      const reconType = columnReconciliationTypes?.[index] || null;
+      const reconLabel = reconType?.name || reconType?.id || '';
+      const reconFrequency = typeof reconType?.frequency === 'number'
+        ? Math.round(reconType.frequency * 100)
+        : null;
+      const reconProbability = typeof reconType?.probability === 'number'
+        ? Math.round(reconType.probability * 100)
+        : null;
+      const reconTitle = reconFrequency !== null
+        ? `Top linked type ${reconLabel} (frequency ${reconFrequency}%)`
+        : reconProbability !== null
+          ? `Top linked type ${reconLabel} (${reconProbability}%)`
+        : `Top linked type ${reconLabel}`;
+      const isActiveNeColumn = activeNeColumn === index;
 
       return (
         <TableCell
@@ -62,9 +79,16 @@ const TableHeader = ({
             py: 1.5,
             px: 2,
             textAlign: 'center',
-            cursor: 'default',
+            cursor: isNE ? 'pointer' : 'default',
             transition: 'background 0.2s',
+            outline: isActiveNeColumn ? '2px solid #7aa7d9' : 'none',
+            outlineOffset: isActiveNeColumn ? '-2px' : 0,
             '&:hover': { backgroundColor: isNE ? '#c8e6c9' : bg }
+          }}
+          onClick={() => {
+            if (isNE && onNeColumnClick) {
+              onNeColumnClick(index);
+            }
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
@@ -105,6 +129,23 @@ const TableHeader = ({
                     color: '#5f6b7a',
                     borderColor: '#d0d7de',
                     bgcolor: '#f7f9fb'
+                  }}
+                />
+              </Tooltip>
+            </Box>
+          )}
+          {isNE && reconLabel && (
+            <Box sx={{ mt: 0.5, display: 'flex', justifyContent: 'center' }}>
+              <Tooltip title={reconTitle} arrow>
+                <Chip
+                  label={`KG ${reconLabel}${reconFrequency !== null ? ` ${reconFrequency}%` : reconProbability !== null ? ` ${reconProbability}%` : ''}`}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    fontSize: '0.6rem',
+                    color: '#375a7f',
+                    borderColor: '#b7cee6',
+                    bgcolor: '#edf5ff'
                   }}
                 />
               </Tooltip>

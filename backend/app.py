@@ -36,6 +36,7 @@ import time
 import threading
 import logging
 import tempfile
+import uuid
 from io import StringIO
 from datetime import datetime, timedelta
 import httpx
@@ -159,6 +160,12 @@ class TableDB(Base):
     dpv_annotations = Column(JSONB, default=dict)
     dpv_status = Column(String(20), default="UNSET")
     dpv_job_id = Column(String(64), nullable=True)
+    recon_column_types_status = Column(String(20), default="UNSET")
+    recon_column_types_job_id = Column(String(64), nullable=True)
+    recon_column_types_result = Column(JSONB, default=dict)
+    recon_column_types_config = Column(JSONB, default=dict)
+    recon_column_types_error = Column(JSONB, nullable=True)
+    recon_column_types_updated_at = Column(DateTime, nullable=True)
     score_column = Column(Integer, nullable=True)
     score_column_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -349,6 +356,13 @@ class ReconciliationCellUpdate(BaseModel):
     provider: Optional[str] = None
 
 
+class ReconciliationColumnTypeComputeRequest(BaseModel):
+    provider: Optional[str] = None
+    sample_strategy: Optional[str] = "auto"
+    sample_size: Optional[int] = None
+    max_types: Optional[int] = 10
+
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -487,6 +501,11 @@ CROCODILE_DEFAULT_BASE_URL = "https://crocodile.zooverse.dev"
 CROCODILE_REQUEST_TIMEOUT_SECONDS = 30
 CROCODILE_POLL_INTERVAL_SECONDS = 2
 CROCODILE_POLL_TIMEOUT_SECONDS = 300
+
+RECON_COLUMN_TYPES_SAMPLE_DEFAULT = 5000
+RECON_COLUMN_TYPES_SAMPLE_MAX = 50000
+RECON_COLUMN_TYPES_MAX_TYPES_DEFAULT = 10
+RECON_COLUMN_TYPES_STRATEGIES = {"auto", "latest", "random", "all"}
 
 
 def load_llm_config(
@@ -727,7 +746,6 @@ def create_lion_job(config: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str
     with httpx.Client(timeout=config["request_timeout"]) as client:
         response = client.post(url, json=payload, headers=build_lion_headers(config))
     response.raise_for_status()
-    print("payload:", payload, flush=True)
     return response.json()
 
 
@@ -1307,6 +1325,312 @@ def map_reconciliation_col(
     return resolve_numeric(col_index)
 
 
+def get_ne_column_indices(table: TableDB) -> Set[int]:
+    classified = table.classified_columns or {}
+    ne_entries = classified.get("NE", {}) if isinstance(classified, dict) else {}
+    ne_indices: Set[int] = set()
+    if isinstance(ne_entries, dict):
+        for key in ne_entries.keys():
+            try:
+                ne_indices.add(int(key))
+            except (TypeError, ValueError):
+                continue
+    return ne_indices
+
+
+def normalize_type_entries(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+    for entry in value:
+        type_id = None
+        type_name = None
+        if isinstance(entry, dict):
+            type_id = entry.get("id") or entry.get("entity_id")
+            type_name = entry.get("name") or entry.get("label")
+        elif entry is not None:
+            type_name = str(entry).strip()
+        type_id = str(type_id).strip() if type_id is not None else ""
+        type_name = str(type_name).strip() if type_name is not None else ""
+        if not type_id and not type_name:
+            continue
+        key = type_id or type_name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({
+            "id": type_id,
+            "name": type_name
+        })
+    return normalized
+
+
+def parse_confidence_score(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(score):
+        return None
+    return max(0.0, min(score, 1.0))
+
+
+def choose_reconciliation_candidate(cell: ReconciliationCellDB) -> Optional[Dict[str, Any]]:
+    final = cell.final if isinstance(cell.final, dict) else {}
+    ranking = cell.candidate_ranking if isinstance(cell.candidate_ranking, list) else []
+
+    final_types = normalize_type_entries(final.get("types"))
+    if final_types:
+        score = parse_confidence_score(final.get("confidence_score") or final.get("score"))
+        return {
+            "source": "final",
+            "types": final_types,
+            "score": score,
+            "match": final.get("match") is True
+        }
+
+    candidate = None
+    if ranking:
+        candidate = next(
+            (entry for entry in ranking if isinstance(entry, dict) and entry.get("match") is True),
+            None
+        )
+        source = "match" if candidate else "top1"
+        if candidate is None:
+            candidate = ranking[0] if isinstance(ranking[0], dict) else None
+        if candidate:
+            metadata = candidate.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            candidate_types = normalize_type_entries(candidate.get("types") or metadata.get("types"))
+            if candidate_types:
+                score = parse_confidence_score(candidate.get("confidence_score") or candidate.get("score"))
+                return {
+                    "source": source,
+                    "types": candidate_types,
+                    "score": score,
+                    "match": candidate.get("match") is True
+                }
+    return None
+
+
+def compute_candidate_weight(evidence: Dict[str, Any], provider: str) -> float:
+    base_score = evidence.get("score")
+    source = evidence.get("source")
+    if source == "final":
+        weight = base_score if base_score is not None else 1.0
+        weight = max(weight, 0.9)
+    elif source == "match":
+        weight = base_score if base_score is not None else 0.8
+        weight = max(weight, 0.6)
+    else:
+        seed = base_score if base_score is not None else 0.5
+        weight = max(0.05, seed * 0.35)
+
+    provider_weight = 1.0
+    if provider == "lion_linker":
+        provider_weight = 1.0
+    elif provider == "crocodile":
+        provider_weight = 0.98
+    return max(0.01, min(weight * provider_weight, 1.5))
+
+
+def build_reconciliation_column_type_ranking(
+    db: Session,
+    table: TableDB,
+    provider: Optional[str] = None,
+    max_types_per_column: int = RECON_COLUMN_TYPES_MAX_TYPES_DEFAULT,
+    sample_strategy: str = "auto",
+    sample_size: int = RECON_COLUMN_TYPES_SAMPLE_DEFAULT
+) -> Dict[str, Any]:
+    header = table.header or []
+    ne_indices = get_ne_column_indices(table)
+    resolved_strategy = sample_strategy if sample_strategy in RECON_COLUMN_TYPES_STRATEGIES else "auto"
+    resolved_sample_size = max(1, min(int(sample_size or RECON_COLUMN_TYPES_SAMPLE_DEFAULT), RECON_COLUMN_TYPES_SAMPLE_MAX))
+    if not ne_indices:
+        return {
+            "strategy": "weighted_majority_vote",
+            "provider": provider or "all",
+            "sampling": {
+                "strategy": resolved_strategy,
+                "sample_size": resolved_sample_size,
+                "total_cells": 0,
+                "sampled_cells": 0,
+                "sampled": False
+            },
+            "columns": {}
+        }
+
+    query = (
+        db.query(ReconciliationCellDB)
+        .filter(
+            ReconciliationCellDB.table_id == table.id,
+            ReconciliationCellDB.col_idx.in_(list(ne_indices))
+        )
+    )
+    if provider:
+        query = query.filter(ReconciliationCellDB.provider == provider)
+
+    total_cells = query.count()
+    effective_strategy = resolved_strategy
+    sampled = False
+    sampled_cells_target = total_cells
+
+    if resolved_strategy == "all":
+        effective_strategy = "all"
+    elif resolved_strategy == "random":
+        effective_strategy = "random"
+        sampled_cells_target = min(total_cells, resolved_sample_size)
+        sampled = total_cells > sampled_cells_target
+    elif resolved_strategy == "latest":
+        effective_strategy = "latest"
+        sampled_cells_target = min(total_cells, resolved_sample_size)
+        sampled = total_cells > sampled_cells_target
+    else:
+        if total_cells <= resolved_sample_size:
+            effective_strategy = "all"
+        else:
+            effective_strategy = "latest"
+            sampled = True
+            sampled_cells_target = resolved_sample_size
+
+    if effective_strategy == "random":
+        ordered_query = query.order_by(func.random())
+    else:
+        ordered_query = query.order_by(
+            ReconciliationCellDB.updated_at.desc().nulls_last(),
+            ReconciliationCellDB.id.desc()
+        )
+    if effective_strategy == "all":
+        cells = ordered_query.all()
+    else:
+        cells = ordered_query.limit(sampled_cells_target).all()
+    sampled_cells = len(cells)
+
+    column_stats: Dict[int, Dict[str, Any]] = {}
+    for idx in ne_indices:
+        if idx < 0 or idx >= len(header):
+            continue
+        column_stats[idx] = {
+            "header": header[idx],
+            "evidence_cells": 0,
+            "unmatched_cells": 0,
+            "total_entity_weight": 0.0,
+            "total_type_weight": 0.0,
+            "type_votes": {},
+            "provider_breakdown": {}
+        }
+
+    for cell in cells:
+        col_idx = cell.col_idx
+        if col_idx not in column_stats:
+            continue
+        evidence = choose_reconciliation_candidate(cell)
+        if not evidence:
+            continue
+        column_entry = column_stats[col_idx]
+        provider_name = cell.provider or "unknown"
+        provider_entry = column_entry["provider_breakdown"].setdefault(
+            provider_name,
+            {"cells": 0, "weighted_score": 0.0, "type_weight": 0.0}
+        )
+        column_entry["evidence_cells"] += 1
+        if evidence.get("match") is not True:
+            column_entry["unmatched_cells"] += 1
+        weight = compute_candidate_weight(evidence, provider_name)
+        type_entries = evidence.get("types") or []
+        if not type_entries:
+            continue
+        column_entry["total_entity_weight"] += weight
+        column_entry["total_type_weight"] += weight * len(type_entries)
+        provider_entry["cells"] += 1
+        provider_entry["weighted_score"] += weight
+        provider_entry["type_weight"] += weight * len(type_entries)
+
+        for type_entry in type_entries:
+            type_key = type_entry.get("id") or type_entry.get("name")
+            if not type_key:
+                continue
+            vote_entry = column_entry["type_votes"].setdefault(
+                type_key,
+                {
+                    "id": type_entry.get("id") or None,
+                    "name": type_entry.get("name") or type_entry.get("id") or "Unknown",
+                    "score": 0.0,
+                    "support": 0
+                }
+            )
+            vote_entry["score"] += weight
+            vote_entry["support"] += 1
+
+    columns_payload: Dict[str, Any] = {}
+    for col_idx, entry in column_stats.items():
+        votes = list(entry["type_votes"].values())
+        votes.sort(key=lambda item: (item["score"], item["support"]), reverse=True)
+        evidence_cells = entry["evidence_cells"] or 0
+        total_entity_weight = entry["total_entity_weight"] or 0.0
+        total_type_weight = entry["total_type_weight"] or 0.0
+        ranking = []
+        for vote in votes[:max_types_per_column]:
+            probability = (vote["score"] / total_type_weight) if total_type_weight > 0 else 0.0
+            frequency = (vote["support"] / evidence_cells) if evidence_cells > 0 else 0.0
+            ranking.append({
+                "id": vote["id"],
+                "name": vote["name"],
+                "weighted_score": round(vote["score"], 6),
+                "probability": round(probability, 6),
+                "frequency": round(frequency, 6),
+                "support": vote["support"]
+            })
+
+        top_choice = ranking[0] if ranking else None
+        provider_breakdown = {}
+        for provider_name, provider_values in entry["provider_breakdown"].items():
+            provider_breakdown[provider_name] = {
+                "cells": provider_values["cells"],
+                "weighted_score": round(provider_values["weighted_score"], 6),
+                "type_weight": round(provider_values["type_weight"], 6)
+            }
+
+        columns_payload[str(col_idx)] = {
+            "column_index": col_idx,
+            "header": entry["header"],
+            "evidence_cells": entry["evidence_cells"],
+            "unmatched_cells": entry["unmatched_cells"],
+            "total_weight": round(total_type_weight, 6),
+            "total_entity_weight": round(total_entity_weight, 6),
+            "total_type_weight": round(total_type_weight, 6),
+            "top_type": top_choice,
+            "ranking": ranking,
+            "provider_breakdown": provider_breakdown
+        }
+
+    return {
+        "strategy": "weighted_majority_vote",
+        "provider": provider or "all",
+        "sampling": {
+            "strategy": effective_strategy,
+            "requested_strategy": resolved_strategy,
+            "sample_size": resolved_sample_size,
+            "total_cells": total_cells,
+            "sampled_cells": sampled_cells,
+            "sampled": sampled
+        },
+        "computed_at": datetime.utcnow().isoformat(),
+        "columns": columns_payload
+    }
+
+
+def mark_reconciliation_column_types_stale(db: Session, table_id: int) -> None:
+    table = db.query(TableDB).filter(TableDB.id == table_id).first()
+    if not table:
+        return
+    table.recon_column_types_status = "STALE"
+    table.updated_at = datetime.utcnow()
+
+
 def sync_lion_results(
     db: Session,
     job: ReconciliationJobDB,
@@ -1315,7 +1639,6 @@ def sync_lion_results(
     cursor = None
     while True:
         payload = get_lion_job_results(config, job.external_job_id, cursor=cursor, limit=200)
-        print("results payload:", payload, flush=True)
         results = payload.get("results") or []
         for entry in results:
             row_idx = entry.get("row")
@@ -1372,6 +1695,7 @@ def sync_lion_results(
         if not cursor:
             break
 
+    mark_reconciliation_column_types_stale(db, job.table_id)
     job.synced_at = datetime.utcnow()
     job.updated_at = datetime.utcnow()
     db.commit()
@@ -1424,29 +1748,78 @@ def sync_crocodile_results(
                 )
                 db.add(cell)
 
-            candidates = entry.get("candidates") or []
-            candidate_ranking = []
-            for rank, candidate in enumerate(candidates, start=1):
-                metadata = candidate.get("metadata") or {}
-                candidate_ranking.append({
-                    "rank": rank,
-                    "id": candidate.get("entity_id"),
-                    "name": candidate.get("label"),
-                    "label": candidate.get("label"),
-                    "confidence_score": candidate.get("score"),
-                    "score": candidate.get("score"),
-                    "description": metadata.get("description"),
-                    "types": metadata.get("types") or [],
-                    "metadata": metadata
-                })
+            raw_ranking = entry.get("candidate_ranking")
+            candidate_ranking: List[Dict[str, Any]] = []
+            if isinstance(raw_ranking, list):
+                for rank, candidate in enumerate(raw_ranking, start=1):
+                    metadata = candidate.get("metadata")
+                    metadata = metadata if isinstance(metadata, dict) else {}
+                    types = candidate.get("types")
+                    if not isinstance(types, list):
+                        types = metadata.get("types")
+                    if not isinstance(types, list):
+                        types = []
+                    score_value = candidate.get("confidence_score")
+                    if score_value is None:
+                        score_value = candidate.get("score")
+                    candidate_ranking.append({
+                        "rank": candidate.get("rank", rank),
+                        "id": candidate.get("id") or candidate.get("entity_id"),
+                        "name": candidate.get("name") or candidate.get("label"),
+                        "label": candidate.get("label"),
+                        "confidence_label": candidate.get("confidence_label"),
+                        "confidence_score": score_value,
+                        "score": candidate.get("score", score_value),
+                        "description": candidate.get("description") or metadata.get("description"),
+                        "types": types,
+                        "match": candidate.get("match"),
+                        "metadata": metadata
+                    })
+            else:
+                candidates = entry.get("candidates") or []
+                for rank, candidate in enumerate(candidates, start=1):
+                    metadata = candidate.get("metadata")
+                    metadata = metadata if isinstance(metadata, dict) else {}
+                    candidate_ranking.append({
+                        "rank": rank,
+                        "id": candidate.get("entity_id") or candidate.get("id"),
+                        "name": candidate.get("label") or candidate.get("name"),
+                        "label": candidate.get("label"),
+                        "confidence_label": candidate.get("confidence_label"),
+                        "confidence_score": candidate.get("score"),
+                        "score": candidate.get("score"),
+                        "description": metadata.get("description") or candidate.get("description"),
+                        "types": metadata.get("types") or candidate.get("types") or [],
+                        "match": candidate.get("match"),
+                        "metadata": metadata
+                    })
+
+            final_value = entry.get("final") or {}
+            if not final_value and candidate_ranking:
+                winning = next(
+                    (candidate for candidate in candidate_ranking if candidate.get("match") is True),
+                    None
+                )
+                if winning:
+                    final_value = {
+                        "id": winning.get("id"),
+                        "name": winning.get("name") or winning.get("label"),
+                        "types": winning.get("types"),
+                        "description": winning.get("description"),
+                        "confidence_label": winning.get("confidence_label"),
+                        "confidence_score": winning.get("confidence_score") or winning.get("score"),
+                        "match": True
+                    }
 
             cell.job_id = job.id
             cell.external_job_id = job.external_job_id
             cell.mention = entry.get("mention")
             cell.cell_id = entry.get("cell_id")
-            cell.final = cell.final or {}
+            cell.final = final_value
             cell.candidate_ranking = candidate_ranking
-            cell.explanation = entry.get("explanation") or entry.get("meta", {}).get("explanation")
+            entry_meta = entry.get("meta")
+            entry_meta = entry_meta if isinstance(entry_meta, dict) else {}
+            cell.explanation = entry.get("explanation") or entry_meta.get("explanation")
             cell.updated_at = datetime.utcnow()
         db.commit()
 
@@ -1457,6 +1830,7 @@ def sync_crocodile_results(
                 break
             break
 
+    mark_reconciliation_column_types_stale(db, job.table_id)
     job.synced_at = datetime.utcnow()
     job.updated_at = datetime.utcnow()
     db.commit()
@@ -1947,6 +2321,24 @@ def ensure_tables_schema():
     if "dpv_job_id" not in existing_columns:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE tables ADD COLUMN IF NOT EXISTS dpv_job_id VARCHAR(64)"))
+    if "recon_column_types_status" not in existing_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tables ADD COLUMN IF NOT EXISTS recon_column_types_status VARCHAR(20)"))
+    if "recon_column_types_job_id" not in existing_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tables ADD COLUMN IF NOT EXISTS recon_column_types_job_id VARCHAR(64)"))
+    if "recon_column_types_result" not in existing_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tables ADD COLUMN IF NOT EXISTS recon_column_types_result JSONB"))
+    if "recon_column_types_config" not in existing_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tables ADD COLUMN IF NOT EXISTS recon_column_types_config JSONB"))
+    if "recon_column_types_error" not in existing_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tables ADD COLUMN IF NOT EXISTS recon_column_types_error JSONB"))
+    if "recon_column_types_updated_at" not in existing_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tables ADD COLUMN IF NOT EXISTS recon_column_types_updated_at TIMESTAMP"))
 
 
 @app.on_event("startup")
@@ -2653,6 +3045,13 @@ def get_table_data(
             "dpv_annotations": table.dpv_annotations or {},
             "dpv_status": table.dpv_status or "UNSET",
             "dpv_job_id": table.dpv_job_id,
+            "recon_column_types_status": table.recon_column_types_status or "UNSET",
+            "recon_column_types_job_id": table.recon_column_types_job_id,
+            "recon_column_types_updated_at": (
+                table.recon_column_types_updated_at.isoformat()
+                if table.recon_column_types_updated_at
+                else None
+            ),
             "score_column": table.score_column,
             "score_column_name": table.score_column_name,
             "status": table.status or "READY",
@@ -3262,6 +3661,158 @@ def get_reconciliation_status(
     }
 
 
+def process_reconciliation_column_types_job(
+    table_id: int,
+    job_id: str,
+    provider: Optional[str],
+    sample_strategy: str,
+    sample_size: int,
+    max_types: int
+) -> None:
+    db = SessionLocal()
+    try:
+        table = db.query(TableDB).filter(TableDB.id == table_id).first()
+        if not table:
+            return
+        if table.recon_column_types_job_id != job_id:
+            return
+
+        table.recon_column_types_status = "RUNNING"
+        table.recon_column_types_error = None
+        table.updated_at = datetime.utcnow()
+        db.commit()
+
+        result = build_reconciliation_column_type_ranking(
+            db=db,
+            table=table,
+            provider=provider,
+            max_types_per_column=max_types,
+            sample_strategy=sample_strategy,
+            sample_size=sample_size
+        )
+        table.recon_column_types_status = "READY"
+        table.recon_column_types_result = result
+        table.recon_column_types_error = None
+        table.recon_column_types_updated_at = datetime.utcnow()
+        table.recon_column_types_config = {
+            "provider": provider or "all",
+            "sample_strategy": sample_strategy,
+            "sample_size": sample_size,
+            "max_types": max_types,
+            "job_id": job_id
+        }
+        table.updated_at = datetime.utcnow()
+        db.commit()
+    except Exception as exc:
+        table = db.query(TableDB).filter(TableDB.id == table_id).first()
+        if table:
+            table.recon_column_types_status = "FAILED"
+            table.recon_column_types_error = {"detail": str(exc)}
+            table.updated_at = datetime.utcnow()
+            db.commit()
+        logger.exception("Reconciliation column type job %s failed: %s", job_id, exc)
+    finally:
+        db.close()
+
+
+def launch_reconciliation_column_types_job(
+    table_id: int,
+    job_id: str,
+    provider: Optional[str],
+    sample_strategy: str,
+    sample_size: int,
+    max_types: int
+) -> None:
+    worker = threading.Thread(
+        target=process_reconciliation_column_types_job,
+        args=(table_id, job_id, provider, sample_strategy, sample_size, max_types),
+        daemon=True
+    )
+    worker.start()
+
+
+@app.post("/datasets/{dataset_name}/tables/{table_name}/reconcile/column-types", response_model=dict)
+def trigger_reconciliation_column_types(
+    dataset_name: str,
+    table_name: str,
+    payload: ReconciliationColumnTypeComputeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    table = get_table_or_404(dataset_name, table_name, current_user["email"], db)
+    provider_filter = normalize_optional_value(payload.provider)
+    if provider_filter:
+        provider_filter = normalize_reconciliation_provider(provider_filter)
+    sample_strategy = (payload.sample_strategy or "auto").lower()
+    if sample_strategy not in RECON_COLUMN_TYPES_STRATEGIES:
+        raise HTTPException(status_code=400, detail=f"Unsupported sample strategy '{sample_strategy}'.")
+    sample_size = payload.sample_size or RECON_COLUMN_TYPES_SAMPLE_DEFAULT
+    sample_size = max(1, min(int(sample_size), RECON_COLUMN_TYPES_SAMPLE_MAX))
+    max_types = payload.max_types or RECON_COLUMN_TYPES_MAX_TYPES_DEFAULT
+    max_types = max(1, min(int(max_types), 25))
+
+    job_id = uuid.uuid4().hex
+    table.recon_column_types_status = "PENDING"
+    table.recon_column_types_job_id = job_id
+    table.recon_column_types_error = None
+    table.recon_column_types_config = {
+        "provider": provider_filter or "all",
+        "sample_strategy": sample_strategy,
+        "sample_size": sample_size,
+        "max_types": max_types,
+        "requested_at": datetime.utcnow().isoformat(),
+        "job_id": job_id
+    }
+    table.updated_at = datetime.utcnow()
+    db.commit()
+
+    launch_reconciliation_column_types_job(
+        table_id=table.id,
+        job_id=job_id,
+        provider=provider_filter,
+        sample_strategy=sample_strategy,
+        sample_size=sample_size,
+        max_types=max_types
+    )
+    return {
+        "status": "PENDING",
+        "job_id": job_id,
+        "config": table.recon_column_types_config,
+        "detail": "NE column type ranking job started."
+    }
+
+
+@app.get("/datasets/{dataset_name}/tables/{table_name}/reconcile/column-types", response_model=dict)
+def get_reconciliation_column_types(
+    dataset_name: str,
+    table_name: str,
+    provider: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    table = get_table_or_404(dataset_name, table_name, current_user["email"], db)
+    provider_filter = normalize_optional_value(provider)
+    if provider_filter:
+        provider_filter = normalize_reconciliation_provider(provider_filter)
+    result = table.recon_column_types_result or {}
+    config = table.recon_column_types_config or {}
+    result_provider = normalize_optional_value(result.get("provider")) if isinstance(result, dict) else None
+    stale = bool(
+        provider_filter and
+        result_provider and
+        result_provider not in {provider_filter, "all"}
+    )
+    return {
+        "status": table.recon_column_types_status or "UNSET",
+        "job_id": table.recon_column_types_job_id,
+        "updated_at": table.recon_column_types_updated_at.isoformat() if table.recon_column_types_updated_at else None,
+        "config": config,
+        "stale": stale,
+        "result": result if isinstance(result, dict) else {},
+        "error": table.recon_column_types_error
+    }
+
+
 @app.get("/datasets/{dataset_name}/tables/{table_name}/reconcile/candidates", response_model=dict)
 def get_reconciliation_candidates(
     dataset_name: str,
@@ -3357,6 +3908,7 @@ def update_reconciliation_cell(
 
     cell.final = payload.final or {}
     cell.updated_at = datetime.utcnow()
+    mark_reconciliation_column_types_stale(db, table.id)
     db.commit()
 
     return {
