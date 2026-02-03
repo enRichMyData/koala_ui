@@ -23,10 +23,10 @@ from sqlalchemy import (
     inspect,
     text,
     select,
+    update,
 )
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, REGCONFIG
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
-from sqlalchemy.sql import nulls_last
 from typing import List, Optional, Dict, Any, Set
 import os
 import csv
@@ -200,6 +200,7 @@ class RowDB(Base):
     id_row = Column(Integer, nullable=False)
     data = Column(JSONB, nullable=False)
     row_score = Column(Float, nullable=True)
+    reconciliation_score = Column(Float, nullable=True)
     row_types = Column(ARRAY(String), default=list)
     search_blob = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -247,6 +248,7 @@ class ReconciliationCellDB(Base):
     mention = Column(Text, nullable=True)
     cell_id = Column(String(128), nullable=True)
     final = Column(JSONB, default=dict)
+    score = Column(Float, nullable=True)
     candidate_ranking = Column(JSONB, default=list)
     explanation = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -260,11 +262,32 @@ class ReconciliationCellDB(Base):
 
 
 Index("ix_rows_table_score", RowDB.table_id, RowDB.row_score)
+Index("ix_rows_table_reconciliation_score", RowDB.table_id, RowDB.reconciliation_score)
 Index("ix_rows_types_gin", RowDB.row_types, postgresql_using="gin")
 Index(
     "ix_rows_search_tsv",
     func.to_tsvector(cast(literal("simple"), type_=REGCONFIG), RowDB.search_blob),
     postgresql_using="gin"
+)
+Index(
+    "ix_reconciliation_cells_table_provider_row",
+    ReconciliationCellDB.table_id,
+    ReconciliationCellDB.provider,
+    ReconciliationCellDB.row_id
+)
+Index(
+    "ix_reconciliation_cells_table_provider_col_row",
+    ReconciliationCellDB.table_id,
+    ReconciliationCellDB.provider,
+    ReconciliationCellDB.col_idx,
+    ReconciliationCellDB.row_id
+)
+Index(
+    "ix_reconciliation_cells_table_provider_col_score",
+    ReconciliationCellDB.table_id,
+    ReconciliationCellDB.provider,
+    ReconciliationCellDB.col_idx,
+    ReconciliationCellDB.score
 )
 
 
@@ -424,11 +447,15 @@ def normalize_cell(value: Any) -> str:
     return str(value).strip()
 
 
-def normalize_optional_value(value: Optional[str]) -> Optional[str]:
+def normalize_optional_value(value: Optional[Any]) -> Optional[str]:
     if value is None:
         return None
-    cleaned = value.strip()
-    return cleaned or None
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    if cleaned.lower() in {"none", "null", "undefined"}:
+        return None
+    return cleaned
 
 
 RECONCILIATION_PROVIDERS = {"lion_linker", "crocodile"}
@@ -1112,6 +1139,7 @@ def apply_column_classification(
     table.score_column = score_column
     table.score_column_name = header[score_column] if score_column is not None else None
     table.updated_at = now
+    recompute_row_reconciliation_scores(db, table)
     db.commit()
 
 
@@ -1637,6 +1665,7 @@ def sync_lion_results(
     job: ReconciliationJobDB,
     config: Dict[str, Any]
 ) -> None:
+    touched_rows: Set[int] = set()
     cursor = None
     while True:
         payload = get_lion_job_results(config, job.external_job_id, cursor=cursor, limit=200)
@@ -1648,6 +1677,7 @@ def sync_lion_results(
             mapped_col = map_reconciliation_col(job, col_idx)
             if mapped_row is None or mapped_col is None:
                 continue
+            touched_rows.add(mapped_row)
             cell = (
                 db.query(ReconciliationCellDB)
                 .filter(
@@ -1688,6 +1718,7 @@ def sync_lion_results(
             cell.mention = entry.get("mention")
             cell.cell_id = entry.get("cell_id")
             cell.final = final_value
+            cell.score = extract_reconciliation_cell_score(candidate_ranking, final_value)
             cell.candidate_ranking = candidate_ranking
             cell.explanation = entry.get("explanation")
             cell.updated_at = datetime.utcnow()
@@ -1696,6 +1727,14 @@ def sync_lion_results(
         if not cursor:
             break
 
+    table = db.query(TableDB).filter(TableDB.id == job.table_id).first()
+    if table and touched_rows:
+        recompute_row_reconciliation_scores(
+            db,
+            table,
+            provider=job.provider,
+            row_ids=list(touched_rows)
+        )
     mark_reconciliation_column_types_stale(db, job.table_id)
     job.synced_at = datetime.utcnow()
     job.updated_at = datetime.utcnow()
@@ -1707,6 +1746,7 @@ def sync_crocodile_results(
     job: ReconciliationJobDB,
     config: Dict[str, Any]
 ) -> None:
+    touched_rows: Set[int] = set()
     cursor = None
     table = db.query(TableDB).filter(TableDB.id == job.table_id).first()
     header = table.header if table else []
@@ -1730,6 +1770,7 @@ def sync_crocodile_results(
             mapped_col = map_reconciliation_col(job, col_idx, header_map, header_map_lower)
             if mapped_row is None or mapped_col is None:
                 continue
+            touched_rows.add(mapped_row)
             cell = (
                 db.query(ReconciliationCellDB)
                 .filter(
@@ -1817,6 +1858,7 @@ def sync_crocodile_results(
             cell.mention = entry.get("mention")
             cell.cell_id = entry.get("cell_id")
             cell.final = final_value
+            cell.score = extract_reconciliation_cell_score(candidate_ranking, final_value)
             cell.candidate_ranking = candidate_ranking
             entry_meta = entry.get("meta")
             entry_meta = entry_meta if isinstance(entry_meta, dict) else {}
@@ -1831,6 +1873,13 @@ def sync_crocodile_results(
                 break
             break
 
+    if table and touched_rows:
+        recompute_row_reconciliation_scores(
+            db,
+            table,
+            provider=job.provider,
+            row_ids=list(touched_rows)
+        )
     mark_reconciliation_column_types_stale(db, job.table_id)
     job.synced_at = datetime.utcnow()
     job.updated_at = datetime.utcnow()
@@ -2062,6 +2111,7 @@ def serialize_row(row: RowDB) -> Dict[str, Any]:
         "idRow": row.id_row,
         "data": row.data or [],
         "row_score": row.row_score,
+        "reconciliation_score": row.reconciliation_score,
         "row_types": row.row_types or []
     }
 
@@ -2237,6 +2287,32 @@ def parse_score_value(raw_value: Any) -> Optional[float]:
         return None
 
 
+def extract_candidate_score(candidate: Any) -> Optional[float]:
+    if not isinstance(candidate, dict):
+        return None
+    for key in ("confidence_score", "score"):
+        value = parse_score_value(candidate.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def extract_reconciliation_cell_score(
+    candidate_ranking: Any,
+    final_value: Any = None
+) -> Optional[float]:
+    # The persisted per-cell score is the score from the top-ranked candidate.
+    if isinstance(candidate_ranking, list) and candidate_ranking:
+        top = extract_candidate_score(candidate_ranking[0])
+        if top is not None:
+            return top
+    if isinstance(final_value, dict):
+        fallback = extract_candidate_score(final_value)
+        if fallback is not None:
+            return fallback
+    return 0.0
+
+
 def build_row_types(row: List[Any], classification: Dict[str, Dict[int, str]]) -> List[str]:
     row_types: List[str] = []
     if not classification:
@@ -2300,12 +2376,77 @@ def build_column_type_summary_from_counts(
 
 
 def build_reconciliation_score_expression():
-    confidence_text = func.nullif(ReconciliationCellDB.final["confidence_score"].astext, "")
-    score_text = func.nullif(ReconciliationCellDB.final["score"].astext, "")
-    return func.coalesce(
-        cast(confidence_text, Float),
-        cast(score_text, Float)
+    return ReconciliationCellDB.score
+
+
+def get_ne_column_indices(table: TableDB) -> List[int]:
+    header = table.header or []
+    classified_columns = table.classified_columns if isinstance(table.classified_columns, dict) else {}
+    classified_ne = classified_columns.get("NE", {}) if isinstance(classified_columns.get("NE", {}), dict) else {}
+    columns: List[int] = []
+    for raw_idx in classified_ne.keys():
+        try:
+            idx = int(raw_idx)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < len(header):
+            columns.append(idx)
+    return sorted(set(columns))
+
+
+def recompute_row_reconciliation_scores(
+    db: Session,
+    table: TableDB,
+    provider: Optional[str] = None,
+    row_ids: Optional[List[int]] = None
+) -> None:
+    if not table:
+        return
+    ne_columns = get_ne_column_indices(table)
+    target_row_ids_set: Set[int] = set()
+    for raw_row_id in row_ids or []:
+        try:
+            target_row_ids_set.add(int(raw_row_id))
+        except (TypeError, ValueError):
+            continue
+    target_row_ids = sorted(target_row_ids_set)
+    now = datetime.utcnow()
+
+    reset_stmt = update(RowDB).where(RowDB.table_id == table.id)
+    if target_row_ids:
+        reset_stmt = reset_stmt.where(RowDB.id_row.in_(target_row_ids))
+    reset_stmt = reset_stmt.values(reconciliation_score=None, updated_at=now)
+    db.execute(reset_stmt)
+
+    if not ne_columns:
+        db.flush()
+        return
+
+    score_expr = build_reconciliation_score_expression()
+    score_for_avg = func.coalesce(score_expr, literal(0.0))
+    avg_query = select(
+        ReconciliationCellDB.row_id.label("row_id"),
+        func.avg(score_for_avg).label("avg_score")
+    ).where(
+        ReconciliationCellDB.table_id == table.id,
+        ReconciliationCellDB.col_idx.in_(ne_columns)
     )
+    if provider:
+        avg_query = avg_query.where(ReconciliationCellDB.provider == provider)
+    if target_row_ids:
+        avg_query = avg_query.where(ReconciliationCellDB.row_id.in_(target_row_ids))
+    avg_query = avg_query.group_by(ReconciliationCellDB.row_id)
+    avg_scores = avg_query.subquery()
+
+    update_stmt = (
+        update(RowDB)
+        .where(RowDB.table_id == table.id, RowDB.id_row == avg_scores.c.row_id)
+        .values(reconciliation_score=avg_scores.c.avg_score, updated_at=now)
+    )
+    if target_row_ids:
+        update_stmt = update_stmt.where(RowDB.id_row.in_(target_row_ids))
+    db.execute(update_stmt)
+    db.flush()
 
 
 def build_reconciliation_type_conditions(type_values: List[str]) -> List[Any]:
@@ -2414,9 +2555,10 @@ def build_reconciliation_score_range(
     provider: Optional[str] = None
 ) -> Dict[str, Optional[float]]:
     score_expr = build_reconciliation_score_expression()
+    score_for_stats = func.coalesce(score_expr, literal(0.0))
     query = db.query(
-        func.min(score_expr).label("min_score"),
-        func.max(score_expr).label("max_score")
+        func.min(score_for_stats).label("min_score"),
+        func.max(score_for_stats).label("max_score")
     ).filter(ReconciliationCellDB.table_id == table_id)
     if provider:
         query = query.filter(ReconciliationCellDB.provider == provider)
@@ -2427,6 +2569,68 @@ def build_reconciliation_score_range(
         "min": round(min_score, 6) if min_score is not None else None,
         "max": round(max_score, 6) if max_score is not None else None
     }
+
+
+def build_reconciliation_row_score_subquery(
+    db: Session,
+    table_id: int,
+    provider: Optional[str] = None,
+    col_idx: Optional[int] = None,
+    ne_columns: Optional[List[int]] = None
+):
+    score_expr = build_reconciliation_score_expression()
+    score_for_avg = func.coalesce(score_expr, literal(0.0))
+    query = db.query(
+        ReconciliationCellDB.row_id.label("row_id"),
+        func.avg(score_for_avg).label("link_score")
+    ).filter(
+        ReconciliationCellDB.table_id == table_id
+    )
+    if provider:
+        query = query.filter(ReconciliationCellDB.provider == provider)
+    if col_idx is not None:
+        query = query.filter(ReconciliationCellDB.col_idx == col_idx)
+    elif ne_columns is not None:
+        if ne_columns:
+            query = query.filter(ReconciliationCellDB.col_idx.in_(ne_columns))
+        else:
+            query = query.filter(literal(False))
+    return query.group_by(ReconciliationCellDB.row_id).subquery()
+
+
+def build_reconciliation_row_confidence_map(
+    db: Session,
+    table_id: int,
+    row_ids: List[int],
+    provider: Optional[str] = None,
+    ne_columns: Optional[List[int]] = None
+) -> Dict[int, Optional[float]]:
+    if not row_ids:
+        return {}
+    score_expr = build_reconciliation_score_expression()
+    score_for_avg = func.coalesce(score_expr, literal(0.0))
+    query = db.query(
+        ReconciliationCellDB.row_id.label("row_id"),
+        func.avg(score_for_avg).label("row_confidence")
+    ).filter(
+        ReconciliationCellDB.table_id == table_id,
+        ReconciliationCellDB.row_id.in_(row_ids)
+    )
+    if provider:
+        query = query.filter(ReconciliationCellDB.provider == provider)
+    if ne_columns is not None:
+        if ne_columns:
+            query = query.filter(ReconciliationCellDB.col_idx.in_(ne_columns))
+        else:
+            query = query.filter(literal(False))
+    rows = query.group_by(ReconciliationCellDB.row_id).all()
+    result: Dict[int, Optional[float]] = {}
+    for row in rows:
+        if row.row_confidence is None:
+            result[row.row_id] = None
+        else:
+            result[row.row_id] = round(float(row.row_confidence), 6)
+    return result
 
 
 @app.on_event("startup")
@@ -2509,12 +2713,33 @@ def ensure_user_service_credentials_schema():
 
 
 @app.on_event("startup")
+def ensure_table_rows_schema():
+    inspector = inspect(engine)
+    if "table_rows" not in inspector.get_table_names():
+        return
+    existing_columns = {col["name"] for col in inspector.get_columns("table_rows")}
+    if "reconciliation_score" not in existing_columns:
+        with engine.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE table_rows ADD COLUMN IF NOT EXISTS reconciliation_score DOUBLE PRECISION")
+            )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_rows_table_reconciliation_score "
+                "ON table_rows (table_id, reconciliation_score)"
+            )
+        )
+
+
+@app.on_event("startup")
 def ensure_reconciliation_cells_schema():
     inspector = inspect(engine)
     if "reconciliation_cells" not in inspector.get_table_names():
         return
     existing_columns = {col["name"] for col in inspector.get_columns("reconciliation_cells")}
     columns_to_add = {
+        "score": "DOUBLE PRECISION",
         "candidate_ranking": "JSONB",
         "explanation": "TEXT"
     }
@@ -2524,6 +2749,62 @@ def ensure_reconciliation_cells_schema():
                 conn.execute(
                     text(f"ALTER TABLE reconciliation_cells ADD COLUMN IF NOT EXISTS {column} {ddl}")
                 )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_reconciliation_cells_table_provider_row "
+                "ON reconciliation_cells (table_id, provider, row_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_reconciliation_cells_table_provider_col_row "
+                "ON reconciliation_cells (table_id, provider, col_idx, row_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_reconciliation_cells_table_provider_col_score "
+                "ON reconciliation_cells (table_id, provider, col_idx, score)"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE reconciliation_cells "
+                "SET score = COALESCE("
+                "NULLIF(candidate_ranking->0->>'confidence_score', '')::double precision, "
+                "NULLIF(candidate_ranking->0->>'score', '')::double precision, "
+                "NULLIF(final->>'confidence_score', '')::double precision, "
+                "NULLIF(final->>'score', '')::double precision, "
+                "0.0"
+                ") "
+                "WHERE score IS NULL"
+            )
+        )
+
+
+@app.on_event("startup")
+def backfill_row_reconciliation_scores():
+    db = SessionLocal()
+    try:
+        table_ids = [
+            row[0]
+            for row in (
+                db.query(ReconciliationCellDB.table_id)
+                .filter(ReconciliationCellDB.score.isnot(None))
+                .distinct()
+                .all()
+            )
+            if row and row[0] is not None
+        ]
+        for table_id in table_ids:
+            table = db.query(TableDB).filter(TableDB.id == table_id).first()
+            if not table:
+                continue
+            recompute_row_reconciliation_scores(db, table)
+        db.commit()
+    finally:
+        db.close()
 
 
 @app.on_event("startup")
@@ -3047,10 +3328,9 @@ def get_table_data(
     exclude_types: Optional[List[str]] = Query(None),
     include_ne_types: Optional[List[str]] = Query(None),
     exclude_ne_types: Optional[List[str]] = Query(None),
-    reconciliation_min_score: Optional[float] = Query(None, ge=0.0, le=1.0),
-    reconciliation_max_score: Optional[float] = Query(None, ge=0.0, le=1.0),
     sort_by: Optional[str] = None,
     sort_direction: Optional[str] = None,
+    sort_confidence_column: Optional[int] = Query(None, ge=0),
     next_cursor: Optional[str] = Query(None),
     prev_cursor: Optional[str] = Query(None),
     reconciliation_provider: Optional[str] = Query(None),
@@ -3064,19 +3344,39 @@ def get_table_data(
     if provider_filter:
         provider_filter = normalize_reconciliation_provider(provider_filter)
 
-    if (
-        reconciliation_min_score is not None and
-        reconciliation_max_score is not None and
-        reconciliation_min_score > reconciliation_max_score
-    ):
-        raise HTTPException(status_code=400, detail="Minimum score cannot be greater than maximum score.")
-
     excluded_types: Set[str] = set()
     for entry in (table.column_types or {}).values():
         for type_entry in entry.get("types", []) if isinstance(entry, dict) else []:
             type_id = type_entry.get("id")
             if type_id:
                 excluded_types.add(type_id)
+    ne_columns = get_ne_column_indices(table)
+
+    def resolve_score_scope(
+        mode_raw: Optional[str],
+        column_raw: Optional[int],
+        require_column: bool = False
+    ) -> tuple:
+        mode_value = (normalize_optional_value(mode_raw) or "score_avg").lower()
+        if mode_value not in {"score", "score_avg"}:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported score mode. Use 'score' or 'score_avg'."
+            )
+        if mode_value == "score":
+            if column_raw is None:
+                if require_column:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="A score column must be provided for score mode."
+                    )
+                return None, None
+            if column_raw < 0 or column_raw >= len(table.header or []):
+                raise HTTPException(status_code=400, detail="Score column index is out of range.")
+            if column_raw not in ne_columns:
+                raise HTTPException(status_code=400, detail="Score column must point to an NE column.")
+            return column_raw, None
+        return None, ne_columns
 
     query = db.query(RowDB).filter(RowDB.table_id == table.id)
 
@@ -3119,24 +3419,14 @@ def get_table_data(
     exclude_ne_filtered = [value for value in (exclude_ne_types or []) if normalize_optional_value(value)]
     include_ne_conditions = build_reconciliation_type_conditions(include_ne_filtered)
     exclude_ne_conditions = build_reconciliation_type_conditions(exclude_ne_filtered)
-    apply_reconciliation_score_filter = (
-        reconciliation_min_score is not None or
-        reconciliation_max_score is not None
-    )
-    score_expr = build_reconciliation_score_expression()
 
-    if apply_reconciliation_score_filter or include_ne_conditions:
+    if include_ne_conditions:
         include_rows_query = db.query(ReconciliationCellDB.row_id).filter(
             ReconciliationCellDB.table_id == table.id
         )
         if provider_filter:
             include_rows_query = include_rows_query.filter(ReconciliationCellDB.provider == provider_filter)
-        if reconciliation_min_score is not None:
-            include_rows_query = include_rows_query.filter(score_expr >= reconciliation_min_score)
-        if reconciliation_max_score is not None:
-            include_rows_query = include_rows_query.filter(score_expr <= reconciliation_max_score)
-        if include_ne_conditions:
-            include_rows_query = include_rows_query.filter(or_(*include_ne_conditions))
+        include_rows_query = include_rows_query.filter(or_(*include_ne_conditions))
         include_rows_subq = include_rows_query.distinct().subquery()
         query = query.filter(RowDB.id_row.in_(select(include_rows_subq.c.row_id)))
 
@@ -3146,10 +3436,6 @@ def get_table_data(
         )
         if provider_filter:
             exclude_rows_query = exclude_rows_query.filter(ReconciliationCellDB.provider == provider_filter)
-        if reconciliation_min_score is not None:
-            exclude_rows_query = exclude_rows_query.filter(score_expr >= reconciliation_min_score)
-        if reconciliation_max_score is not None:
-            exclude_rows_query = exclude_rows_query.filter(score_expr <= reconciliation_max_score)
         exclude_rows_query = exclude_rows_query.filter(or_(*exclude_ne_conditions))
         exclude_rows_subq = exclude_rows_query.distinct().subquery()
         query = query.filter(~RowDB.id_row.in_(select(exclude_rows_subq.c.row_id)))
@@ -3166,9 +3452,36 @@ def get_table_data(
     resolved_direction = (sort_direction or "").lower()
     sort_desc = resolved_direction == "desc"
 
-    if resolved_sort_by == "score":
-        sort_column = RowDB.row_score.desc() if sort_desc else RowDB.row_score.asc()
-        query = query.order_by(nulls_last(sort_column), RowDB.id_row.asc())
+    if resolved_sort_by in {"score", "score_avg", "link_score", "reconciliation_score"}:
+        sort_conf_col = None
+        sort_conf_ne_cols = None
+        if resolved_sort_by == "score":
+            sort_conf_col, sort_conf_ne_cols = resolve_score_scope(
+                "score",
+                sort_confidence_column,
+                require_column=True
+            )
+        else:
+            sort_conf_col, sort_conf_ne_cols = resolve_score_scope("score_avg", None)
+
+        if sort_conf_col is None and not sort_conf_ne_cols:
+            query = query.order_by(RowDB.id_row.asc())
+        else:
+            row_score_subq = build_reconciliation_row_score_subquery(
+                db,
+                table.id,
+                provider_filter,
+                col_idx=sort_conf_col,
+                ne_columns=sort_conf_ne_cols
+            )
+            link_score = func.coalesce(row_score_subq.c.link_score, literal(0.0))
+            sort_column = (
+                link_score.desc()
+                if sort_desc
+                else link_score.asc()
+            )
+            query = query.outerjoin(row_score_subq, RowDB.id_row == row_score_subq.c.row_id)
+            query = query.order_by(sort_column, RowDB.id_row.asc())
     elif resolved_sort_by == "id":
         sort_column = RowDB.id_row.desc() if sort_desc else RowDB.id_row.asc()
         query = query.order_by(sort_column)
@@ -3182,8 +3495,22 @@ def get_table_data(
     )
 
     pagination = build_pagination(resolved_page, per_page, total_matches)
-    serialized_rows = [serialize_row(row) for row in rows]
     row_ids = [row.id_row for row in rows]
+    row_confidence_map = build_reconciliation_row_confidence_map(
+        db,
+        table.id,
+        row_ids,
+        provider_filter,
+        ne_columns=ne_columns
+    )
+    serialized_rows = []
+    for row in rows:
+        payload = serialize_row(row)
+        payload["reconciliation_score"] = row_confidence_map.get(
+            row.id_row,
+            payload.get("reconciliation_score")
+        )
+        serialized_rows.append(payload)
     reconciliation_map: Dict[int, Dict[int, Any]] = {}
     if row_ids:
         recon_query = (
@@ -3210,6 +3537,7 @@ def get_table_data(
                 "cell_id": cell.cell_id,
                 "mention": cell.mention,
                 "final": cell.final or {},
+                "score": cell.score,
                 "candidate_ranking": top_candidates,
                 "explanation": cell.explanation,
                 "updated_at": cell.updated_at.isoformat() if cell.updated_at else None
@@ -3248,8 +3576,9 @@ def get_table_data(
                 "filters": {
                     "include_ne_types": include_ne_filtered,
                     "exclude_ne_types": exclude_ne_filtered,
-                    "min_score": reconciliation_min_score,
-                    "max_score": reconciliation_max_score
+                    "score_mode": "score" if resolved_sort_by == "score" else "score_avg",
+                    "score_column": sort_confidence_column if resolved_sort_by == "score" else None,
+                    "sort_confidence_column": sort_confidence_column
                 },
                 "cells": reconciliation_map
             }
@@ -4041,6 +4370,7 @@ def get_reconciliation_candidates(
         "col": col,
         "cell_id": cell.cell_id,
         "mention": cell.mention,
+        "score": cell.score,
         "candidate_ranking": (cell.candidate_ranking or [])[:5],
         "explanation": cell.explanation,
         "provider": cell.provider
@@ -4098,7 +4428,9 @@ def update_reconciliation_cell(
         db.add(cell)
 
     cell.final = payload.final or {}
+    cell.score = extract_reconciliation_cell_score(cell.candidate_ranking, cell.final)
     cell.updated_at = datetime.utcnow()
+    recompute_row_reconciliation_scores(db, table, provider=provider, row_ids=[row_idx])
     mark_reconciliation_column_types_stale(db, table.id)
     db.commit()
 
@@ -4106,5 +4438,6 @@ def update_reconciliation_cell(
         "row": row_idx,
         "col": col_idx,
         "provider": provider,
+        "score": cell.score,
         "final": cell.final
     }

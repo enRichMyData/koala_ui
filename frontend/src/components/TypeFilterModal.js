@@ -41,21 +41,47 @@ const TypeFilterModal = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredTypes, setFilteredTypes] = useState(availableTypes);
 
+  const sanitizeTypes = (types = []) => {
+    const seen = new Set();
+    return types
+      .map((type) => {
+        const id = String(type?.id ?? '').trim();
+        const name = String(type?.name ?? id).trim();
+        return { ...type, id, name };
+      })
+      .filter((type) => {
+        if (!type.id) return false;
+        const lowered = type.id.toLowerCase();
+        if (['none', 'null', 'undefined'].includes(lowered)) return false;
+        if (seen.has(lowered)) return false;
+        seen.add(lowered);
+        return true;
+      });
+  };
+
   useEffect(() => {
-    setFilteredTypes(availableTypes);
+    setFilteredTypes(sanitizeTypes(availableTypes));
   }, [availableTypes]);
 
   useEffect(() => {
+    const normalizedTypes = sanitizeTypes(availableTypes);
     if (searchTerm.trim()) {
-      const filtered = availableTypes.filter(type => 
+      const filtered = normalizedTypes.filter(type => 
         type.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         type.id.toLowerCase().includes(searchTerm.toLowerCase())
       );
       setFilteredTypes(filtered);
     } else {
-      setFilteredTypes(availableTypes);
+      setFilteredTypes(normalizedTypes);
     }
   }, [searchTerm, availableTypes]);
+
+  useEffect(() => {
+    const allowedIds = new Set(sanitizeTypes(availableTypes).map((type) => type.id.toLowerCase()));
+    setSelectedTypes((prev) =>
+      prev.filter((type) => allowedIds.has(String(type?.id ?? '').trim().toLowerCase()))
+    );
+  }, [availableTypes]);
 
   const handleFilterModeChange = (e) => {
     setFilterMode(e.target.value);
@@ -72,7 +98,9 @@ const TypeFilterModal = ({
   };
 
   const handleApplyFilter = () => {
-    const typeIds = selectedTypes.map(type => type.id);
+    const typeIds = selectedTypes
+      .map(type => String(type?.id ?? '').trim())
+      .filter((id) => id && !['none', 'null', 'undefined'].includes(id.toLowerCase()));
     if (filterMode === 'include') {
       onApplyFilter({
         includeTypes: typeIds,

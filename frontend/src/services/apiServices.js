@@ -196,6 +196,9 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
     sort_by: options.sortBy,
     sort_direction: options.sortDirection
   };
+  if (options.sortConfidenceColumn !== undefined && options.sortConfidenceColumn !== null && options.sortConfidenceColumn !== '') {
+    params.sort_confidence_column = options.sortConfidenceColumn;
+  }
 
   if (options.nextCursor) {
     params.next_cursor = options.nextCursor;
@@ -216,12 +219,6 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
   }
   if (options.excludeNeTypes?.length) {
     params.exclude_ne_types = options.excludeNeTypes;
-  }
-  if (options.reconciliationMinScore !== undefined && options.reconciliationMinScore !== null && options.reconciliationMinScore !== '') {
-    params.reconciliation_min_score = options.reconciliationMinScore;
-  }
-  if (options.reconciliationMaxScore !== undefined && options.reconciliationMaxScore !== null && options.reconciliationMaxScore !== '') {
-    params.reconciliation_max_score = options.reconciliationMaxScore;
   }
   if (options.reconciliationProvider) {
     params.reconciliation_provider = options.reconciliationProvider;

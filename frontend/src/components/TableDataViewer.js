@@ -220,17 +220,12 @@ const TableDataViewer = () => {
     includeTypes: [],
     excludeTypes: [],
     includeNeTypes: [],
-    excludeNeTypes: [],
-    reconciliationMinScore: '',
-    reconciliationMaxScore: ''
-  });
-  const [reconciliationScoreDraft, setReconciliationScoreDraft] = useState({
-    min: '',
-    max: ''
+    excludeNeTypes: []
   });
   const [sortParams, setSortParams] = useState({
-    sortBy: null,
-    sortDirection: 'desc'
+    sortBy: 'score_avg',
+    sortDirection: 'desc',
+    sortConfidenceColumn: null
   });
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
   const [columnEditorOpen, setColumnEditorOpen] = useState(false);
@@ -307,11 +302,10 @@ const TableDataViewer = () => {
         excludeTypes: activeFilters.excludeTypes?.length > 0 ? activeFilters.excludeTypes : undefined,
         includeNeTypes: activeFilters.includeNeTypes?.length > 0 ? activeFilters.includeNeTypes : undefined,
         excludeNeTypes: activeFilters.excludeNeTypes?.length > 0 ? activeFilters.excludeNeTypes : undefined,
-        reconciliationMinScore: activeFilters.reconciliationMinScore !== '' ? activeFilters.reconciliationMinScore : undefined,
-        reconciliationMaxScore: activeFilters.reconciliationMaxScore !== '' ? activeFilters.reconciliationMaxScore : undefined,
         reconciliationProvider: reconcileProvider || undefined,
         sortBy: sortParams.sortBy || undefined,
-        sortDirection: sortParams.sortDirection || undefined
+        sortDirection: sortParams.sortDirection || undefined,
+        sortConfidenceColumn: sortParams.sortConfidenceColumn !== null ? sortParams.sortConfidenceColumn : undefined
       });
       if (response.data) {
         setData(response.data);
@@ -367,13 +361,6 @@ const TableDataViewer = () => {
       setReconcileColumns(data.header.map((_, idx) => idx));
     }
   }, [data?.header]);
-
-  useEffect(() => {
-    setReconciliationScoreDraft({
-      min: activeFilters.reconciliationMinScore === '' ? '' : String(activeFilters.reconciliationMinScore),
-      max: activeFilters.reconciliationMaxScore === '' ? '' : String(activeFilters.reconciliationMaxScore)
-    });
-  }, [activeFilters.reconciliationMinScore, activeFilters.reconciliationMaxScore]);
 
   useEffect(() => {
     setSelectedRows(new Set());
@@ -593,48 +580,13 @@ const TableDataViewer = () => {
       includeTypes: [],
       excludeTypes: [],
       includeNeTypes: [],
-      excludeNeTypes: [],
-      reconciliationMinScore: '',
-      reconciliationMaxScore: ''
+      excludeNeTypes: []
     });
-    setReconciliationScoreDraft({ min: '', max: '' });
     setSortParams({
-      sortBy: null,
-      sortDirection: 'desc'
+      sortBy: 'score_avg',
+      sortDirection: 'desc',
+      sortConfidenceColumn: null
     });
-    setCurrentPage(1);
-  };
-
-  const handleApplyReconciliationScoreFilter = () => {
-    const minValue = reconciliationScoreDraft.min === '' ? '' : Number(reconciliationScoreDraft.min);
-    const maxValue = reconciliationScoreDraft.max === '' ? '' : Number(reconciliationScoreDraft.max);
-    if (minValue !== '' && Number.isNaN(minValue)) {
-      setReconcileStatus('Minimum score must be a valid number.');
-      return;
-    }
-    if (maxValue !== '' && Number.isNaN(maxValue)) {
-      setReconcileStatus('Maximum score must be a valid number.');
-      return;
-    }
-    if (minValue !== '' && maxValue !== '' && minValue > maxValue) {
-      setReconcileStatus('Minimum score cannot be greater than maximum score.');
-      return;
-    }
-    setActiveFilters(prev => ({
-      ...prev,
-      reconciliationMinScore: minValue === '' ? '' : Math.max(0, Math.min(1, minValue)),
-      reconciliationMaxScore: maxValue === '' ? '' : Math.max(0, Math.min(1, maxValue))
-    }));
-    setCurrentPage(1);
-  };
-
-  const handleClearReconciliationScoreFilter = () => {
-    setReconciliationScoreDraft({ min: '', max: '' });
-    setActiveFilters(prev => ({
-      ...prev,
-      reconciliationMinScore: '',
-      reconciliationMaxScore: ''
-    }));
     setCurrentPage(1);
   };
 
@@ -922,7 +874,26 @@ const TableDataViewer = () => {
   }, [reconcileColumnTypesStatus, fetchReconciliationColumnTypes]);
 
   const availableTypes = useMemo(() => {
-    return data?.reconciliation?.type_summary || [];
+    const raw = data?.reconciliation?.type_summary || [];
+    const seen = new Set();
+    return raw
+      .map((entry) => {
+        const id = String(entry?.id ?? '').trim();
+        const name = String(entry?.name ?? id).trim();
+        return {
+          ...entry,
+          id,
+          name
+        };
+      })
+      .filter((entry) => {
+        if (!entry.id) return false;
+        const lowered = entry.id.toLowerCase();
+        if (['none', 'null', 'undefined'].includes(lowered)) return false;
+        if (seen.has(lowered)) return false;
+        seen.add(lowered);
+        return true;
+      });
   }, [data]);
 
   const reconciliationCells = useMemo(() => {
@@ -1167,9 +1138,9 @@ const TableDataViewer = () => {
     activeFilters.excludeTypes?.length > 0 ||
     activeFilters.includeNeTypes?.length > 0 ||
     activeFilters.excludeNeTypes?.length > 0 ||
-    activeFilters.reconciliationMinScore !== '' ||
-    activeFilters.reconciliationMaxScore !== '' ||
-    sortParams.sortBy;
+    sortParams.sortBy !== 'score_avg' ||
+    (sortParams.sortDirection && sortParams.sortDirection !== 'desc') ||
+    sortParams.sortConfidenceColumn !== null;
 
   if (loading && !data) {
     return <CircularProgress />;
@@ -1191,7 +1162,7 @@ const TableDataViewer = () => {
     );
   }
 
-  if (!data || !data.rows || data.rows.length === 0) {
+  if (!data || !Array.isArray(data.rows)) {
     return (
       <Card sx={{ m: 2, textAlign: 'center', p: 4 }}>
         <Typography variant="h6" color="text.secondary">
@@ -1785,59 +1756,14 @@ const TableDataViewer = () => {
             </AccordionSummary>
             <AccordionDetails sx={{ px: 1.5, py: 1 }}>
               <TableSortControls
-                scoreColumnName={data?.score_column_name}
+                headers={data?.header || []}
+                columnTypes={columnTypes}
+                hasReconciliationScores={reconciliationScoreRange?.max !== null && reconciliationScoreRange?.max !== undefined}
                 onSort={handleSortChange}
                 currentSortParams={sortParams}
                 hasActiveFilters={hasActiveFilters}
                 onClearFilters={handleClearFilters}
               />
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                <TextField
-                  size="small"
-                  type="number"
-                  label="Min link score"
-                  value={reconciliationScoreDraft.min}
-                  inputProps={{ min: 0, max: 1, step: 0.01 }}
-                  onChange={(event) => setReconciliationScoreDraft(prev => ({
-                    ...prev,
-                    min: event.target.value
-                  }))}
-                  sx={{ width: 132 }}
-                />
-                <TextField
-                  size="small"
-                  type="number"
-                  label="Max link score"
-                  value={reconciliationScoreDraft.max}
-                  inputProps={{ min: 0, max: 1, step: 0.01 }}
-                  onChange={(event) => setReconciliationScoreDraft(prev => ({
-                    ...prev,
-                    max: event.target.value
-                  }))}
-                  sx={{ width: 132 }}
-                />
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={handleApplyReconciliationScoreFilter}
-                  sx={compactPanelButtonSx}
-                >
-                  Apply score
-                </Button>
-                <Button
-                  size="small"
-                  onClick={handleClearReconciliationScoreFilter}
-                  sx={compactPanelButtonSx}
-                  disabled={activeFilters.reconciliationMinScore === '' && activeFilters.reconciliationMaxScore === ''}
-                >
-                  Clear score
-                </Button>
-                {(reconciliationScoreRange?.min !== null || reconciliationScoreRange?.max !== null) && (
-                  <Typography variant="caption" color="text.secondary">
-                    Available score range: {reconciliationScoreRange?.min ?? '-'} to {reconciliationScoreRange?.max ?? '-'}
-                  </Typography>
-                )}
-              </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                 <Button
                   variant="outlined"
@@ -2177,8 +2103,8 @@ const TableDataViewer = () => {
                       {showRowIndex && (
                         <TableCell
                           sx={{
-                            minWidth: 60,
-                            maxWidth: 80,
+                            minWidth: 72,
+                            maxWidth: 104,
                             verticalAlign: 'top',
                             padding: '10px 12px',
                             textAlign: 'center',
@@ -2186,20 +2112,38 @@ const TableDataViewer = () => {
                           }}
                         >
                           {showRowSelection ? (
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
-                              <Checkbox
-                                size="small"
-                                checked={selectedRows.has(row.idRow)}
-                                onChange={() => toggleRowSelection(row.idRow)}
-                              />
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                                <Checkbox
+                                  size="small"
+                                  checked={selectedRows.has(row.idRow)}
+                                  onChange={() => toggleRowSelection(row.idRow)}
+                                />
+                                <Typography variant="caption" color="text.secondary">
+                                  {row.idRow}
+                                </Typography>
+                              </Box>
+                              {typeof row.reconciliation_score === 'number' && (
+                                <Tooltip title="Row confidence (average across linked NE cells)" arrow>
+                                  <Typography variant="caption" sx={{ fontSize: '0.62rem', color: '#4b5b6b' }}>
+                                    {Math.round(row.reconciliation_score * 100)}%
+                                  </Typography>
+                                </Tooltip>
+                              )}
+                            </Box>
+                          ) : (
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
                               <Typography variant="caption" color="text.secondary">
                                 {row.idRow}
                               </Typography>
+                              {typeof row.reconciliation_score === 'number' && (
+                                <Tooltip title="Row confidence (average across linked NE cells)" arrow>
+                                  <Typography variant="caption" sx={{ fontSize: '0.62rem', color: '#4b5b6b' }}>
+                                    {Math.round(row.reconciliation_score * 100)}%
+                                  </Typography>
+                                </Tooltip>
+                              )}
                             </Box>
-                          ) : (
-                            <Typography variant="caption" color="text.secondary">
-                              {row.idRow}
-                            </Typography>
                           )}
                         </TableCell>
                       )}
@@ -2310,9 +2254,16 @@ const TableDataViewer = () => {
                       {loading ? (
                         <CircularProgress size={32} />
                       ) : (
-                        <Typography variant="body1" color="text.secondary">
-                          No rows found{hasActiveFilters ? ' matching the current filters' : ''}
-                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                          <Typography variant="body1" color="text.secondary">
+                            No rows found{hasActiveFilters ? ' matching the current filters' : ''}
+                          </Typography>
+                          {hasActiveFilters && (
+                            <Button size="small" onClick={handleClearFilters}>
+                              Clear filters
+                            </Button>
+                          )}
+                        </Box>
                       )}
                     </TableCell>
                   </TableRow>
