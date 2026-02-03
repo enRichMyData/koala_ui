@@ -22,6 +22,7 @@ from sqlalchemy import (
     cast,
     inspect,
     text,
+    select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, REGCONFIG
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
@@ -2298,6 +2299,136 @@ def build_column_type_summary_from_counts(
     return summary
 
 
+def build_reconciliation_score_expression():
+    confidence_text = func.nullif(ReconciliationCellDB.final["confidence_score"].astext, "")
+    score_text = func.nullif(ReconciliationCellDB.final["score"].astext, "")
+    return func.coalesce(
+        cast(confidence_text, Float),
+        cast(score_text, Float)
+    )
+
+
+def build_reconciliation_type_conditions(type_values: List[str]) -> List[Any]:
+    conditions: List[Any] = []
+    seen: Set[str] = set()
+    for raw_value in type_values:
+        value = normalize_optional_value(raw_value)
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        conditions.append(
+            or_(
+                ReconciliationCellDB.final.contains({"types": [{"id": value}]}),
+                ReconciliationCellDB.final.contains({"types": [{"name": value}]}),
+                ReconciliationCellDB.final.contains({"types": [value]})
+            )
+        )
+    return conditions
+
+
+def extract_reconciliation_types(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    items: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+    for entry in value:
+        type_id = None
+        type_name = None
+        if isinstance(entry, dict):
+            type_id = (
+                normalize_optional_value(entry.get("id")) or
+                normalize_optional_value(entry.get("entity_id")) or
+                normalize_optional_value(entry.get("name")) or
+                normalize_optional_value(entry.get("label"))
+            )
+            type_name = (
+                normalize_optional_value(entry.get("name")) or
+                normalize_optional_value(entry.get("label")) or
+                type_id
+            )
+        elif isinstance(entry, str):
+            clean = normalize_optional_value(entry)
+            type_id = clean
+            type_name = clean
+
+        if not type_id:
+            continue
+        dedupe_key = type_id.strip().lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        items.append({
+            "id": type_id,
+            "name": type_name or type_id
+        })
+    return items
+
+
+def build_reconciliation_type_summary(
+    db: Session,
+    table_id: int,
+    provider: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    query = db.query(ReconciliationCellDB.final).filter(ReconciliationCellDB.table_id == table_id)
+    if provider:
+        query = query.filter(ReconciliationCellDB.provider == provider)
+    rows = query.all()
+
+    counts: Dict[str, Dict[str, Any]] = {}
+    typed_cells = 0
+    for (final_value,) in rows:
+        final_payload = final_value if isinstance(final_value, dict) else {}
+        types = extract_reconciliation_types(final_payload.get("types"))
+        if not types:
+            continue
+        typed_cells += 1
+        for item in types:
+            type_id = item["id"]
+            entry = counts.setdefault(type_id, {
+                "id": type_id,
+                "name": item["name"],
+                "count": 0
+            })
+            entry["count"] += 1
+
+    if typed_cells == 0:
+        return []
+
+    summary: List[Dict[str, Any]] = []
+    for entry in counts.values():
+        frequency = entry["count"] / typed_cells
+        summary.append({
+            "id": entry["id"],
+            "name": entry["name"],
+            "count": entry["count"],
+            "frequency": round(frequency, 6),
+            "description": f"Appears in {entry['count']} linked cell(s)."
+        })
+    summary.sort(key=lambda item: (item.get("count", 0), item.get("frequency", 0), item.get("name", "")), reverse=True)
+    return summary
+
+
+def build_reconciliation_score_range(
+    db: Session,
+    table_id: int,
+    provider: Optional[str] = None
+) -> Dict[str, Optional[float]]:
+    score_expr = build_reconciliation_score_expression()
+    query = db.query(
+        func.min(score_expr).label("min_score"),
+        func.max(score_expr).label("max_score")
+    ).filter(ReconciliationCellDB.table_id == table_id)
+    if provider:
+        query = query.filter(ReconciliationCellDB.provider == provider)
+    result = query.one_or_none()
+    min_score = float(result.min_score) if result and result.min_score is not None else None
+    max_score = float(result.max_score) if result and result.max_score is not None else None
+    return {
+        "min": round(min_score, 6) if min_score is not None else None,
+        "max": round(max_score, 6) if max_score is not None else None
+    }
+
+
 @app.on_event("startup")
 def create_tables():
     Base.metadata.create_all(bind=engine)
@@ -2914,6 +3045,10 @@ def get_table_data(
     search_columns: Optional[List[int]] = Query(None),
     include_types: Optional[List[str]] = Query(None),
     exclude_types: Optional[List[str]] = Query(None),
+    include_ne_types: Optional[List[str]] = Query(None),
+    exclude_ne_types: Optional[List[str]] = Query(None),
+    reconciliation_min_score: Optional[float] = Query(None, ge=0.0, le=1.0),
+    reconciliation_max_score: Optional[float] = Query(None, ge=0.0, le=1.0),
     sort_by: Optional[str] = None,
     sort_direction: Optional[str] = None,
     next_cursor: Optional[str] = Query(None),
@@ -2925,6 +3060,16 @@ def get_table_data(
     table = get_table_or_404(dataset_name, table_name, current_user["email"], db)
     resolved_page = resolve_page(page, next_cursor, prev_cursor)
     per_page = min(100, max(1, per_page))
+    provider_filter = normalize_optional_value(reconciliation_provider)
+    if provider_filter:
+        provider_filter = normalize_reconciliation_provider(provider_filter)
+
+    if (
+        reconciliation_min_score is not None and
+        reconciliation_max_score is not None and
+        reconciliation_min_score > reconciliation_max_score
+    ):
+        raise HTTPException(status_code=400, detail="Minimum score cannot be greater than maximum score.")
 
     excluded_types: Set[str] = set()
     for entry in (table.column_types or {}).values():
@@ -2970,11 +3115,52 @@ def get_table_data(
         if exclude_filtered:
             query = query.filter(~RowDB.row_types.overlap(exclude_filtered))
 
+    include_ne_filtered = [value for value in (include_ne_types or []) if normalize_optional_value(value)]
+    exclude_ne_filtered = [value for value in (exclude_ne_types or []) if normalize_optional_value(value)]
+    include_ne_conditions = build_reconciliation_type_conditions(include_ne_filtered)
+    exclude_ne_conditions = build_reconciliation_type_conditions(exclude_ne_filtered)
+    apply_reconciliation_score_filter = (
+        reconciliation_min_score is not None or
+        reconciliation_max_score is not None
+    )
+    score_expr = build_reconciliation_score_expression()
+
+    if apply_reconciliation_score_filter or include_ne_conditions:
+        include_rows_query = db.query(ReconciliationCellDB.row_id).filter(
+            ReconciliationCellDB.table_id == table.id
+        )
+        if provider_filter:
+            include_rows_query = include_rows_query.filter(ReconciliationCellDB.provider == provider_filter)
+        if reconciliation_min_score is not None:
+            include_rows_query = include_rows_query.filter(score_expr >= reconciliation_min_score)
+        if reconciliation_max_score is not None:
+            include_rows_query = include_rows_query.filter(score_expr <= reconciliation_max_score)
+        if include_ne_conditions:
+            include_rows_query = include_rows_query.filter(or_(*include_ne_conditions))
+        include_rows_subq = include_rows_query.distinct().subquery()
+        query = query.filter(RowDB.id_row.in_(select(include_rows_subq.c.row_id)))
+
+    if exclude_ne_conditions:
+        exclude_rows_query = db.query(ReconciliationCellDB.row_id).filter(
+            ReconciliationCellDB.table_id == table.id
+        )
+        if provider_filter:
+            exclude_rows_query = exclude_rows_query.filter(ReconciliationCellDB.provider == provider_filter)
+        if reconciliation_min_score is not None:
+            exclude_rows_query = exclude_rows_query.filter(score_expr >= reconciliation_min_score)
+        if reconciliation_max_score is not None:
+            exclude_rows_query = exclude_rows_query.filter(score_expr <= reconciliation_max_score)
+        exclude_rows_query = exclude_rows_query.filter(or_(*exclude_ne_conditions))
+        exclude_rows_subq = exclude_rows_query.distinct().subquery()
+        query = query.filter(~RowDB.id_row.in_(select(exclude_rows_subq.c.row_id)))
+
     total_matches = query.count()
     total_rows = table.total_rows or (
         db.query(func.count(RowDB.id)).filter(RowDB.table_id == table.id).scalar() or 0
     )
     row_type_summary = build_row_type_summary(db, table.id, total_rows, excluded_types)
+    reconciliation_type_summary = build_reconciliation_type_summary(db, table.id, provider_filter)
+    reconciliation_score_range = build_reconciliation_score_range(db, table.id, provider_filter)
 
     resolved_sort_by = (sort_by or "").lower()
     resolved_direction = (sort_direction or "").lower()
@@ -2999,9 +3185,6 @@ def get_table_data(
     serialized_rows = [serialize_row(row) for row in rows]
     row_ids = [row.id_row for row in rows]
     reconciliation_map: Dict[int, Dict[int, Any]] = {}
-    provider_filter = normalize_optional_value(reconciliation_provider)
-    if provider_filter:
-        provider_filter = normalize_reconciliation_provider(provider_filter)
     if row_ids:
         recon_query = (
             db.query(ReconciliationCellDB)
@@ -3060,6 +3243,14 @@ def get_table_data(
             "row_type_summary": row_type_summary,
             "reconciliation": {
                 "provider": provider_filter or "all",
+                "type_summary": reconciliation_type_summary,
+                "score_range": reconciliation_score_range,
+                "filters": {
+                    "include_ne_types": include_ne_filtered,
+                    "exclude_ne_types": exclude_ne_filtered,
+                    "min_score": reconciliation_min_score,
+                    "max_score": reconciliation_max_score
+                },
                 "cells": reconciliation_map
             }
         },
