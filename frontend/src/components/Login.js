@@ -34,11 +34,13 @@ function Login({ setLoggedIn }) {
         localStorage.setItem('refresh_token', response.data.refresh_token);
       }
 
+      const resolvedEmail = response.data?.email || email;
+      const resolvedRole = response.data?.role || 'user';
       // Also store user ID - extract from email or use email directly as ID
-      const userId = email.split('@')[0] || 'default_user';
+      const userId = resolvedEmail.split('@')[0] || 'default_user';
       localStorage.setItem('userId', userId);
-      // Persist actual email for display in nav bar
-      localStorage.setItem('userEmail', email);
+      localStorage.setItem('userEmail', resolvedEmail);
+      localStorage.setItem('userRole', resolvedRole);
 
       setLoggedIn(true);
     } catch (error) {

@@ -64,6 +64,12 @@ const refreshAccessToken = async () => {
   if (newRefreshToken) {
     localStorage.setItem('refresh_token', newRefreshToken);
   }
+  if (response.data?.email) {
+    localStorage.setItem('userEmail', response.data.email);
+  }
+  if (response.data?.role) {
+    localStorage.setItem('userRole', response.data.role);
+  }
   return newAccessToken;
 };
 
@@ -105,6 +111,8 @@ backendApiClient.interceptors.response.use(
         refreshQueue = [];
         localStorage.removeItem('token');
         localStorage.removeItem('refresh_token');
+        localStorage.removeItem('userRole');
+        localStorage.removeItem('userEmail');
         return Promise.reject(refreshError);
       }
     }
@@ -320,6 +328,31 @@ const updateReconciliationSettings = async (settings = {}) => {
   return response.data;
 };
 
+const getCurrentUser = async () => {
+  const response = await backendApiClient.get('/users/me');
+  return response.data;
+};
+
+const getAdminUsers = async () => {
+  const response = await backendApiClient.get('/admin/users');
+  return response.data;
+};
+
+const createAdminUser = async (payload = {}) => {
+  const response = await backendApiClient.post('/admin/users', payload);
+  return response.data;
+};
+
+const updateAdminUser = async (email, payload = {}) => {
+  const response = await backendApiClient.put(`/admin/users/${encodeSegment(email)}`, payload);
+  return response.data;
+};
+
+const deleteAdminUser = async (email) => {
+  const response = await backendApiClient.delete(`/admin/users/${encodeSegment(email)}`);
+  return response.data;
+};
+
 const createReconciliationJob = async (datasetName, tableName, payload = {}) => {
   const response = await backendApiClient.post(
     `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile`,
@@ -389,6 +422,11 @@ export {
   updateLlmSettings,
   getReconciliationSettings,
   updateReconciliationSettings,
+  getCurrentUser,
+  getAdminUsers,
+  createAdminUser,
+  updateAdminUser,
+  deleteAdminUser,
   createReconciliationJob,
   getReconciliationStatus,
   triggerReconciliationColumnTypes,

@@ -44,8 +44,10 @@ const NavigationBar = ({ onLogout, profileName }) => {
     
     const handleLogout = () => {
         localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
         localStorage.removeItem('userId');
         localStorage.removeItem('userEmail');
+        localStorage.removeItem('userRole');
         handleCloseUserMenu();
         onLogout();
     };
