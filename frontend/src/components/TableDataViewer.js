@@ -1366,60 +1366,49 @@ const TableDataViewer = () => {
 
   return (
     <Box sx={{ m: { xs: 1, md: 1.5 } }}>
-      <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
-        <Button
-          color="inherit"
-          onClick={() => navigate('/dataset')}
-          sx={{
-            cursor: 'pointer',
-            textTransform: 'none',
-            padding: 0,
-            minWidth: 0,
-            fontSize: 'inherit',
-            fontWeight: 'inherit',
-            color: 'inherit',
-            textDecoration: 'underline',
-            '&:hover': { textDecoration: 'underline' }
-          }}
-        >
-          Datasets
-        </Button>
-        <Link
-          color="inherit"
-          onClick={() => navigate(`/dataset/${encodeURIComponent(datasetName)}`)}
-          sx={{ cursor: 'pointer' }}
-        >
-          {datasetName}
-        </Link>
-        <Typography color="text.primary" noWrap>
-          {tableName}
-        </Typography>
-      </Breadcrumbs>
-
       <Card elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
         <CardHeader
           sx={{
+            pt: 1,
             pb: 0.75,
-            alignItems: 'flex-start',
+            alignItems: 'center',
             bgcolor: '#fbfcff',
             borderBottom: '1px solid #edf1f7',
+            '& .MuiCardHeader-content': {
+              overflow: 'hidden'
+            },
             '& .MuiCardHeader-action': {
-              alignSelf: 'center',
-              mt: 0,
+              alignSelf: 'flex-start',
+              mt: 0.15,
               mr: 0,
               overflow: 'hidden'
             }
           }}
           title={
-            <Typography variant="h5" component="div">
-              {tableName}
-            </Typography>
-          }
-          subheader={
-            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', mt: 1, gap: 1 }}>
-              <Typography variant="subtitle1" color="text.secondary" component="div">
-                Dataset: {datasetName}
-              </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+              <Breadcrumbs aria-label="breadcrumb" separator="›" sx={{ mr: 0.5 }}>
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  onClick={() => navigate('/dataset')}
+                  sx={{ fontSize: '0.86rem' }}
+                >
+                  Datasets
+                </Link>
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  onClick={() => navigate(`/dataset/${encodeURIComponent(datasetName)}`)}
+                  sx={{ fontSize: '0.86rem' }}
+                >
+                  {datasetName}
+                </Link>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                  {tableName}
+                </Typography>
+              </Breadcrumbs>
               <Chip
                 label={data?.status || 'READY'}
                 size="small"
