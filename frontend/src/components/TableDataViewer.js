@@ -215,7 +215,6 @@ const TableDataViewer = () => {
   const [reconcilePanelExpanded, setReconcilePanelExpanded] = useState(false);
   const [tableToolsExpanded, setTableToolsExpanded] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const [searchColumns, setSearchColumns] = useState([]);
   const [activeFilters, setActiveFilters] = useState({
     includeTypes: [],
     excludeTypes: [],
@@ -297,7 +296,6 @@ const TableDataViewer = () => {
       const response = await getTableData(datasetName, tableName, 10, {
         ...options,
         search: searchText || undefined,
-        searchColumns: searchColumns?.length > 0 ? searchColumns : undefined,
         includeTypes: activeFilters.includeTypes?.length > 0 ? activeFilters.includeTypes : undefined,
         excludeTypes: activeFilters.excludeTypes?.length > 0 ? activeFilters.excludeTypes : undefined,
         includeNeTypes: activeFilters.includeNeTypes?.length > 0 ? activeFilters.includeNeTypes : undefined,
@@ -320,7 +318,7 @@ const TableDataViewer = () => {
     } finally {
       setLoading(false);
     }
-  }, [datasetName, tableName, searchText, searchColumns, activeFilters, sortParams, reconcileProvider]);
+  }, [datasetName, tableName, searchText, activeFilters, sortParams, reconcileProvider]);
 
   const fetchReconciliationColumnTypes = useCallback(async () => {
     try {
@@ -551,9 +549,8 @@ const TableDataViewer = () => {
     }
   };
 
-  const handleSearch = (text, columns = []) => {
+  const handleSearch = (text) => {
     setSearchText(text);
-    setSearchColumns(columns);
     setCurrentPage(1);
   };
 
@@ -575,7 +572,6 @@ const TableDataViewer = () => {
 
   const handleClearFilters = () => {
     setSearchText('');
-    setSearchColumns([]);
     setActiveFilters({
       includeTypes: [],
       excludeTypes: [],
@@ -1133,7 +1129,6 @@ const TableDataViewer = () => {
   );
 
   const hasActiveFilters = searchText ||
-    searchColumns?.length > 0 ||
     activeFilters.includeTypes?.length > 0 ||
     activeFilters.excludeTypes?.length > 0 ||
     activeFilters.includeNeTypes?.length > 0 ||
@@ -1719,12 +1714,9 @@ const TableDataViewer = () => {
 
         <CardContent sx={{ p: 2 }}>
           <TableSearch
-            headers={data?.header || []}
             onSearch={handleSearch}
             loading={loading}
-            columnTypes={columnTypes}
             initialSearchText={searchText}
-            initialSearchColumns={searchColumns}
           />
 
           <Accordion

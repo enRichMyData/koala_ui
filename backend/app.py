@@ -3323,7 +3323,6 @@ def get_table_data(
     page: int = 1,
     per_page: int = 10,
     search: Optional[str] = None,
-    search_columns: Optional[List[int]] = Query(None),
     include_types: Optional[List[str]] = Query(None),
     exclude_types: Optional[List[str]] = Query(None),
     include_ne_types: Optional[List[str]] = Query(None),
@@ -3381,28 +3380,10 @@ def get_table_data(
     query = db.query(RowDB).filter(RowDB.table_id == table.id)
 
     if search:
-        target_columns = search_columns if search_columns else []
-        if target_columns:
-            valid_columns = [
-                int(idx)
-                for idx in target_columns
-                if isinstance(idx, int) and 0 <= idx < len(table.header or [])
-            ]
-            if valid_columns:
-                search_filters = []
-                for idx in valid_columns:
-                    search_filters.append(RowDB.data[idx].astext.ilike(f"%{search}%"))
-                query = query.filter(or_(*search_filters))
-            else:
-                search_query = func.plainto_tsquery(cast(literal("simple"), type_=REGCONFIG), search)
-                query = query.filter(
-                    func.to_tsvector(cast(literal("simple"), type_=REGCONFIG), RowDB.search_blob).op("@@")(search_query)
-                )
-        else:
-            search_query = func.plainto_tsquery(cast(literal("simple"), type_=REGCONFIG), search)
-            query = query.filter(
-                func.to_tsvector(cast(literal("simple"), type_=REGCONFIG), RowDB.search_blob).op("@@")(search_query)
-            )
+        search_query = func.plainto_tsquery(cast(literal("simple"), type_=REGCONFIG), search)
+        query = query.filter(
+            func.to_tsvector(cast(literal("simple"), type_=REGCONFIG), RowDB.search_blob).op("@@")(search_query)
+        )
 
     if include_types:
         include_filtered = [t for t in include_types if t not in excluded_types]

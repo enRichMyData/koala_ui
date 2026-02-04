@@ -205,9 +205,6 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
   } else if (options.prevCursor) {
     params.prev_cursor = options.prevCursor;
   }
-  if (options.searchColumns?.length) {
-    params.search_columns = options.searchColumns;
-  }
   if (options.includeTypes?.length) {
     params.include_types = options.includeTypes;
   }
