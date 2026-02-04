@@ -1,156 +1,224 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getTableData, getTableStatus, exportTableCsv } from '../services/apiServices';
 import {
-  Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  CircularProgress, Alert, Tooltip, IconButton, Chip, Card, CardHeader, CardContent,
-  Button, Divider, Skeleton, LinearProgress, Breadcrumbs, Link, Dialog, DialogTitle,
-  DialogContent, DialogActions, FormGroup, FormControlLabel, Checkbox
+  getTableData,
+  exportTableCsv,
+  updateColumnClassification,
+  requestColumnIdentification,
+  getColumnIdentifyStatus,
+  requestDpvAnnotation,
+  getDpvStatus,
+  getLlmSettings,
+  updateLlmSettings,
+  getReconciliationSettings,
+  createReconciliationJob,
+  getReconciliationStatus,
+  triggerReconciliationColumnTypes,
+  getReconciliationColumnTypes,
+  getReconciliationCandidates,
+  updateReconciliationCell
+} from '../services/apiServices';
+import {
+  Box,
+  Typography,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  CircularProgress,
+  Alert,
+  Chip,
+  Card,
+  CardHeader,
+  CardContent,
+  Button,
+  Divider,
+  Breadcrumbs,
+  Link,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Grid,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Tooltip,
+  TextField,
+  Checkbox,
+  FormControlLabel,
+  FormHelperText
 } from '@mui/material';
-import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import BuildIcon from '@mui/icons-material/Build';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
-import ReadMoreIcon from '@mui/icons-material/ReadMore';
-import CompressIcon from '@mui/icons-material/Compress';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import FilterIcon from '@mui/icons-material/FilterList';
-import FileDownloadIcon from '@mui/icons-material/FileDownload';
-import EntityDetailsModal from './EntityDetailsModal';
+import PolicyIcon from '@mui/icons-material/Policy';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import AutoGraphIcon from '@mui/icons-material/AutoGraph';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import TableHeader from './TableHeader';
 import TableSearch from './TableSearch';
 import TableSortControls from './TableSortControls';
 import TypeFilterModal from './TypeFilterModal';
+import { COLUMN_TYPES, LIT_TYPES, NER_TYPES } from '../constants/columnTypes';
 
-// Component for truncating text in cells
-const TruncatedCell = ({ content, maxLength = 100, compact = false }) => {
-  const [expanded, setExpanded] = useState(false);
-  
+const TruncatedCell = ({ content, maxLength = 100 }) => {
   if (!content) return null;
   const text = String(content);
-  
   if (text.length <= maxLength) {
     return <span>{text}</span>;
   }
-
-  if (expanded) {
-    return (
-      <Box sx={{ position: 'relative' }}>
-        <Typography variant={compact ? "caption" : "body2"}>
-          {text}
-          <IconButton 
-            size="small" 
-            onClick={(e) => {
-              e.stopPropagation();
-              setExpanded(false);
-            }}
-            sx={{ ml: 0.5, p: 0.5 }}
-          >
-            <CompressIcon fontSize="small" />
-          </IconButton>
-        </Typography>
-      </Box>
-    );
-  }
-
-  return (
-    <Box sx={{ position: 'relative' }}>
-      <Typography variant={compact ? "caption" : "body2"}>
-        {text.substring(0, maxLength)}...
-        <IconButton 
-          size="small" 
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded(true);
-          }}
-          sx={{ ml: 0.5, p: 0.5 }}
-        >
-          <ReadMoreIcon fontSize="small" />
-        </IconButton>
-      </Typography>
-    </Box>
-  );
+  return <span>{text.substring(0, maxLength)}...</span>;
 };
 
-// Component for cell with entity linking
-const LinkedEntityCell = ({ value, entityData, onClick, compact = false }) => {
-  const getScoreColor = (score) => {
-    if (score === null || score === undefined) return '#e0e0e0'; // gray for missing scores
-    if (score > 0.8) return '#a5d6a7'; // light green
-    if (score >= 0.5) return '#fff59d'; // light yellow
-    return '#ffab91'; // light red
-  };
-
-  const getScoreBorderColor = (score) => {
-    if (score === null || score === undefined) return '#9e9e9e'; // darker gray for missing scores
-    if (score > 0.8) return '#388e3c'; // darker green
-    if (score >= 0.5) return '#fbc02d'; // darker yellow
-    return '#e64a19'; // darker red
-  };
-
-  if (!entityData?.candidates || entityData.candidates.length === 0) {
-    return <TruncatedCell content={value} maxLength={150} compact={compact} />;
-  }
-
-  const topCandidate = entityData.candidates[0];
-  const score = topCandidate.score !== undefined ? topCandidate.score : null;
-  const tooltipContent = `
-    ${topCandidate.name} (${topCandidate.id})
-    ${score !== null ? `Score: ${score.toFixed(2)}` : 'Score: N/A'}
-    ${topCandidate.description || 'No description'}
-    Types: ${topCandidate.types ? topCandidate.types.map(t => t.name).join(', ') : 'N/A'}
-  `;
-
-  return (
-    <Box 
-      onClick={onClick} 
-      sx={{
-        cursor: 'pointer',
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-        padding: compact ? '2px 4px' : '4px 8px',
-        borderRadius: '4px',
-        backgroundColor: getScoreColor(score),
-        border: `1px solid ${getScoreBorderColor(score)}`,
-        transition: 'all 0.2s',
-        '&:hover': {
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-          filter: 'brightness(0.95)'
-        }
-      }}
-    >
-      <Tooltip title={tooltipContent} arrow placement="top">
-        <Box sx={{ width: '100%' }}>
-          <Typography variant={compact ? "caption" : "body2"} sx={{ fontWeight: 'medium' }}>
-            <TruncatedCell content={value} maxLength={100} compact={compact} />
-          </Typography>
-          <Box sx={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            mt: 0.5
-          }}>
-            <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: compact ? '0.65rem' : '0.7rem' }}>
-              {topCandidate.id}
-            </Typography>
-            <Chip
-              label={score !== null ? score.toFixed(2) : 'N/A'}
-              size="small"
-              sx={{ 
-                height: compact ? 16 : 20, 
-                fontSize: compact ? '0.65rem' : '0.7rem',
-                backgroundColor: getScoreBorderColor(score),
-                color: 'white'
-              }}
-            />
-          </Box>
-        </Box>
-      </Tooltip>
-    </Box>
-  );
+const LIT_COARSE_MAP = {
+  'xsd:integer': 'NUMBER',
+  'xsd:decimal': 'NUMBER',
+  'xsd:boolean': 'STRING',
+  'xsd:string': 'STRING',
+  'xsd:date': 'DATETIME',
+  'xsd:datetime': 'DATETIME',
+  'xsd:anyuri': 'STRING',
+  'ext:email': 'STRING',
+  'ext:ipv4': 'STRING',
+  'ext:ipv6': 'STRING',
+  'ext:phone': 'STRING',
+  'ext:uuid': 'STRING',
+  'ext:url': 'STRING',
+  'ext:postalcode': 'STRING',
+  'ext:countrycode': 'STRING',
+  'ext:currencycode': 'STRING',
+  'ext:lat': 'NUMBER',
+  'ext:lon': 'NUMBER',
+  'ext:percentage': 'NUMBER',
+  'ext:duration': 'NUMBER'
 };
 
-const ANNOTATION_FIELDS = ['id', 'name', 'description', 'types', 'score'];
+const getLitCoarseType = (value) => {
+  const raw = value ? String(value).trim() : '';
+  if (!raw) return '';
+  const upper = raw.toUpperCase();
+  if (LIT_TYPES.includes(upper)) {
+    return upper;
+  }
+  if (upper.startsWith('LIT:')) {
+    const litValue = upper.slice(4);
+    if (LIT_TYPES.includes(litValue)) {
+      return litValue;
+    }
+  }
+  const mapped = LIT_COARSE_MAP[raw.toLowerCase()];
+  if (mapped) return mapped;
+  const lower = raw.toLowerCase();
+  if (lower.includes('date') || lower.includes('time')) {
+    return 'DATETIME';
+  }
+  if (
+    lower.includes('int') ||
+    lower.includes('decimal') ||
+    lower.includes('number') ||
+    lower.includes('percent') ||
+    lower.includes('duration') ||
+    lower.includes('lat') ||
+    lower.includes('lon')
+  ) {
+    return 'NUMBER';
+  }
+  return 'STRING';
+};
+
+const getSpecificSubtype = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    return value.type_id || value.specific || value.type || value.subtype || value.value || '';
+  }
+  return String(value);
+};
+
+const getCoarseSubtype = (value) => {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    const coarse = value.coarse_type_id || value.coarse || value.coarse_type || '';
+    return getLitCoarseType(coarse || value.type_id || value.specific || '');
+  }
+  return getLitCoarseType(value);
+};
+
+const buildClassificationState = (headers, classifiedColumns) => {
+  const state = {};
+  headers.forEach((_, idx) => {
+    if (classifiedColumns?.NE?.hasOwnProperty(idx)) {
+      const rawSubtype = getSpecificSubtype(classifiedColumns.NE[idx]);
+      state[idx] = {
+        type: 'NE',
+        subtype: rawSubtype,
+        rawSubtype,
+        derivedSubtype: rawSubtype
+      };
+    } else if (classifiedColumns?.LIT?.hasOwnProperty(idx)) {
+      const rawSubtype = getSpecificSubtype(classifiedColumns.LIT[idx]);
+      const derivedSubtype = getCoarseSubtype(classifiedColumns.LIT[idx]);
+      state[idx] = {
+        type: 'LIT',
+        subtype: derivedSubtype,
+        rawSubtype,
+        derivedSubtype
+      };
+    } else {
+      state[idx] = {
+        type: 'IGNORED',
+        subtype: '',
+        rawSubtype: '',
+        derivedSubtype: ''
+      };
+    }
+  });
+  return state;
+};
+
+const buildColumnClassificationPayload = (classificationState = {}) => {
+  const NE = {};
+  const LIT = {};
+  Object.entries(classificationState).forEach(([idx, entry]) => {
+    const { type, subtype, rawSubtype, derivedSubtype } = entry || {};
+    if (type === 'NE' && subtype) {
+      NE[idx] = subtype;
+    } else if (type === 'LIT' && subtype) {
+      const keepRaw = rawSubtype && derivedSubtype && subtype === derivedSubtype;
+      LIT[idx] = keepRaw ? rawSubtype : subtype;
+    }
+  });
+  const payload = {};
+  if (Object.keys(NE).length) payload.NE = NE;
+  if (Object.keys(LIT).length) payload.LIT = LIT;
+  return payload;
+};
+
+const EXPORT_ENRICHMENT_OPTIONS = [
+  { key: 'id', label: 'Entity ID' },
+  { key: 'name', label: 'Entity name' },
+  { key: 'description', label: 'Description' },
+  { key: 'types', label: 'Types' },
+  { key: 'score', label: 'Score' },
+  { key: 'match', label: 'Match flag' }
+];
+
+const DEFAULT_SORT_PARAMS = {
+  sortBy: 'id',
+  sortDirection: 'asc',
+  sortConfidenceColumn: null
+};
 
 const TableDataViewer = () => {
   const navigate = useNavigate();
@@ -161,166 +229,334 @@ const TableDataViewer = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [nextCursor, setNextCursor] = useState(null);
   const [prevCursor, setPrevCursor] = useState(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalData, setModalData] = useState(null);
-  const [compact, setCompact] = useState(false);
+  const [reconcilePanelExpanded, setReconcilePanelExpanded] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const [searchColumns, setSearchColumns] = useState([]);
   const [activeFilters, setActiveFilters] = useState({
-    column: null,
     includeTypes: [],
-    excludeTypes: []
+    excludeTypes: [],
+    includeNeTypes: [],
+    excludeNeTypes: []
   });
-  const [sortParams, setSortParams] = useState({
-    sortBy: null,
-    column: null,
-    sortDirection: 'desc'
-  });
+  const [sortParams, setSortParams] = useState(DEFAULT_SORT_PARAMS);
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
-  const [selectedFilterColumn, setSelectedFilterColumn] = useState(null);
-  const [availableColumnTypes, setAvailableColumnTypes] = useState([]);
-  const [progressInfo, setProgressInfo] = useState(null);
-
-  // --- POLLING LOGIC STATE ---
-  const [polling, setPolling] = useState(false);
-  const pollingRef = React.useRef();
-
-  const [openExportDialog, setOpenExportDialog] = useState(false);
-  const [exportFields, setExportFields] = useState(ANNOTATION_FIELDS);
-
-  const handleOpenExport = () => setOpenExportDialog(true);
-  const handleCloseExport = () => setOpenExportDialog(false);
-  const handleExportFieldToggle = (field) =>
-    setExportFields(prev =>
-      prev.includes(field)
-        ? prev.filter(f => f !== field)
-        : [...prev, field]
-    );
-
-  const handleConfirmExport = async () => {
-    try {
-      setLoading(true);
-      const res = await exportTableCsv(datasetName, tableName, exportFields);
-      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.setAttribute('download', `${datasetName}_${tableName}_export.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      console.error('Export failed:', err);
-      setError('Export failed: ' + (err.message || 'Unknown error'));
-    } finally {
-      setLoading(false);
-      handleCloseExport();
+  const [columnEditorOpen, setColumnEditorOpen] = useState(false);
+  const [columnClassification, setColumnClassification] = useState({});
+  const [columnEditorError, setColumnEditorError] = useState(null);
+  const [autoDetectStatus, setAutoDetectStatus] = useState(null);
+  const [autoIdentifyOpen, setAutoIdentifyOpen] = useState(false);
+  const [autoIdentifySubmitting, setAutoIdentifySubmitting] = useState(false);
+  const [autoIdentifyPolling, setAutoIdentifyPolling] = useState(false);
+  const [dpvDetectStatus, setDpvDetectStatus] = useState(null);
+  const [dpvIdentifyOpen, setDpvIdentifyOpen] = useState(false);
+  const [dpvIdentifySubmitting, setDpvIdentifySubmitting] = useState(false);
+  const [dpvIdentifyPolling, setDpvIdentifyPolling] = useState(false);
+  const [autoIdentifyConfig, setAutoIdentifyConfig] = useState({
+    provider: '',
+    model: ''
+  });
+  const [llmApiKey, setLlmApiKey] = useState('');
+  const [llmHasApiKey, setLlmHasApiKey] = useState(false);
+  const [showLlmApiKeyInput, setShowLlmApiKeyInput] = useState(false);
+  const [llmOptions, setLlmOptions] = useState({
+    providers: [],
+    endpoints: []
+  });
+  const [llmSettingsError, setLlmSettingsError] = useState(null);
+  const [showDpvAnnotations, setShowDpvAnnotations] = useState(false);
+  const [compactTable, setCompactTable] = useState(false);
+  const [reconcileScope, setReconcileScope] = useState('cell');
+  const [reconcileColumns, setReconcileColumns] = useState([]);
+  const [selectedRows, setSelectedRows] = useState(new Set());
+  const [selectedCells, setSelectedCells] = useState(new Set());
+  const [reconcileTopK, setReconcileTopK] = useState(5);
+  const [reconcileJobId, setReconcileJobId] = useState(null);
+  const [reconcileStatus, setReconcileStatus] = useState(null);
+  const [reconcileSubmitting, setReconcileSubmitting] = useState(false);
+  const [reconcilePolling, setReconcilePolling] = useState(false);
+  const [reconcileProvider, setReconcileProvider] = useState('lion_linker');
+  const [reconcileSettings, setReconcileSettings] = useState({
+    availableProviders: ['lion_linker'],
+    lion: {
+      hasApiKey: false,
+      hasLlmApiKey: false,
+      hasLamapiToken: false
+    },
+    crocodile: {
+      hasApiKey: false
     }
-  };
+  });
+  const [reconcileColumnTypes, setReconcileColumnTypes] = useState(null);
+  const [reconcileColumnTypesStatus, setReconcileColumnTypesStatus] = useState('UNSET');
+  const [reconcileColumnTypesJobId, setReconcileColumnTypesJobId] = useState(null);
+  const [reconcileColumnTypesConfig, setReconcileColumnTypesConfig] = useState(null);
+  const [reconcileColumnTypesTriggering, setReconcileColumnTypesTriggering] = useState(false);
+  const [reconcileColumnTypesError, setReconcileColumnTypesError] = useState(null);
+  const [reconcileTypeSampleStrategy, setReconcileTypeSampleStrategy] = useState('auto');
+  const [reconcileTypeSampleSize, setReconcileTypeSampleSize] = useState(5000);
+  const [selectedNeColumn, setSelectedNeColumn] = useState(null);
+  const [candidateDialogOpen, setCandidateDialogOpen] = useState(false);
+  const [candidateLoading, setCandidateLoading] = useState(false);
+  const [candidateError, setCandidateError] = useState(null);
+  const [candidatePayload, setCandidatePayload] = useState(null);
+  const [candidateCellMeta, setCandidateCellMeta] = useState(null);
+  const [candidateSelection, setCandidateSelection] = useState(null);
+  const [candidateSaving, setCandidateSaving] = useState(false);
+  const [candidateSaveError, setCandidateSaveError] = useState(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportIncludeReconciliation, setExportIncludeReconciliation] = useState(true);
+  const [exportEnrichmentFields, setExportEnrichmentFields] = useState([
+    'id',
+    'name',
+    'description',
+    'types',
+    'score'
+  ]);
+  const [exportSubmitting, setExportSubmitting] = useState(false);
+  const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
 
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
-    
     try {
-      const fetchOptions = {
+      const response = await getTableData(datasetName, tableName, 10, {
         ...options,
         search: searchText || undefined,
-        searchColumns: searchColumns?.length > 0 ? searchColumns : undefined,
-        column: activeFilters.column !== null ? activeFilters.column : undefined,
         includeTypes: activeFilters.includeTypes?.length > 0 ? activeFilters.includeTypes : undefined,
         excludeTypes: activeFilters.excludeTypes?.length > 0 ? activeFilters.excludeTypes : undefined,
+        includeNeTypes: activeFilters.includeNeTypes?.length > 0 ? activeFilters.includeNeTypes : undefined,
+        excludeNeTypes: activeFilters.excludeNeTypes?.length > 0 ? activeFilters.excludeNeTypes : undefined,
         sortBy: sortParams.sortBy || undefined,
-        sortDirection: sortParams.sortDirection || undefined
-      };
-      
-      if (sortParams.sortBy === 'confidence' && sortParams.column !== undefined) {
-        fetchOptions.column = sortParams.column;
-      }
-
-      const response = await getTableData(datasetName, tableName, 10, fetchOptions);
-      console.log('Fetched table data:', response);
+        sortDirection: sortParams.sortDirection || undefined,
+        sortConfidenceColumn: sortParams.sortConfidenceColumn !== null ? sortParams.sortConfidenceColumn : undefined
+      });
       if (response.data) {
         setData(response.data);
         setNextCursor(response.pagination?.next_cursor || null);
         setPrevCursor(response.pagination?.prev_cursor || null);
+        setError(null);
       } else {
         setError('No data available');
       }
     } catch (err) {
-      console.error('Error fetching table data:', err);
       setError(err.message || 'An error occurred while fetching data');
     } finally {
       setLoading(false);
     }
-  }, [datasetName, tableName, searchText, searchColumns, activeFilters, sortParams]);
+  }, [datasetName, tableName, searchText, activeFilters, sortParams]);
 
-  // --- POLLING EFFECT ---
-  React.useEffect(() => {
-    // Start polling if table is not DONE and data exists
-    if (data && data.status !== 'DONE') {
-      setPolling(true);
-    } else {
-      setPolling(false);
-    }
-  }, [data]);
-
-  React.useEffect(() => {
-    if (!polling) return;
-
-    let cancelled = false;
-    function poll() {
-      pollingRef.current = setTimeout(async () => {
-        if (cancelled) return;
-        // Only poll if not DONE
-        if (data && data.status !== 'DONE') {
-          await fetchTableData();
-        }
-        if (!cancelled && data && data.status !== 'DONE') {
-          poll();
-        }
-      }, 5000); // Poll every 5 seconds
-    }
-    poll();
-
-    return () => {
-      cancelled = true;
-      if (pollingRef.current) clearTimeout(pollingRef.current);
-    };
-    // eslint-disable-next-line
-  }, [polling, fetchTableData, data]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setProgressInfo(null);
-
-    // Only stream if table is not already DONE
-    if (data?.status === 'DONE') {
-      setProgressInfo(null);
-      return;
-    }
-
-    getTableStatus(datasetName, tableName, (progress) => {
-      if (!cancelled) {
-        setProgressInfo(progress);
-        if (progress?.status === 'DONE') {
-          return;
-        }
+  const fetchReconciliationColumnTypes = useCallback(async () => {
+    try {
+      const response = await getReconciliationColumnTypes(datasetName, tableName);
+      setReconcileColumnTypes(response?.result || null);
+      setReconcileColumnTypesStatus(response?.status || 'UNSET');
+      setReconcileColumnTypesJobId(response?.job_id || null);
+      setReconcileColumnTypesConfig(response?.config || null);
+      if (response?.error?.detail || response?.error) {
+        setReconcileColumnTypesError(response?.error?.detail || response?.error);
+      } else {
+        setReconcileColumnTypesError(null);
       }
-    }).catch(() => {
-      if (!cancelled) setProgressInfo(null);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-    // Only rerun if datasetName or tableName changes
-    // eslint-disable-next-line
-  }, [datasetName, tableName, data?.status]);
+    } catch (err) {
+      setReconcileColumnTypesError(
+        err?.response?.data?.detail || err?.message || 'Unable to load NE column type ranking.'
+      );
+      setReconcileColumnTypesStatus('FAILED');
+    }
+  }, [datasetName, tableName]);
 
   useEffect(() => {
     fetchTableData();
-    // Only re-run if dataset/table changes
-    // eslint-disable-next-line
   }, [fetchTableData]);
+
+  useEffect(() => {
+    fetchReconciliationColumnTypes();
+  }, [fetchReconciliationColumnTypes]);
+
+  useEffect(() => {
+    if (data?.header) {
+      setColumnClassification(buildClassificationState(data.header, data.classified_columns));
+    }
+  }, [data]);
+
+  useEffect(() => {
+    if (data?.header?.length) {
+      setReconcileColumns(data.header.map((_, idx) => idx));
+    }
+  }, [data?.header]);
+
+  useEffect(() => {
+    setSelectedRows(new Set());
+    setSelectedCells(new Set());
+  }, [data?.rows, reconcileScope]);
+
+  useEffect(() => {
+    if (data?.classification_status === 'AUTO_PENDING') {
+      if (!autoIdentifyPolling) {
+        setAutoIdentifyPolling(true);
+      }
+      if (!autoDetectStatus) {
+        setAutoDetectStatus('Auto-identification in progress...');
+      }
+    }
+  }, [data?.classification_status, autoIdentifyPolling, autoDetectStatus]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadSettings = async () => {
+      try {
+        const [settings, reconSettings] = await Promise.all([
+          getLlmSettings(),
+          getReconciliationSettings()
+        ]);
+        if (!isMounted) return;
+        const providers = settings?.allowed_providers || [];
+        const configuredProvider = settings?.provider || '';
+        const providerValid = !configuredProvider || providers.length === 0 || providers.includes(configuredProvider);
+        setAutoIdentifyConfig({
+          provider: providerValid ? configuredProvider : '',
+          model: settings?.model || ''
+        });
+        const hasKey = Boolean(settings?.has_api_key);
+        setLlmHasApiKey(hasKey);
+        setShowLlmApiKeyInput(!hasKey);
+        setLlmOptions({
+          providers,
+          endpoints: settings?.allowed_endpoints || []
+        });
+        setLlmSettingsError(
+          providerValid ? null : 'Saved LLM provider is not supported by this server.'
+        );
+        const availableProviders = reconSettings?.available_providers || ['lion_linker'];
+        const lionSettings = reconSettings?.lion_linker || {
+          has_api_key: reconSettings?.has_api_key,
+          has_llm_api_key: reconSettings?.has_llm_api_key,
+          has_lamapi_token: reconSettings?.has_lamapi_token
+        };
+        const crocSettings = reconSettings?.crocodile || {
+          has_api_key: reconSettings?.crocodile_has_api_key
+        };
+        setReconcileSettings({
+          availableProviders,
+          lion: {
+            hasApiKey: Boolean(lionSettings?.has_api_key),
+            hasLlmApiKey: Boolean(lionSettings?.has_llm_api_key),
+            hasLamapiToken: Boolean(lionSettings?.has_lamapi_token)
+          },
+          crocodile: {
+            hasApiKey: Boolean(crocSettings?.has_api_key)
+          }
+        });
+        const defaultProvider = availableProviders.includes(reconSettings?.provider)
+          ? reconSettings.provider
+          : (availableProviders[0] || 'lion_linker');
+        setReconcileProvider(defaultProvider);
+      } catch (err) {
+        const storedProvider = localStorage.getItem('koala.llmProvider') || '';
+        const storedModel = localStorage.getItem('koala.llmModel') || '';
+        if (!isMounted) return;
+        setAutoIdentifyConfig({
+          provider: storedProvider,
+          model: storedModel
+        });
+        setLlmHasApiKey(false);
+        setShowLlmApiKeyInput(true);
+        setLlmSettingsError('Unable to load LLM settings from the profile.');
+        setReconcileSettings({
+          availableProviders: ['lion_linker'],
+          lion: {
+            hasApiKey: false,
+            hasLlmApiKey: false,
+            hasLamapiToken: false
+          },
+          crocodile: {
+            hasApiKey: false
+          }
+        });
+        setReconcileProvider('lion_linker');
+      }
+    };
+    loadSettings();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!autoIdentifyPolling) return;
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const status = await getColumnIdentifyStatus(datasetName, tableName);
+        if (cancelled) return;
+        const resolved = status?.status;
+        if (resolved === 'AUTO') {
+          setAutoIdentifyPolling(false);
+          setAutoDetectStatus('Auto-identification completed.');
+          await fetchTableData();
+          return;
+        }
+        if (resolved === 'AUTO_FAILED') {
+          setAutoIdentifyPolling(false);
+          setAutoDetectStatus('Auto-identification failed. Check your Moose/LLM settings.');
+          await fetchTableData();
+          return;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAutoDetectStatus(err?.response?.data?.detail || 'Unable to check Moose job status.');
+        }
+      }
+    };
+    pollStatus();
+    const timer = setInterval(pollStatus, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [autoIdentifyPolling, datasetName, tableName, fetchTableData]);
+
+  useEffect(() => {
+    if (data?.dpv_status === 'DPV_PENDING') {
+      if (!dpvIdentifyPolling) {
+        setDpvIdentifyPolling(true);
+      }
+      if (!dpvDetectStatus) {
+        setDpvDetectStatus('DPV annotation in progress...');
+      }
+    }
+  }, [data?.dpv_status, dpvIdentifyPolling, dpvDetectStatus]);
+
+  useEffect(() => {
+    if (!dpvIdentifyPolling) return;
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const status = await getDpvStatus(datasetName, tableName);
+        if (cancelled) return;
+        const resolved = status?.status;
+        if (resolved === 'DPV') {
+          setDpvIdentifyPolling(false);
+          setDpvDetectStatus('DPV annotation completed.');
+          await fetchTableData();
+          return;
+        }
+        if (resolved === 'DPV_FAILED') {
+          setDpvIdentifyPolling(false);
+          setDpvDetectStatus('DPV annotation failed. Check your Moose/LLM settings.');
+          await fetchTableData();
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDpvDetectStatus(err?.response?.data?.detail || 'Unable to check DPV job status.');
+        }
+      }
+    };
+    pollStatus();
+    const timer = setInterval(pollStatus, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [dpvIdentifyPolling, datasetName, tableName, fetchTableData]);
 
   const handlePreviousPage = () => {
     if (prevCursor) {
@@ -336,192 +572,640 @@ const TableDataViewer = () => {
     }
   };
 
-  const handleSearch = (text, columns = []) => {
+  const handleSearch = (text) => {
     setSearchText(text);
-    setSearchColumns(columns);
     setCurrentPage(1);
-    fetchTableData();
   };
 
   const handleSortChange = (params) => {
     setSortParams(params);
     setCurrentPage(1);
-    fetchTableData();
-  };
-
-  const handleColumnHeaderClick = (columnIndex, columnName) => {
-    const columnData = data?.column_types?.[columnIndex];
-    if (columnData && columnData.types && columnData.types.length > 0) {
-      setSelectedFilterColumn(columnIndex);
-      setAvailableColumnTypes(columnData.types);
-      setTypeFilterOpen(true);
-    } else {
-      console.log("No type information available for this column");
-    }
   };
 
   const handleApplyFilter = (filterData) => {
-    setActiveFilters(filterData);
+    setActiveFilters(prev => ({
+      ...prev,
+      includeNeTypes: filterData.includeTypes || [],
+      excludeNeTypes: filterData.excludeTypes || [],
+      includeTypes: [],
+      excludeTypes: []
+    }));
     setCurrentPage(1);
-    fetchTableData();
   };
 
   const handleClearFilters = () => {
     setSearchText('');
-    setSearchColumns([]);
     setActiveFilters({
-      column: null,
       includeTypes: [],
-      excludeTypes: []
+      excludeTypes: [],
+      includeNeTypes: [],
+      excludeNeTypes: []
     });
-    setSortParams({
-      sortBy: null,
-      column: null,
-      sortDirection: 'desc'
-    });
+    setSortParams(DEFAULT_SORT_PARAMS);
     setCurrentPage(1);
-    fetchTableData();
   };
 
-  const toggleCompact = () => {
-    setCompact(!compact);
+  const handleOpenExportDialog = () => {
+    setExportDialogOpen(true);
   };
 
-  const findEntityForCell = (rowId, colId) => {
-    if (!data || !data.rows) return null;
-    const row = data.rows.find(r => r.idRow === rowId);
-    if (!row || !row.linked_entities) return null;
-    return row.linked_entities.find(e => e.idColumn === colId);
-  };
-
-  const handleCellClick = (rowId, colId, cellValue) => {
-    const entity = findEntityForCell(rowId, colId);
-    setModalData({
-      candidates: entity?.candidates || [],
-      rowId: rowId,
-      columnId: colId,
-      cellValue: cellValue
-    });
-    setModalOpen(true);
-  };
-
-  const handleAnnotationChange = (action, details) => {
-    if (!data || !data.rows) return;
-    console.log(`Annotation ${action}:`, details);
-    if (action === 'update') {
-      const updatedRows = data.rows.map(row => {
-        if (row.idRow === details.rowId) {
-          const updatedLinkedEntities = row.linked_entities.map(entity => {
-            if (entity.idColumn === details.columnId) {
-              const filteredCandidates = entity.candidates.filter(c => c.id !== details.entity.id);
-              return {
-                ...entity,
-                candidates: [details.entity, ...filteredCandidates]
-              };
-            }
-            return entity;
-          });
-          return {
-            ...row,
-            linked_entities: updatedLinkedEntities
-          };
-        }
-        return row;
-      });
-      setData({
-        ...data,
-        rows: updatedRows
-      });
-    } else if (action === 'delete') {
-      const { rowId, columnId, entityId } = details;
-      if (rowId === undefined || columnId === undefined || !entityId) {
-        console.error('Invalid details for deletion:', details);
-        return;
+  const handleToggleExportField = (fieldKey) => {
+    setExportEnrichmentFields((prev) => {
+      if (prev.includes(fieldKey)) {
+        return prev.filter((entry) => entry !== fieldKey);
       }
-      const updatedRows = data.rows.map(row => {
-        if (row.idRow === rowId) {
-          if (!row.linked_entities) return row;
-          const updatedLinkedEntities = row.linked_entities.map(entity => {
-            if (entity.idColumn === columnId) {
-              const updatedCandidates = entity.candidates.filter(c => c.id !== entityId);
-              if (updatedCandidates.length === 0) {
-                return null;
-              }
-              return {
-                ...entity,
-                candidates: updatedCandidates
-              };
-            }
-            return entity;
-          }).filter(Boolean);
-          return {
-            ...row,
-            linked_entities: updatedLinkedEntities
-          };
-        }
-        return row;
+      return [...prev, fieldKey];
+    });
+  };
+
+  const handleExport = async () => {
+    try {
+      setExportSubmitting(true);
+      const includeReconciliation = exportIncludeReconciliation;
+      const selectedFields = includeReconciliation ? exportEnrichmentFields : [];
+      const res = await exportTableCsv(datasetName, tableName, {
+        includeReconciliation,
+        enrichmentFields: selectedFields
       });
-      setData({
-        ...data,
-        rows: updatedRows
-      });
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      const filenameSuffix = includeReconciliation && selectedFields.length > 0 ? '_export_enriched.csv' : '_export.csv';
+      link.setAttribute('download', `${datasetName}_${tableName}${filenameSuffix}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setExportDialogOpen(false);
+    } catch (err) {
+      setError('Export failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setExportSubmitting(false);
     }
   };
 
-  const hasActiveFilters = searchText || 
-    searchColumns?.length > 0 || 
-    activeFilters.includeTypes?.length > 0 || 
-    activeFilters.excludeTypes?.length > 0 ||
-    sortParams.sortBy;
-
-  const renderProgressBar = () => {
-    if (!progressInfo || progressInfo.status === 'DONE') return null;
-
-    const phaseLabel =
-      progressInfo.phase === "PREDICTION"
-        ? "Prediction Phase Progress"
-        : progressInfo.phase === "ML_PREDICTION"
-        ? "ML Prediction Phase Progress"
-        : "Processing Progress";
-
-    return (
-      <Box sx={{ ml: 2, flexGrow: 1, maxWidth: 300 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-          <Typography variant="caption">{phaseLabel}</Typography>
-          <Typography variant="caption">
-            {progressInfo.completed_rows} / {progressInfo.total_rows} rows ({progressInfo.completion_percentage}%)
-          </Typography>
-        </Box>
-        <LinearProgress
-          variant="determinate"
-          value={progressInfo.completion_percentage}
-          sx={{ height: 8, borderRadius: 2 }}
-        />
-      </Box>
-    );
+  const handleOpenColumnEditor = () => {
+    setColumnEditorError(null);
+    setColumnEditorOpen(true);
   };
 
+  const handleSaveColumnEditor = async () => {
+    try {
+      setColumnEditorError(null);
+      const payload = buildColumnClassificationPayload(columnClassification);
+      await updateColumnClassification(datasetName, tableName, payload);
+      setColumnEditorOpen(false);
+      await fetchTableData();
+    } catch (err) {
+      setColumnEditorError(err?.response?.data?.detail || err?.message || 'Failed to update column types.');
+    }
+  };
+
+  const handleAutoIdentifyColumns = () => {
+    setAutoIdentifyOpen(true);
+  };
+
+  const handleOpenDpvAnnotation = () => {
+    setDpvIdentifyOpen(true);
+  };
+
+  const persistLlmSettings = async () => {
+    const llmProvider = autoIdentifyConfig.provider.trim();
+    const llmModel = autoIdentifyConfig.model.trim();
+    if (llmOptions.providers.length > 0 && llmProvider && !llmOptions.providers.includes(llmProvider)) {
+      throw new Error('Selected LLM provider is not supported.');
+    }
+    await updateLlmSettings({
+      provider: llmProvider || null,
+      model: llmModel || null,
+      api_key: showLlmApiKeyInput ? (llmApiKey.trim() || undefined) : undefined
+    });
+    localStorage.setItem('koala.llmProvider', llmProvider);
+    localStorage.setItem('koala.llmModel', llmModel);
+    if (showLlmApiKeyInput && llmApiKey.trim()) {
+      setLlmHasApiKey(true);
+      setLlmApiKey('');
+      setShowLlmApiKeyInput(false);
+    }
+    return { llmProvider, llmModel };
+  };
+
+  const handleSubmitAutoIdentify = async () => {
+    try {
+      setAutoIdentifySubmitting(true);
+      await persistLlmSettings();
+      const response = await requestColumnIdentification(datasetName, tableName);
+      const modelLabel = response?.llm_provider && response?.llm_model
+        ? ` using ${response.llm_provider}:${response.llm_model}`
+        : '';
+      setAutoDetectStatus(
+        response?.job_id
+          ? `Auto-identification queued${modelLabel} (job ${response.job_id}).`
+          : (response?.detail || `Auto-identification queued${modelLabel}.`)
+      );
+      setAutoIdentifyPolling(true);
+      setAutoIdentifyOpen(false);
+      await fetchTableData();
+    } catch (err) {
+      setAutoDetectStatus(err?.response?.data?.detail || err?.message || 'Failed to request auto identification.');
+    } finally {
+      setAutoIdentifySubmitting(false);
+    }
+  };
+
+  const handleSubmitDpvAnnotation = async () => {
+    try {
+      setDpvIdentifySubmitting(true);
+      await persistLlmSettings();
+      const response = await requestDpvAnnotation(datasetName, tableName);
+      const modelLabel = response?.llm_provider && response?.llm_model
+        ? ` using ${response.llm_provider}:${response.llm_model}`
+        : '';
+      setDpvDetectStatus(
+        response?.job_id
+          ? `DPV annotation queued${modelLabel} (job ${response.job_id}).`
+          : (response?.detail || `DPV annotation queued${modelLabel}.`)
+      );
+      setDpvIdentifyPolling(true);
+      setDpvIdentifyOpen(false);
+      await fetchTableData();
+    } catch (err) {
+      setDpvDetectStatus(err?.response?.data?.detail || err?.message || 'Failed to request DPV annotation.');
+    } finally {
+      setDpvIdentifySubmitting(false);
+    }
+  };
+
+  const toggleRowSelection = (rowId) => {
+    setSelectedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(rowId)) {
+        next.delete(rowId);
+      } else {
+        next.add(rowId);
+      }
+      return next;
+    });
+  };
+
+  const toggleCellSelection = (rowId, colIndex) => {
+    const key = `${rowId}:${colIndex}`;
+    setSelectedCells(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleAllRows = (checked) => {
+    if (!data?.rows) return;
+    setSelectedRows(new Set(checked ? data.rows.map(row => row.idRow) : []));
+  };
+
+  const buildReconcilePayload = () => {
+    const payload = {
+      provider: reconcileProvider,
+      scope: reconcileScope,
+      top_k: reconcileTopK || undefined
+    };
+
+    if (reconcileScope === 'cell') {
+      const cells = Array.from(selectedCells).map((entry) => {
+        const [row, col] = entry.split(':').map(Number);
+        return { row, col };
+      });
+      payload.cells = cells;
+    } else if (reconcileScope === 'rows') {
+      payload.rows = Array.from(selectedRows);
+      payload.columns = reconcileColumns;
+    } else if (reconcileScope === 'page') {
+      payload.rows = (data?.rows || []).map((row) => row.idRow);
+      payload.columns = reconcileColumns;
+    } else if (reconcileScope === 'table') {
+      payload.columns = reconcileColumns;
+    }
+    return payload;
+  };
+
+  const validateReconcileRequest = () => {
+    if (reconcileProvider === 'lion_linker') {
+      if (!reconcileSettings.lion.hasApiKey ||
+        !reconcileSettings.lion.hasLlmApiKey ||
+        !reconcileSettings.lion.hasLamapiToken) {
+        setReconcileStatus('Missing Lion Linker or Lamapi credentials. Update your profile first.');
+        return false;
+      }
+    } else if (reconcileProvider === 'crocodile') {
+      if (!reconcileSettings.crocodile.hasApiKey) {
+        setReconcileStatus('Missing Crocodile API key. Update your profile first.');
+        return false;
+      }
+    }
+    if (reconcileScope === 'cell' && selectedCells.size === 0) {
+      setReconcileStatus('Select at least one cell to reconcile.');
+      return false;
+    }
+    if (reconcileScope === 'rows' && selectedRows.size === 0) {
+      setReconcileStatus('Select at least one row to reconcile.');
+      return false;
+    }
+    if (reconcileScope !== 'cell' && reconcileColumns.length === 0) {
+      setReconcileStatus('Select at least one column to reconcile.');
+      return false;
+    }
+    return true;
+  };
+
+  const startReconcileJob = async () => {
+    setReconcileSubmitting(true);
+    try {
+      const payload = buildReconcilePayload();
+      const response = await createReconciliationJob(datasetName, tableName, payload);
+      setReconcileJobId(response?.job_id || null);
+      setReconcileStatus(response?.detail || 'Reconciliation job queued.');
+      setReconcilePolling(true);
+    } catch (err) {
+      setReconcileStatus(err?.response?.data?.detail || err?.message || 'Failed to start reconciliation.');
+    } finally {
+      setReconcileSubmitting(false);
+    }
+  };
+
+  const handleReconcile = async () => {
+    setReconcileStatus(null);
+    if (!validateReconcileRequest()) {
+      return;
+    }
+    const scoreRange = data?.reconciliation?.score_range || {};
+    const hasExistingReconciliation = scoreRange.min !== null || scoreRange.max !== null;
+    if (hasExistingReconciliation) {
+      setRerunConfirmOpen(true);
+      return;
+    }
+    await startReconcileJob();
+  };
+
+  const handleConfirmRerun = async () => {
+    setRerunConfirmOpen(false);
+    await startReconcileJob();
+  };
+
+  const handleTriggerColumnTypeRanking = async () => {
+    try {
+      setReconcileColumnTypesTriggering(true);
+      const response = await triggerReconciliationColumnTypes(datasetName, tableName, {
+        provider: null,
+        sample_strategy: reconcileTypeSampleStrategy,
+        sample_size: reconcileTypeSampleSize,
+        max_types: 10
+      });
+      setReconcileColumnTypesStatus(response?.status || 'PENDING');
+      setReconcileColumnTypesJobId(response?.job_id || null);
+      setReconcileColumnTypesConfig(response?.config || null);
+      setReconcileColumnTypesError(null);
+    } catch (err) {
+      setReconcileColumnTypesError(
+        err?.response?.data?.detail || err?.message || 'Unable to start NE column type ranking job.'
+      );
+    } finally {
+      setReconcileColumnTypesTriggering(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!reconcilePolling || !reconcileJobId) return;
+    let cancelled = false;
+    const successStatuses = ['completed', 'succeeded', 'success', 'done', 'finished'];
+    const failureStatuses = ['failed', 'error', 'canceled', 'cancelled', 'sync_failed', 'timeout'];
+    const pollStatus = async () => {
+      try {
+        const status = await getReconciliationStatus(datasetName, tableName, reconcileJobId);
+        if (cancelled) return;
+        const resolved = status?.status || 'queued';
+        if (successStatuses.includes(resolved) && status?.synced) {
+          setReconcilePolling(false);
+          setReconcileStatus('Reconciliation completed.');
+          setReconcileJobId(null);
+          await fetchTableData();
+          await fetchReconciliationColumnTypes();
+          return;
+        }
+        if (failureStatuses.includes(resolved)) {
+          setReconcilePolling(false);
+          const detail = status?.error?.detail || status?.error || 'Reconciliation failed.';
+          setReconcileStatus(detail);
+          setReconcileJobId(null);
+          return;
+        }
+        setReconcileStatus(`Reconciliation ${resolved}...`);
+      } catch (err) {
+        if (!cancelled) {
+          setReconcileStatus(err?.response?.data?.detail || 'Unable to check reconciliation status.');
+        }
+      }
+    };
+    pollStatus();
+    const timer = setInterval(pollStatus, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [reconcilePolling, reconcileJobId, datasetName, tableName, fetchTableData, fetchReconciliationColumnTypes]);
+
+  useEffect(() => {
+    if (!['PENDING', 'RUNNING'].includes(reconcileColumnTypesStatus)) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      await fetchReconciliationColumnTypes();
+    };
+    const timer = setInterval(poll, 3000);
+    poll();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [reconcileColumnTypesStatus, fetchReconciliationColumnTypes]);
+
+  const availableTypes = useMemo(() => {
+    const raw = data?.reconciliation?.type_summary || [];
+    const seen = new Set();
+    return raw
+      .map((entry) => {
+        const id = String(entry?.id ?? '').trim();
+        const name = String(entry?.name ?? id).trim();
+        return {
+          ...entry,
+          id,
+          name
+        };
+      })
+      .filter((entry) => {
+        if (!entry.id) return false;
+        const lowered = entry.id.toLowerCase();
+        if (['none', 'null', 'undefined'].includes(lowered)) return false;
+        if (seen.has(lowered)) return false;
+        seen.add(lowered);
+        return true;
+      });
+  }, [data]);
+
+  const reconciliationCells = useMemo(() => {
+    return data?.reconciliation?.cells || {};
+  }, [data?.reconciliation]);
+
+  const reconciliationScoreRange = useMemo(() => {
+    return data?.reconciliation?.score_range || { min: null, max: null };
+  }, [data?.reconciliation]);
+
+  const columnDpvAnnotations = useMemo(() => {
+    const annotations = data?.dpv_annotations || {};
+    return (data?.header || []).map((_, idx) => {
+      const entry = annotations[idx] || annotations[String(idx)];
+      if (!entry) return null;
+      const typeId = entry.type_id || entry.typeId || entry.type || '';
+      if (!typeId) return null;
+      return {
+        typeId,
+        confidence: entry.confidence
+      };
+    });
+  }, [data?.dpv_annotations, data?.header]);
+
+  const hasDpvAnnotations = columnDpvAnnotations.some(Boolean);
+
+  const reconciliationColumnTypeColumns = useMemo(() => {
+    return reconcileColumnTypes?.columns || {};
+  }, [reconcileColumnTypes]);
+
+  const reconciliationColumnTypeTopByIndex = useMemo(() => {
+    const map = {};
+    Object.entries(reconciliationColumnTypeColumns).forEach(([idx, payload]) => {
+      if (payload?.top_type) {
+        map[Number(idx)] = payload.top_type;
+      }
+    });
+    return map;
+  }, [reconciliationColumnTypeColumns]);
+
+  const selectedNeColumnSummary = useMemo(() => {
+    if (selectedNeColumn === null || selectedNeColumn === undefined) return null;
+    return reconciliationColumnTypeColumns?.[selectedNeColumn] ||
+      reconciliationColumnTypeColumns?.[String(selectedNeColumn)] ||
+      null;
+  }, [selectedNeColumn, reconciliationColumnTypeColumns]);
+
+  const getReconciliationEntry = (rowId, colIndex) => {
+    const rowEntry = reconciliationCells?.[rowId] || reconciliationCells?.[String(rowId)];
+    if (!rowEntry) return null;
+    return rowEntry[colIndex] || rowEntry[String(colIndex)] || null;
+  };
+
+  const openCandidates = async (event, rowId, colIndex, cellValue, providerOverride) => {
+    event.stopPropagation();
+    setCandidateDialogOpen(true);
+    setCandidateLoading(true);
+    setCandidateError(null);
+    setCandidatePayload(null);
+    setCandidateSaveError(null);
+    setCandidateSelection(null);
+    const provider = providerOverride || reconcileProvider;
+    setCandidateCellMeta({
+      rowId,
+      colIndex,
+      value: cellValue,
+      provider
+    });
+    try {
+      const response = await getReconciliationCandidates(datasetName, tableName, rowId, colIndex, provider);
+      setCandidatePayload(response?.payload || null);
+      const current = getReconciliationEntry(rowId, colIndex)?.final;
+      if (current?.id || current?.name) {
+        setCandidateSelection({
+          id: current.id || null,
+          name: current.name || null
+        });
+      }
+    } catch (err) {
+      setCandidateError(err?.response?.data?.detail || err?.message || 'Failed to load candidates.');
+    } finally {
+      setCandidateLoading(false);
+    }
+  };
+
+  const handleCandidateSelect = (candidate) => {
+    setCandidateSelection({
+      id: candidate?.id || candidate?.entity_id || null,
+      name: candidate?.name || candidate?.label || null,
+      candidate
+    });
+  };
+
+  const handleCandidateSave = async () => {
+    if (!candidateCellMeta) return;
+    if (!candidateSelection?.candidate) {
+      setCandidateSaveError('Select a candidate first.');
+      return;
+    }
+    setCandidateSaving(true);
+    setCandidateSaveError(null);
+    const selected = candidateSelection?.candidate;
+    const finalPayload = {
+      id: selected?.id || selected?.entity_id || null,
+      name: selected?.name || selected?.label || null,
+      types: selected?.types || selected?.metadata?.types || null,
+      description: selected?.description || selected?.metadata?.description || null,
+      confidence_label: selected?.confidence_label || null,
+      confidence_score: selected?.confidence_score ?? selected?.score ?? null,
+      label: selected?.label || null
+    };
+    try {
+      await updateReconciliationCell(datasetName, tableName, {
+        row: candidateCellMeta.rowId,
+        col: candidateCellMeta.colIndex,
+        provider: candidateCellMeta.provider,
+        final: finalPayload
+      });
+      await fetchTableData();
+      await fetchReconciliationColumnTypes();
+      setCandidateDialogOpen(false);
+    } catch (err) {
+      setCandidateSaveError(err?.response?.data?.detail || err?.message || 'Failed to save selection.');
+    } finally {
+      setCandidateSaving(false);
+    }
+  };
+
+  const handleCandidateClear = async () => {
+    if (!candidateCellMeta) return;
+    setCandidateSaving(true);
+    setCandidateSaveError(null);
+    try {
+      await updateReconciliationCell(datasetName, tableName, {
+        row: candidateCellMeta.rowId,
+        col: candidateCellMeta.colIndex,
+        provider: candidateCellMeta.provider,
+        final: {}
+      });
+      await fetchTableData();
+      await fetchReconciliationColumnTypes();
+      setCandidateDialogOpen(false);
+    } catch (err) {
+      setCandidateSaveError(err?.response?.data?.detail || err?.message || 'Failed to clear selection.');
+    } finally {
+      setCandidateSaving(false);
+    }
+  };
+
+  const buildSubtypeOptions = (type, currentValue) => {
+    const options = type === 'NE' ? NER_TYPES : type === 'LIT' ? LIT_TYPES : [];
+    if (type === 'NE' && currentValue && !options.includes(currentValue)) {
+      return [currentValue, ...options];
+    }
+    return options;
+  };
+
+  const renderLlmSettingsFields = () => (
+    <>
+      {llmSettingsError && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {llmSettingsError}
+        </Alert>
+      )}
+      <Grid container spacing={2}>
+        <Grid item xs={12} md={6}>
+          {llmOptions.providers.length > 0 ? (
+            <FormControl fullWidth>
+              <InputLabel>LLM provider</InputLabel>
+              <Select
+                label="LLM provider"
+                value={autoIdentifyConfig.provider}
+                onChange={(e) => setAutoIdentifyConfig(prev => ({
+                  ...prev,
+                  provider: e.target.value
+                }))}
+              >
+                <MenuItem value="">
+                  Server default
+                </MenuItem>
+                {llmOptions.providers.map((provider) => (
+                  <MenuItem key={provider} value={provider}>{provider}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          ) : (
+            <TextField
+              label="LLM provider"
+              fullWidth
+              value={autoIdentifyConfig.provider}
+              placeholder="openrouter or ollama"
+              onChange={(e) => setAutoIdentifyConfig(prev => ({
+                ...prev,
+                provider: e.target.value
+              }))}
+              helperText="No providers configured on the server."
+            />
+          )}
+        </Grid>
+        <Grid item xs={12} md={6}>
+          <TextField
+            label="LLM model"
+            fullWidth
+            value={autoIdentifyConfig.model}
+            placeholder="e.g. gpt-4o-mini"
+            onChange={(e) => setAutoIdentifyConfig(prev => ({
+              ...prev,
+              model: e.target.value
+            }))}
+            helperText="Leave blank to use the server default."
+          />
+        </Grid>
+        <Grid item xs={12}>
+          {!showLlmApiKeyInput && llmHasApiKey ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                LLM API key is stored for your profile.
+              </Typography>
+              <Button size="small" onClick={() => setShowLlmApiKeyInput(true)}>
+                Update key
+              </Button>
+            </Box>
+          ) : (
+            <TextField
+              label="LLM API key"
+              type="password"
+              fullWidth
+              value={llmApiKey}
+              placeholder={llmHasApiKey ? 'Stored in profile (leave blank to keep)' : 'Enter API key'}
+              onChange={(e) => setLlmApiKey(e.target.value)}
+              helperText={llmHasApiKey ? 'Key is stored for your profile.' : 'Key will be stored for your profile.'}
+            />
+          )}
+        </Grid>
+      </Grid>
+    </>
+  );
+
+  const hasActiveFilters = searchText ||
+    activeFilters.includeTypes?.length > 0 ||
+    activeFilters.excludeTypes?.length > 0 ||
+    activeFilters.includeNeTypes?.length > 0 ||
+    activeFilters.excludeNeTypes?.length > 0 ||
+    (sortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy) !== DEFAULT_SORT_PARAMS.sortBy ||
+    (sortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection) !== DEFAULT_SORT_PARAMS.sortDirection ||
+    (sortParams.sortConfidenceColumn ?? null) !== DEFAULT_SORT_PARAMS.sortConfidenceColumn;
+
   if (loading && !data) {
-    return (
-      <Card sx={{ m: 2, overflow: 'hidden' }}>
-        <CardHeader
-          title={<Skeleton width="60%" height={40} />}
-          subheader={<Skeleton width="40%" height={24} />}
-        />
-        <Divider />
-        <CardContent>
-          <Box sx={{ height: 400 }}>
-            <Skeleton variant="rectangular" height={400} />
-          </Box>
-        </CardContent>
-      </Card>
-    );
+    return <CircularProgress />;
   }
 
   if (error) {
     return (
-      <Alert 
-        severity="error" 
+      <Alert
+        severity="error"
         sx={{ m: 2 }}
         action={
           <Button color="inherit" size="small" onClick={fetchTableData}>
@@ -534,15 +1218,15 @@ const TableDataViewer = () => {
     );
   }
 
-  if (!data || !data.rows || data.rows.length === 0) {
+  if (!data || !Array.isArray(data.rows)) {
     return (
       <Card sx={{ m: 2, textAlign: 'center', p: 4 }}>
         <Typography variant="h6" color="text.secondary">
           No data available for this table
         </Typography>
-        <Button 
-          variant="outlined" 
-          sx={{ mt: 2 }} 
+        <Button
+          variant="outlined"
+          sx={{ mt: 2 }}
           onClick={fetchTableData}
         >
           Refresh
@@ -551,271 +1235,1101 @@ const TableDataViewer = () => {
     );
   }
 
-  const hasEntity = data.rows.some(row => row.linked_entities && row.linked_entities.length > 0);
+  const candidateList = candidatePayload?.candidate_ranking || candidatePayload?.candidates || [];
+  const hasCandidateMatch = candidateList.some((candidate) => candidate.match === true);
+  const candidateProvider = candidatePayload?.provider ||
+    candidateCellMeta?.provider ||
+    reconcileProvider;
+  const isNilCandidateSet = candidateProvider === 'lion_linker' && candidateList.length > 0 && !hasCandidateMatch;
 
-  // Add null check for the classified object to avoid errors
   const classified = data.classified_columns || { NE: {}, LIT: {} };
   const columnTypes = data.header.map((_, idx) =>
-    classified && classified.NE && classified.NE.hasOwnProperty(idx) ? 'NE'
-    : classified && classified.LIT && classified.LIT.hasOwnProperty(idx) ? 'LIT'
-    : ''
+    classified?.NE?.hasOwnProperty(idx) ? 'NE'
+      : classified?.LIT?.hasOwnProperty(idx) ? 'LIT'
+        : ''
   );
-  const rawColumnTypes = data?.column_types || {};
-  const ctaData = data?.header.map((_, idx) => rawColumnTypes[idx]?.types || []);
+  const columnSubtypes = data.header.map((_, idx) =>
+    classified?.NE?.hasOwnProperty(idx)
+      ? getSpecificSubtype(classified.NE[idx])
+      : classified?.LIT?.hasOwnProperty(idx)
+        ? getCoarseSubtype(classified.LIT[idx])
+        : ''
+  );
+  const columnSpecificSubtypes = data.header.map((_, idx) =>
+    classified?.LIT?.hasOwnProperty(idx)
+      ? getSpecificSubtype(classified.LIT[idx])
+      : ''
+  );
+  const classificationStatus = data?.classification_status || 'UNSET';
+  const classificationLabel = classificationStatus === 'AUTO_PENDING'
+    ? 'Auto-identifying...'
+    : classificationStatus === 'AUTO'
+      ? 'Auto (Moose)'
+      : classificationStatus === 'AUTO_FAILED'
+        ? 'Auto failed'
+        : classificationStatus;
+  const classificationColor = classificationStatus === 'AUTO'
+    ? 'success'
+    : classificationStatus === 'AUTO_PENDING'
+      ? 'info'
+      : classificationStatus === 'AUTO_FAILED'
+        ? 'error'
+        : classificationStatus === 'MANUAL'
+          ? 'primary'
+          : 'default';
+  const autoDetectSeverity = classificationStatus === 'AUTO_FAILED'
+    ? 'error'
+    : classificationStatus === 'AUTO'
+      ? 'success'
+      : 'info';
+  const dpvStatus = data?.dpv_status || 'UNSET';
+  const dpvLabel = dpvStatus === 'DPV_PENDING'
+    ? 'DPV: annotating...'
+    : dpvStatus === 'DPV'
+      ? 'DPV annotated'
+      : dpvStatus === 'DPV_FAILED'
+        ? 'DPV failed'
+        : '';
+  const dpvColor = dpvStatus === 'DPV'
+    ? 'success'
+    : dpvStatus === 'DPV_PENDING'
+      ? 'info'
+      : dpvStatus === 'DPV_FAILED'
+        ? 'error'
+        : 'default';
+  const dpvDetectSeverity = dpvStatus === 'DPV_FAILED'
+    ? 'error'
+    : dpvStatus === 'DPV'
+      ? 'success'
+      : 'info';
+  const reconcileSeverity = reconcilePolling
+    ? 'info'
+    : reconcileStatus && reconcileStatus.toLowerCase().includes('fail')
+      ? 'error'
+      : reconcileStatus && reconcileStatus.toLowerCase().includes('missing')
+        ? 'error'
+        : 'success';
+  const columnTypeStatus = reconcileColumnTypesStatus || 'UNSET';
+  const columnTypeStatusColor = ['READY'].includes(columnTypeStatus)
+    ? 'success'
+    : ['FAILED'].includes(columnTypeStatus)
+      ? 'error'
+      : ['PENDING', 'RUNNING'].includes(columnTypeStatus)
+        ? 'info'
+        : ['STALE'].includes(columnTypeStatus)
+          ? 'warning'
+          : 'default';
+  const columnTypeSampling = reconcileColumnTypes?.sampling || null;
+  const reconcileProviderLabel = reconcileProvider === 'crocodile' ? 'Crocodile' : 'Lion Linker';
+  const missingReconcileCredentials = reconcileProvider === 'crocodile'
+    ? !reconcileSettings.crocodile.hasApiKey
+    : (!reconcileSettings.lion.hasApiKey ||
+      !reconcileSettings.lion.hasLlmApiKey ||
+      !reconcileSettings.lion.hasLamapiToken);
+
+  const showRowSelection = reconcileScope === 'rows';
+  const showRowIndex = reconcileScope === 'rows' || reconcileScope === 'cell';
+  const selectedRowCount = selectedRows.size;
+  const selectedCellCount = selectedCells.size;
+  const allRowsSelected = data?.rows?.length > 0 && selectedRowCount === data.rows.length;
+  const someRowsSelected = selectedRowCount > 0 && selectedRowCount < (data?.rows?.length || 0);
+  const showDpvStatusChip = dpvStatus !== 'UNSET' || hasDpvAnnotations;
+  const reconcileSelectionSummary = reconcileScope === 'cell'
+    ? `Cell mode: ${selectedCellCount} selected.`
+    : reconcileScope === 'rows'
+      ? `Row mode: ${selectedRowCount} selected.`
+      : reconcileScope === 'page'
+        ? `Page mode: ${(data?.rows?.length || 0)} rows in scope.`
+        : `Table mode: ${(data?.total_rows || 0)} rows in scope.`;
+  const compactActionButtonSx = {
+    py: 0,
+    px: 1,
+    minHeight: 28,
+    fontSize: '0.76rem',
+    textTransform: 'none'
+  };
+  const compactPanelButtonSx = {
+    py: 0,
+    px: 0.95,
+    minHeight: 26,
+    fontSize: '0.74rem',
+    textTransform: 'none'
+  };
+  const compactIconButtonSx = {
+    minWidth: 28,
+    width: 28,
+    height: 28,
+    p: 0
+  };
 
   return (
-    <Box sx={{ m: 2 }}>
-      <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
-        <Button color="inherit" onClick={() => navigate('/dataset')} sx={{ cursor: 'pointer', textTransform: 'none', padding: 0, minWidth: 0,  fontSize: 'inherit', fontWeight: 'inherit', color: 'inherit', textDecoration: 'underline',  '&:hover': {
-        textDecoration: 'underline',
-      }, }}>
-          Datasets
-        </Button>
-        <Link
-          color="inherit"
-          onClick={() => navigate(`/dataset/${encodeURIComponent(datasetName)}`)}
-          sx={{ cursor: 'pointer' }}
-        >
-          {datasetName}
-        </Link>
-        <Typography color="text.primary" noWrap>
-          {tableName}
-        </Typography>
-      </Breadcrumbs>
-
-      <Card elevation={3}>
+    <Box sx={{ m: { xs: 1, md: 1.5 } }}>
+      <Card elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
         <CardHeader
+          sx={{
+            pt: 1,
+            pb: 0.75,
+            alignItems: 'center',
+            bgcolor: '#fbfcff',
+            borderBottom: '1px solid #edf1f7',
+            '& .MuiCardHeader-content': {
+              overflow: 'hidden'
+            },
+            '& .MuiCardHeader-action': {
+              alignSelf: 'flex-start',
+              mt: 0.15,
+              mr: 0,
+              overflow: 'hidden'
+            }
+          }}
           title={
-            <Typography variant="h5" component="div">
-              {tableName}
-            </Typography>
-          }
-          subheader={
-            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', mt: 1 }}>
-              <Typography variant="subtitle1" color="text.secondary" component="div">
-                Dataset: {datasetName}
-              </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+              <Breadcrumbs aria-label="breadcrumb" separator="›" sx={{ mr: 0.5 }}>
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  onClick={() => navigate('/dataset')}
+                  sx={{ fontSize: '0.86rem' }}
+                >
+                  Datasets
+                </Link>
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  onClick={() => navigate(`/dataset/${encodeURIComponent(datasetName)}`)}
+                  sx={{ fontSize: '0.86rem' }}
+                >
+                  {datasetName}
+                </Link>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                  {tableName}
+                </Typography>
+              </Breadcrumbs>
               <Chip
-                label={data?.status || 'Unknown'}
+                label={data?.status || 'READY'}
                 size="small"
-                color={
-                  data?.status === 'DONE' ? 'success' :
-                  data?.status === 'DOING' || data?.status === 'processing' ? 'warning' : 'default'
-                }
-                sx={{ ml: 2 }}
+                color="success"
               />
-              {(data?.status === 'DOING' || data?.status === 'processing') && (
-                <CircularProgress size={16} sx={{ ml: 1 }} />
-              )}
-              
-              {progressInfo && progressInfo.status !== 'DONE' && renderProgressBar()}
-              
-              {hasEntity && (
-                <Box sx={{ ml: 2, display: 'flex', alignItems: 'center' }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
-                    Entity confidence:
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Box sx={{ 
-                      width: 12, 
-                      height: 12, 
-                      borderRadius: '50%', 
-                      backgroundColor: '#388e3c', 
-                      mr: 0.5 
-                    }} />
-                    <Typography variant="caption" sx={{ mr: 1 }}>High</Typography>
-                    
-                    <Box sx={{ 
-                      width: 12, 
-                      height: 12, 
-                      borderRadius: '50%', 
-                      backgroundColor: '#fbc02d', 
-                      mr: 0.5 
-                    }} />
-                    <Typography variant="caption" sx={{ mr: 1 }}>Medium</Typography>
-                    
-                    <Box sx={{ 
-                      width: 12, 
-                      height: 12, 
-                      borderRadius: '50%', 
-                      backgroundColor: '#e64a19', 
-                      mr: 0.5 
-                    }} />
-                    <Typography variant="caption">Low</Typography>
-                  </Box>
-                </Box>
-              )}
-              
-              {hasActiveFilters && (
+              <Chip
+                label={`Column types: ${classificationLabel}`}
+                size="small"
+                color={classificationColor}
+                variant="outlined"
+              />
+              {showDpvStatusChip && (
                 <Chip
-                  icon={<FilterIcon />}
-                  label="Filters Active"
+                  label={dpvLabel || 'DPV'}
+                  size="small"
+                  color={dpvColor}
+                  variant="outlined"
+                />
+              )}
+              {data?.score_column_name && (
+                <Chip
+                  label={`Score: ${data.score_column_name}`}
                   size="small"
                   color="secondary"
-                  onDelete={handleClearFilters}
-                  sx={{ ml: 2 }}
+                  variant="outlined"
                 />
               )}
             </Box>
           }
           action={
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-              <Tooltip title={data?.status !== 'DONE' ? 'Table is still processing...' : ''}>
-                <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<FileDownloadIcon />}
-                    onClick={handleOpenExport}
-                    disabled={data?.status !== 'DONE'}
-                    sx={{ width: '100%' }}
-                  >
-                    Export CSV
-                  </Button>
-                </Box>
-              </Tooltip>
-              <Box component="span" sx={{ display: 'inline-flex', minWidth: 120 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={compact ? <FullscreenIcon /> : <CompressIcon />}
-                  onClick={toggleCompact}
-                  sx={{ width: '100%' }}
-                >
-                  {compact ? 'Expand View' : 'Compact View'}
-                </Button>
-              </Box>
+            <Box
+              sx={{
+                display: 'inline-flex',
+                flexDirection: 'row',
+                flexWrap: { xs: 'wrap', lg: 'nowrap' },
+                alignItems: 'center',
+                gap: 0.4,
+                justifyContent: { xs: 'flex-start', lg: 'flex-end' },
+                maxWidth: { xs: 300, lg: '100%' },
+                '& .MuiButton-root': {
+                  width: 'auto',
+                  flex: '0 0 auto'
+                }
+              }}
+            >
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<BuildIcon fontSize="small" />}
+                onClick={handleOpenColumnEditor}
+                sx={compactActionButtonSx}
+              >
+                Edit columns
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<AutoFixHighIcon fontSize="small" />}
+                onClick={handleAutoIdentifyColumns}
+                disabled={loading || classificationStatus === 'AUTO_PENDING'}
+                sx={compactActionButtonSx}
+              >
+                {classificationStatus === 'AUTO_PENDING' ? 'Auto-identifying...' : 'Auto identify'}
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<PolicyIcon fontSize="small" />}
+                onClick={handleOpenDpvAnnotation}
+                disabled={loading || dpvStatus === 'DPV_PENDING'}
+                sx={compactActionButtonSx}
+              >
+                {dpvStatus === 'DPV_PENDING' ? 'Annotating DPV...' : 'Annotate DPV'}
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<FileDownloadIcon fontSize="small" />}
+                onClick={handleOpenExportDialog}
+                sx={compactActionButtonSx}
+              >
+                Export CSV
+              </Button>
             </Box>
           }
         />
-        
-        <Divider />
-        
-        <CardContent sx={{ p: 2 }}>
-          <TableSearch
-            headers={data?.header || []}
-            onSearch={handleSearch}
-            loading={loading}
-            columnTypes={columnTypes}
-            initialSearchText={searchText}
-            initialSearchColumns={searchColumns}
-          />
-          
-          <TableSortControls
-            headers={data?.header || []}
-            columnTypes={columnTypes}
-            onSort={handleSortChange}
-            currentSortParams={sortParams}
-            hasActiveFilters={hasActiveFilters}
-            onClearFilters={handleClearFilters}
-          />
-        </CardContent>
-        
-        <Divider />
-        
-        <CardContent sx={{ p: 0 }}>
-          <TableContainer 
-            component={Paper} 
+
+        {autoDetectStatus && (
+          <Box sx={{ px: 2, pb: 1 }}>
+            <Alert severity={autoDetectSeverity} onClose={() => setAutoDetectStatus(null)}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {classificationStatus === 'AUTO_PENDING' && (
+                  <CircularProgress size={16} />
+                )}
+                <span>{autoDetectStatus}</span>
+              </Box>
+            </Alert>
+          </Box>
+        )}
+
+        {dpvDetectStatus && (
+          <Box sx={{ px: 2, pb: 1 }}>
+            <Alert severity={dpvDetectSeverity} onClose={() => setDpvDetectStatus(null)}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {dpvStatus === 'DPV_PENDING' && (
+                  <CircularProgress size={16} />
+                )}
+                <span>{dpvDetectStatus}</span>
+              </Box>
+            </Alert>
+          </Box>
+        )}
+
+        {reconcileStatus && (
+          <Box sx={{ px: 2, pb: 1 }}>
+            <Alert severity={reconcileSeverity} onClose={() => setReconcileStatus(null)}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {reconcilePolling && (
+                  <CircularProgress size={16} />
+                )}
+                <span>{reconcileStatus}</span>
+              </Box>
+            </Alert>
+          </Box>
+        )}
+
+        <CardContent sx={{ px: 1.5, py: 0.75, bgcolor: '#fcfdff' }}>
+          <Accordion
+            disableGutters
             elevation={0}
-            sx={{ 
-              maxHeight: compact ? '60vh' : '70vh',
+            expanded={reconcilePanelExpanded}
+            onChange={(_, expanded) => setReconcilePanelExpanded(expanded)}
+            sx={{
+              border: '1px solid #dde6f3',
+              borderRadius: '8px',
+              bgcolor: '#f9fbff',
+              '&:before': { display: 'none' }
+            }}
+          >
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon />}
+              sx={{ minHeight: 34, px: 1 }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', flexWrap: 'wrap' }}>
+                <Chip
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  label={`Linking · ${reconcileProviderLabel}`}
+                />
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={`Scope: ${reconcileScope}`}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  {reconcileSelectionSummary}
+                </Typography>
+                <Box sx={{ flex: 1 }} />
+                <Chip size="small" color={columnTypeStatusColor} label={`NE rank: ${columnTypeStatus}`} />
+                <Tooltip title="Run reconciliation" arrow>
+                  <span>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleReconcile();
+                      }}
+                      onFocus={(event) => event.stopPropagation()}
+                      disabled={reconcileSubmitting || loading}
+                      sx={compactIconButtonSx}
+                    >
+                      {reconcileSubmitting ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon fontSize="small" />}
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 1, py: 0.75 }}>
+              {missingReconcileCredentials && (
+                <Alert severity="warning" sx={{ mb: 1 }}>
+                  {reconcileProvider === 'crocodile'
+                    ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
+                    : 'Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.'}
+                </Alert>
+              )}
+
+              <Grid container spacing={0.75}>
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Provider</InputLabel>
+                    <Select
+                      label="Provider"
+                      value={reconcileProvider}
+                      onChange={(e) => setReconcileProvider(e.target.value)}
+                    >
+                      {(reconcileSettings.availableProviders || ['lion_linker']).map((provider) => (
+                        <MenuItem key={provider} value={provider}>
+                          {provider === 'crocodile' ? 'Crocodile' : 'Lion Linker'}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Scope</InputLabel>
+                    <Select
+                      label="Scope"
+                      value={reconcileScope}
+                      onChange={(e) => setReconcileScope(e.target.value)}
+                    >
+                      <MenuItem value="cell">Selected cells</MenuItem>
+                      <MenuItem value="rows">Selected rows</MenuItem>
+                      <MenuItem value="page">Current page</MenuItem>
+                      <MenuItem value="table">Whole table</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <FormControl fullWidth size="small" disabled={reconcileScope === 'cell'}>
+                    <InputLabel>Columns</InputLabel>
+                    <Select
+                      label="Columns"
+                      multiple
+                      value={reconcileColumns}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        const parsed = (Array.isArray(value) ? value : [value]).map((entry) => Number(entry));
+                        setReconcileColumns(parsed);
+                      }}
+                      renderValue={(selected) => {
+                        if (!selected?.length) return 'No columns';
+                        if (selected.length === (data?.header || []).length) return 'All columns';
+                        return `${selected.length} columns`;
+                      }}
+                    >
+                      {(data?.header || []).map((header, idx) => (
+                        <MenuItem key={`${header}-${idx}`} value={idx}>
+                          <Checkbox checked={reconcileColumns.includes(idx)} />
+                          <Typography variant="body2">{header}</Typography>
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={2}>
+                  <TextField
+                    label="Top K"
+                    type="number"
+                    size="small"
+                    fullWidth
+                    value={reconcileTopK}
+                    inputProps={{ min: 1, max: 100 }}
+                    onChange={(e) => setReconcileTopK(Number(e.target.value) || 1)}
+                  />
+                </Grid>
+              </Grid>
+
+              <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+                <FormHelperText sx={{ m: 0 }}>
+                  {reconcileScope === 'cell'
+                    ? 'Columns are derived from selected cells.'
+                    : 'Link columns must be NE columns; Koala maps row/column indexes back automatically.'}
+                </FormHelperText>
+                {(reconcileScope === 'cell' || reconcileScope === 'rows') && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setSelectedRows(new Set());
+                      setSelectedCells(new Set());
+                    }}
+                    sx={compactPanelButtonSx}
+                  >
+                    Clear selection
+                  </Button>
+                )}
+              </Box>
+
+              <Divider sx={{ my: 0.75 }} />
+
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="subtitle2">NE type ranking</Typography>
+                {columnTypeSampling?.sampled_cells !== undefined && (
+                  <Typography variant="caption" color="text.secondary">
+                    {columnTypeSampling.sampled_cells}/{columnTypeSampling.total_cells} cells ({columnTypeSampling.strategy})
+                  </Typography>
+                )}
+                {!columnTypeSampling?.sampled_cells && reconcileColumnTypesConfig?.sample_strategy && (
+                  <Typography variant="caption" color="text.secondary">
+                    {reconcileColumnTypesConfig.sample_strategy} sampling
+                  </Typography>
+                )}
+                {reconcileColumnTypesJobId && (
+                  <Typography variant="caption" color="text.secondary">
+                    job {reconcileColumnTypesJobId.slice(0, 8)}
+                  </Typography>
+                )}
+                <Box sx={{ flex: 1 }} />
+                <FormControl size="small" sx={{ minWidth: 120 }}>
+                  <InputLabel>Sampling</InputLabel>
+                  <Select
+                    label="Sampling"
+                    value={reconcileTypeSampleStrategy}
+                    onChange={(event) => setReconcileTypeSampleStrategy(event.target.value)}
+                    disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+                  >
+                    <MenuItem value="auto">Auto</MenuItem>
+                    <MenuItem value="latest">Latest</MenuItem>
+                    <MenuItem value="random">Random</MenuItem>
+                    <MenuItem value="all">All</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField
+                  size="small"
+                  type="number"
+                  label="Sample"
+                  value={reconcileTypeSampleSize}
+                  inputProps={{ min: 1, max: 50000 }}
+                  onChange={(event) => setReconcileTypeSampleSize(Math.max(1, Number(event.target.value) || 1))}
+                  sx={{ width: 96 }}
+                  disabled={reconcileTypeSampleStrategy === 'all' || reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+                />
+                <Tooltip title="Compute NE type ranking" arrow>
+                  <span>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={handleTriggerColumnTypeRanking}
+                      disabled={reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)}
+                      sx={compactIconButtonSx}
+                    >
+                      {reconcileColumnTypesTriggering || ['PENDING', 'RUNNING'].includes(columnTypeStatus)
+                        ? <CircularProgress size={14} />
+                        : <AutoGraphIcon fontSize="small" />}
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Box>
+
+              {reconcileColumnTypesError && (
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  {reconcileColumnTypesError}
+                </Alert>
+              )}
+              {!reconcileColumnTypesError && columnTypeStatus === 'UNSET' && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  No ranking computed yet. Click any NE header after running compute.
+                </Typography>
+              )}
+            </AccordionDetails>
+          </Accordion>
+        </CardContent>
+
+        <Divider />
+
+        <CardContent sx={{ px: 1.5, py: 1, bgcolor: '#f8fafd' }}>
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 0.5,
+              borderColor: '#dce6f5',
+              bgcolor: '#ffffff'
+            }}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                flexWrap: 'wrap'
+              }}
+            >
+              <Box sx={{ flex: '1 1 300px', minWidth: 260 }}>
+                <TableSearch
+                  onSearch={handleSearch}
+                  loading={loading}
+                  initialSearchText={searchText}
+                  compact
+                  noPaper
+                />
+              </Box>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  flexWrap: 'wrap',
+                  flex: '1 1 420px',
+                  justifyContent: 'flex-end',
+                  '& .MuiButton-root': {
+                    minHeight: 28,
+                    fontSize: '0.74rem',
+                    textTransform: 'none',
+                    whiteSpace: 'nowrap',
+                    width: 'auto'
+                  }
+                }}
+              >
+                <TableSortControls
+                  headers={data?.header || []}
+                  columnTypes={columnTypes}
+                  hasReconciliationScores={reconciliationScoreRange?.max !== null && reconciliationScoreRange?.max !== undefined}
+                  onSort={handleSortChange}
+                  currentSortParams={sortParams}
+                  hasActiveFilters={hasActiveFilters}
+                  onClearFilters={handleClearFilters}
+                  compact
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setTypeFilterOpen(true)}
+                  disabled={availableTypes.length === 0}
+                  sx={compactPanelButtonSx}
+                >
+                  Filter NE types
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setShowDpvAnnotations(prev => !prev)}
+                  disabled={!hasDpvAnnotations}
+                  sx={compactPanelButtonSx}
+                >
+                  {showDpvAnnotations ? 'Hide DPV' : 'Show DPV'}
+                </Button>
+                <Button
+                  variant={compactTable ? 'contained' : 'outlined'}
+                  size="small"
+                  onClick={() => setCompactTable(prev => !prev)}
+                  sx={compactPanelButtonSx}
+                >
+                  {compactTable ? 'Compact: on' : 'Compact: off'}
+                </Button>
+                {availableTypes.length === 0 && (
+                  <Tooltip title="No linked NE types available for filtering.">
+                    <Typography variant="caption" color="text.secondary">
+                      No linked types yet
+                    </Typography>
+                  </Tooltip>
+                )}
+              </Box>
+            </Box>
+          </Paper>
+        </CardContent>
+
+        <Divider />
+
+        <CardContent sx={{ p: 0 }}>
+          <Dialog
+            open={selectedNeColumn !== null}
+            onClose={() => setSelectedNeColumn(null)}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle>
+              NE Column Ranking
+            </DialogTitle>
+            <DialogContent dividers>
+              {selectedNeColumn !== null && (
+                <Box>
+                  <Typography variant="subtitle2">
+                    Col {selectedNeColumn}: {data?.header?.[selectedNeColumn] || 'Unknown'}
+                  </Typography>
+                  {!selectedNeColumnSummary ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      No computed evidence for this column. Run "Compute ranking" first.
+                    </Typography>
+                  ) : (
+                    <>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        Evidence cells: {selectedNeColumnSummary.evidence_cells}
+                      </Typography>
+                      <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {(selectedNeColumnSummary.ranking || []).slice(0, 10).map((entry, idx) => (
+                          <Paper
+                            key={`ne-rank-${selectedNeColumn}-${entry.id || entry.name || idx}`}
+                            variant="outlined"
+                            sx={{ p: 1, bgcolor: idx === 0 ? '#eef5ff' : 'transparent', borderColor: idx === 0 ? '#9fc0eb' : undefined }}
+                          >
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+                              <Typography variant="body2" sx={{ fontWeight: idx === 0 ? 700 : 500 }}>
+                                #{idx + 1} {entry.name || entry.id}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {entry.frequency !== undefined
+                                  ? `${Math.round(entry.frequency * 100)}% freq`
+                                  : entry.probability !== undefined
+                                    ? `${Math.round(entry.probability * 100)}%`
+                                    : ''}
+                              </Typography>
+                            </Box>
+                            {entry.probability !== undefined && (
+                              <Typography variant="caption" color="text.secondary">
+                                Weighted share: {Math.round(entry.probability * 100)}%
+                              </Typography>
+                            )}
+                          </Paper>
+                        ))}
+                      </Box>
+                    </>
+                  )}
+                </Box>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setSelectedNeColumn(null)}>Close</Button>
+            </DialogActions>
+          </Dialog>
+          <Dialog
+            open={candidateDialogOpen}
+            onClose={() => setCandidateDialogOpen(false)}
+            maxWidth="md"
+            fullWidth
+          >
+            <DialogTitle>Linking candidates</DialogTitle>
+            <DialogContent dividers>
+              {candidateCellMeta && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Row {candidateCellMeta.rowId}, Column {candidateCellMeta.colIndex}
+                  </Typography>
+                  <Typography variant="subtitle1">
+                    {candidateCellMeta.value ? String(candidateCellMeta.value) : '(empty)'}
+                  </Typography>
+                </Box>
+              )}
+              {candidateLoading && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CircularProgress size={20} />
+                  <Typography variant="body2">Loading candidates…</Typography>
+                </Box>
+              )}
+              {candidateError && (
+                <Alert severity="error">{candidateError}</Alert>
+              )}
+              {!candidateLoading && !candidateError && (
+                <Box>
+                  {(candidatePayload?.explanation ||
+                    candidatePayload?.llm_explanation ||
+                    candidatePayload?.meta?.explanation) && (
+                    <Alert severity="info" sx={{ mb: 2 }}>
+                      {candidatePayload?.explanation ||
+                        candidatePayload?.llm_explanation ||
+                        candidatePayload?.meta?.explanation}
+                    </Alert>
+                  )}
+                  {isNilCandidateSet && (
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                      NIL: no candidate was marked as a match.
+                    </Alert>
+                  )}
+                  {candidateList.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      No candidates returned for this cell.
+                    </Typography>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                      {candidateList.map((candidate) => {
+                        const idValue = candidate.id || candidate.entity_id || '';
+                        const nameValue = candidate.name || candidate.label || '';
+                        const isWinner = candidate.match === true;
+                        const isSelected = candidateSelection?.id && idValue
+                          ? candidateSelection.id === idValue
+                          : candidateSelection?.name === nameValue && nameValue;
+                        const typesValue = Array.isArray(candidate.types)
+                          ? candidate.types.map((type) => ({
+                            id: type.id || type.entity_id || '',
+                            name: type.name || type.label || ''
+                          }))
+                          : Array.isArray(candidate.metadata?.types)
+                            ? candidate.metadata.types.map((type) => ({
+                              id: type.id || type.entity_id || '',
+                              name: type.name || type.label || ''
+                            }))
+                            : [];
+                        const descriptionValue = candidate.description || candidate.metadata?.description;
+                        const scoreValue = candidate.confidence_score ?? candidate.score;
+                        return (
+                          <Paper
+                            key={`${candidate.entity_id || candidate.id || candidate.rank}-${candidate.rank}`}
+                            variant="outlined"
+                            sx={{
+                              p: 1.5,
+                              borderColor: isSelected ? '#90caf9' : undefined,
+                              bgcolor: isSelected ? '#eef4ff' : 'transparent'
+                            }}
+                          >
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                              <Box sx={{ flex: 1 }}>
+                                <Typography
+                                  variant="subtitle2"
+                                  sx={{ textDecoration: isWinner ? 'underline' : 'none' }}
+                                >
+                                  {nameValue || idValue || 'Candidate'}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  ID: {idValue || 'n/a'}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                {candidate.rank !== undefined && candidate.rank !== null && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    Rank {candidate.rank}
+                                  </Typography>
+                                )}
+                                {isWinner && (
+                                  <Chip size="small" label="Winner" color="success" />
+                                )}
+                                <Button
+                                  size="small"
+                                  variant={isSelected ? 'contained' : 'outlined'}
+                                  onClick={() => handleCandidateSelect(candidate)}
+                                >
+                                  {isSelected ? 'Selected' : 'Select'}
+                                </Button>
+                              </Box>
+                            </Box>
+                            <Box sx={{ mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                              {candidate.confidence_label && (
+                                <Chip size="small" label={`Confidence: ${candidate.confidence_label}`} />
+                              )}
+                              {scoreValue !== null && scoreValue !== undefined && (
+                                <Chip
+                                  size="small"
+                                  label={`Score: ${scoreValue}`}
+                                />
+                              )}
+                              {candidate.label && (
+                                <Chip size="small" label={`Label: ${candidate.label}`} />
+                              )}
+                              {idValue && (
+                                <Chip
+                                  size="small"
+                                  label="Wikidata"
+                                  component={Link}
+                                  href={`https://www.wikidata.org/wiki/${idValue}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  clickable
+                                />
+                              )}
+                            </Box>
+                            {typesValue.length > 0 && (
+                              <Box sx={{ mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                {typesValue.map((type) => (
+                                  <Chip
+                                    key={`${type.id || type.name}`}
+                                    size="small"
+                                    label={`${type.name || type.id}${type.id ? ` (${type.id})` : ''}`}
+                                  />
+                                ))}
+                              </Box>
+                            )}
+                            {descriptionValue && (
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                {descriptionValue}
+                              </Typography>
+                            )}
+                          </Paper>
+                        );
+                      })}
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </DialogContent>
+            <DialogActions>
+              {candidateSaveError && (
+                <Typography variant="caption" color="error">
+                  {candidateSaveError}
+                </Typography>
+              )}
+              <Button onClick={() => setCandidateDialogOpen(false)}>
+                Close
+              </Button>
+              <Button
+                onClick={handleCandidateClear}
+                disabled={candidateSaving}
+              >
+                Clear selection
+              </Button>
+              <Button
+                variant="contained"
+                onClick={handleCandidateSave}
+                disabled={candidateSaving}
+              >
+                {candidateSaving ? 'Saving...' : 'Save selection'}
+              </Button>
+            </DialogActions>
+          </Dialog>
+          <TableContainer
+            component={Paper}
+            elevation={0}
+            sx={{
+              maxHeight: '72vh',
               width: '100%',
               overflow: 'auto',
-              transition: 'max-height 0.3s ease',
+              borderTop: '1px solid #e6ebf2',
+              borderRadius: 0,
               '&::-webkit-scrollbar': {
                 width: '8px',
-                height: '8px',
+                height: '8px'
               },
               '&::-webkit-scrollbar-track': {
-                backgroundColor: '#f1f1f1',
+                backgroundColor: '#f1f1f1'
               },
               '&::-webkit-scrollbar-thumb': {
                 backgroundColor: '#888',
-                borderRadius: '4px',
-              },
+                borderRadius: '4px'
+              }
             }}
           >
-            <Table 
-              stickyHeader 
-              size={compact ? 'small' : 'medium'}
-              sx={{ 
+            <Table
+              stickyHeader
+              size={compactTable ? 'small' : 'medium'}
+              sx={{
                 minWidth: 650,
-                tableLayout: 'auto',
+                tableLayout: 'auto'
               }}
             >
               <TableHead>
-                <TableHeader
-                  headers={data?.header || []}
-                  sortableColumns={[]} 
-                  sortColumn={null} 
-                  sortOrder={null} 
-                  handleSort={() => {}}
-                  columnTypes={columnTypes}
-                  ctaData={ctaData}
-                  handleHeaderClick={(types, header, columnIndex) => {
-                    handleColumnHeaderClick(columnIndex, header);
-                  }}
-                />
+              <TableHeader
+                headers={data?.header || []}
+                columnTypes={columnTypes}
+                columnSubtypes={columnSubtypes}
+                columnSpecificSubtypes={columnSpecificSubtypes}
+                columnDpvAnnotations={columnDpvAnnotations}
+                columnReconciliationTypes={reconciliationColumnTypeTopByIndex}
+                showDpvAnnotations={showDpvAnnotations}
+                onNeColumnClick={(colIndex) => setSelectedNeColumn(colIndex)}
+                activeNeColumn={selectedNeColumn}
+                showRowSelection={showRowSelection}
+                showRowIndex={showRowIndex}
+                allRowsSelected={allRowsSelected}
+                someRowsSelected={someRowsSelected}
+                onToggleAllRows={handleToggleAllRows}
+                compact={compactTable}
+              />
               </TableHead>
-              
               <TableBody>
                 {data?.rows?.length > 0 ? (
                   data.rows.map((row) => (
-                    <TableRow 
+                    <TableRow
                       key={row.idRow}
-                      sx={{ 
+                      sx={{
                         '&:nth-of-type(odd)': { backgroundColor: '#fafafa' },
-                        '&:hover': { backgroundColor: '#f1f7fd' },
+                        backgroundColor: selectedRows.has(row.idRow) ? '#e3f2fd' : 'inherit',
+                        '&:hover': {
+                          backgroundColor: selectedRows.has(row.idRow) ? '#dceeff' : '#f1f7fd'
+                        },
                         transition: 'background-color 0.2s'
                       }}
                     >
-                      {row.data.map((cell, colIndex) => {
-                        const isNE = columnTypes[colIndex] === 'NE';
-                        const entity = findEntityForCell(row.idRow, colIndex);
-                        
-                        return (
-                          <TableCell 
-                            key={colIndex}
-                            onClick={isNE ? () => handleCellClick(row.idRow, colIndex, cell) : undefined}
-                            sx={{ 
-                              cursor: isNE ? 'pointer' : 'default',
-                              minWidth: 100,
-                              maxWidth: compact ? 200 : 300,
-                              verticalAlign: 'top',
-                              padding: compact ? '6px 10px' : '10px 16px',
-                              fontSize: compact ? '0.75rem' : 'inherit',
-                              '&:hover': {
-                                backgroundColor: isNE ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
-                              }
-                            }}
-                          >
-                            {entity ? (
-                              <LinkedEntityCell 
-                                value={cell}
-                                entityData={entity}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCellClick(row.idRow, colIndex, cell);
+                      {showRowIndex && (
+                        <TableCell
+                          sx={{
+                            minWidth: 72,
+                            maxWidth: 104,
+                            verticalAlign: 'top',
+                            padding: compactTable ? '6px 8px' : '8px 10px',
+                            textAlign: 'center',
+                            bgcolor: selectedRows.has(row.idRow) ? '#dcedff' : '#f5f7fa',
+                            position: 'sticky',
+                            left: 0,
+                            zIndex: 2
+                          }}
+                        >
+                          {showRowSelection ? (
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                                <Checkbox
+                                  size="small"
+                                  checked={selectedRows.has(row.idRow)}
+                                  onChange={() => toggleRowSelection(row.idRow)}
+                                />
+                                <Typography variant="caption" color="text.secondary">
+                                  {row.idRow}
+                                </Typography>
+                              </Box>
+                              {typeof row.reconciliation_score === 'number' && (
+                                <Tooltip title="Row confidence (average across linked NE cells)" arrow>
+                                  <Typography variant="caption" sx={{ fontSize: '0.62rem', color: '#4b5b6b' }}>
+                                    {Math.round(row.reconciliation_score * 100)}%
+                                  </Typography>
+                                </Tooltip>
+                              )}
+                            </Box>
+                          ) : (
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
+                              <Typography variant="caption" color="text.secondary">
+                                {row.idRow}
+                              </Typography>
+                              {typeof row.reconciliation_score === 'number' && (
+                                <Tooltip title="Row confidence (average across linked NE cells)" arrow>
+                                  <Typography variant="caption" sx={{ fontSize: '0.62rem', color: '#4b5b6b' }}>
+                                    {Math.round(row.reconciliation_score * 100)}%
+                                  </Typography>
+                                </Tooltip>
+                              )}
+                            </Box>
+                          )}
+                        </TableCell>
+                      )}
+                      {row.data.map((cell, colIndex) => (
+                        (() => {
+                          const reconEntry = getReconciliationEntry(row.idRow, colIndex);
+                          const reconLabel = reconEntry?.final?.name || reconEntry?.final?.id || '';
+                          const hasCandidates = Array.isArray(reconEntry?.candidate_ranking)
+                            ? reconEntry.candidate_ranking.length > 0
+                            : false;
+                          const hasMatch = Array.isArray(reconEntry?.candidate_ranking)
+                            ? reconEntry.candidate_ranking.some((candidate) => candidate.match === true)
+                            : false;
+                          const reconConfidence = reconEntry?.final?.confidence_score;
+                          const providerTag = reconEntry?.provider === 'crocodile' ? 'Croc' : 'LL';
+                          const reconTitle = reconLabel
+                            ? `${reconLabel}${typeof reconConfidence === 'number'
+                              ? ` (${Math.round(reconConfidence * 100)}%)`
+                              : ''}`
+                            : '';
+                          const isCellSelected = selectedCells.has(`${row.idRow}:${colIndex}`);
+                          const isReconciled = Boolean(reconLabel);
+                          const isNil = reconEntry?.provider !== 'crocodile' && !reconLabel && hasCandidates && !hasMatch;
+                          const showCandidatesChip = !reconLabel && hasCandidates && !isNil;
+                          return (
+                        <TableCell
+                          key={colIndex}
+                          sx={{
+                            minWidth: 100,
+                            maxWidth: 320,
+                            verticalAlign: 'top',
+                            padding: compactTable ? '6px 10px' : '8px 12px',
+                            cursor: reconcileScope === 'cell' ? 'pointer' : 'default',
+                            bgcolor: isCellSelected
+                              ? '#e8f0fe'
+                              : isReconciled
+                                ? '#f7fbff'
+                                : 'inherit',
+                            borderBottom: isCellSelected ? '2px solid #90caf9' : undefined
+                          }}
+                          onClick={() => {
+                            if (reconcileScope === 'cell') {
+                              toggleCellSelection(row.idRow, colIndex);
+                            }
+                          }}
+                        >
+                          <TruncatedCell content={cell} maxLength={150} />
+                          {reconLabel && (
+                            <Tooltip title={reconTitle || 'Linked entity'} arrow>
+                              <Chip
+                                label={`${providerTag}: ${reconLabel}`}
+                                size="small"
+                                variant="outlined"
+                                onClick={(event) => openCandidates(event, row.idRow, colIndex, cell, reconEntry?.provider)}
+                                sx={{
+                                  mt: 0.5,
+                                  fontSize: '0.6rem',
+                                  color: '#1a4f8b',
+                                  borderColor: '#c4d8f2',
+                                  bgcolor: '#eef4ff'
                                 }}
-                                compact={compact}
                               />
-                            ) : (
-                              <TruncatedCell content={cell} maxLength={compact ? 100 : 150} compact={compact} />
-                            )}
-                          </TableCell>
-                        );
-                      })}
+                            </Tooltip>
+                          )}
+                          {isNil && (
+                            <Chip
+                              label={`${providerTag}: NIL`}
+                              size="small"
+                              variant="outlined"
+                              onClick={(event) => openCandidates(event, row.idRow, colIndex, cell, reconEntry?.provider)}
+                              sx={{
+                                mt: 0.5,
+                                fontSize: '0.6rem',
+                                color: '#9a6700',
+                                borderColor: '#f3d19e',
+                                bgcolor: '#fff8e1'
+                              }}
+                            />
+                          )}
+                          {showCandidatesChip && (
+                            <Chip
+                              label={`${providerTag}: candidates`}
+                              size="small"
+                              variant="outlined"
+                              onClick={(event) => openCandidates(event, row.idRow, colIndex, cell, reconEntry?.provider)}
+                              sx={{
+                                mt: 0.5,
+                                fontSize: '0.6rem',
+                                color: '#4a5568',
+                                borderColor: '#d4d8df',
+                                bgcolor: '#f5f7fb'
+                              }}
+                            />
+                          )}
+                        </TableCell>
+                          );
+                        })()
+                      ))}
                     </TableRow>
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={(data?.header || []).length} align="center" sx={{ py: 4 }}>
+                    <TableCell
+                      colSpan={(data?.header || []).length + (showRowIndex ? 1 : 0)}
+                      align="center"
+                      sx={{ py: 4 }}
+                    >
                       {loading ? (
                         <CircularProgress size={32} />
                       ) : (
-                        <Typography variant="body1" color="text.secondary">
-                          No rows found{hasActiveFilters ? ' matching the current filters' : ''}
-                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                          <Typography variant="body1" color="text.secondary">
+                            No rows found{hasActiveFilters ? ' matching the current filters' : ''}
+                          </Typography>
+                          {hasActiveFilters && (
+                            <Button size="small" onClick={handleClearFilters}>
+                              Clear filters
+                            </Button>
+                          )}
+                        </Box>
                       )}
                     </TableCell>
                   </TableRow>
@@ -824,19 +2338,21 @@ const TableDataViewer = () => {
             </Table>
           </TableContainer>
         </CardContent>
-        
-        <Box sx={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          p: 2,
-          borderTop: '1px solid rgba(0, 0, 0, 0.12)'
-        }}>
+
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            p: 1.25,
+            borderTop: '1px solid rgba(0, 0, 0, 0.12)'
+          }}
+        >
           <Typography variant="caption" color="text.secondary">
             {data?.rows?.length > 0 ? `${data.rows.length} rows displayed` : 'No rows found'}
             {data?.total_matches && ` (${data.total_matches} total matches)`}
           </Typography>
-          
+
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Button
               disabled={!prevCursor}
@@ -849,20 +2365,22 @@ const TableDataViewer = () => {
             >
               Previous
             </Button>
-            
-            <Box sx={{ 
-              px: 2, 
-              py: 1, 
-              borderRadius: 1, 
-              bgcolor: 'action.selected', 
-              display: 'flex', 
-              alignItems: 'center'
-            }}>
+
+            <Box
+              sx={{
+                px: 2,
+                py: 1,
+                borderRadius: 1,
+                bgcolor: 'action.selected',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
               <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
                 Page {currentPage}
               </Typography>
             </Box>
-            
+
             <Button
               disabled={!nextCursor}
               onClick={handleNextPage}
@@ -875,75 +2393,262 @@ const TableDataViewer = () => {
               Next
             </Button>
           </Box>
-          
-          <Box>
-            <Tooltip title={compact ? "Show more details" : "Compact view"}>
-              <Button 
-                variant="text" 
-                size="small" 
-                color="inherit"
-                onClick={toggleCompact}
-                endIcon={<KeyboardArrowDownIcon sx={{ 
-                  transform: compact ? 'rotate(180deg)' : 'rotate(0)', 
-                  transition: 'transform 0.3s' 
-                }} />}
-              >
-                {compact ? "Expand" : "Compact"}
-              </Button>
-            </Tooltip>
-          </Box>
         </Box>
       </Card>
-      
+
+      <Dialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Export CSV</DialogTitle>
+        <DialogContent dividers>
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={exportIncludeReconciliation}
+                    onChange={(event) => setExportIncludeReconciliation(event.target.checked)}
+                  />
+                }
+                label="Include reconciliation enrichment columns"
+              />
+            </Grid>
+
+            {exportIncludeReconciliation && (
+              <>
+                <Grid item xs={12}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Select enrichment attributes
+                  </Typography>
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+                      gap: 0.5
+                    }}
+                  >
+                    {EXPORT_ENRICHMENT_OPTIONS.map((option) => (
+                      <FormControlLabel
+                        key={option.key}
+                        control={
+                          <Checkbox
+                            size="small"
+                            checked={exportEnrichmentFields.includes(option.key)}
+                            onChange={() => handleToggleExportField(option.key)}
+                          />
+                        }
+                        label={option.label}
+                      />
+                    ))}
+                  </Box>
+                  <FormHelperText>
+                    The selected attributes are appended per NE column, using the latest result per cell across all reconcilers.
+                  </FormHelperText>
+                </Grid>
+              </>
+            )}
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setExportDialogOpen(false)} color="inherit" disabled={exportSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleExport}
+            disabled={exportSubmitting || (exportIncludeReconciliation && exportEnrichmentFields.length === 0)}
+          >
+            {exportSubmitting ? 'Exporting...' : 'Download CSV'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={rerunConfirmOpen}
+        onClose={() => setRerunConfirmOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <WarningAmberIcon color="warning" fontSize="small" />
+          Re-run reconciliation?
+        </DialogTitle>
+        <DialogContent dividers>
+          <Alert severity="warning" sx={{ mb: 1.5 }}>
+            Existing reconciliation results will be updated with the new run.
+          </Alert>
+          <Typography variant="body2" color="text.secondary">
+            Do you want to continue and start a new reconciliation job?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRerunConfirmOpen(false)} color="inherit" disabled={reconcileSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirmRerun}
+            variant="contained"
+            color="warning"
+            disabled={reconcileSubmitting}
+          >
+            {reconcileSubmitting ? 'Starting...' : 'Yes, run again'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <TypeFilterModal
         open={typeFilterOpen}
         onClose={() => setTypeFilterOpen(false)}
         onApplyFilter={handleApplyFilter}
-        columnIndex={selectedFilterColumn}
-        columnName={data?.header?.[selectedFilterColumn] || `Column ${selectedFilterColumn}`}
-        availableTypes={availableColumnTypes || []}
+        columnName="All columns"
+        availableTypes={availableTypes || []}
         loading={loading}
       />
-      
-      {modalOpen && modalData && (
-        <EntityDetailsModal
-          data={modalData.candidates}
-          rowId={modalData.rowId}
-          columnId={modalData.columnId}
-          cellValue={modalData.cellValue}
-          datasetName={datasetName}
-          tableName={tableName}
-          onAnnotationChange={handleAnnotationChange}
-          onClose={() => {
-            setModalOpen(false);
-            setModalData(null);
-          }}
-        />
-      )}
 
-      {/* Export-fields dialog */}
-      <Dialog open={openExportDialog} onClose={handleCloseExport}>
-        <DialogTitle>Select annotation fields to include</DialogTitle>
+      <Dialog open={autoIdentifyOpen} onClose={() => setAutoIdentifyOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Auto identify column types</DialogTitle>
         <DialogContent dividers>
-          <FormGroup>
-            {ANNOTATION_FIELDS.map(field => (
-              <FormControlLabel
-                key={field}
-                control={
-                  <Checkbox
-                    checked={exportFields.includes(field)}
-                    onChange={() => handleExportFieldToggle(field)}
-                  />
-                }
-                label={field}
-              />
-            ))}
-          </FormGroup>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Moose samples table rows and uses your LLM service to assign NE/LIT subtypes. You can
+            tweak the result in the column editor afterward.
+          </Typography>
+          {renderLlmSettingsFields()}
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseExport}>Cancel</Button>
-          <Button onClick={handleConfirmExport} variant="contained">
-            Export
+          <Button onClick={() => setAutoIdentifyOpen(false)} color="inherit">
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSubmitAutoIdentify}
+            disabled={autoIdentifySubmitting}
+          >
+            {autoIdentifySubmitting ? 'Starting…' : 'Run auto identify'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={dpvIdentifyOpen} onClose={() => setDpvIdentifyOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Annotate columns with DPV</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Moose uses your LLM service to map columns to DPV (privacy) types. DPV annotations are
+            shown separately from NE/LIT column types.
+          </Typography>
+          {renderLlmSettingsFields()}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDpvIdentifyOpen(false)} color="inherit">
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSubmitDpvAnnotation}
+            disabled={dpvIdentifySubmitting}
+          >
+            {dpvIdentifySubmitting ? 'Starting...' : 'Run DPV annotation'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={columnEditorOpen} onClose={() => setColumnEditorOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Edit Column Types</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Update the NE/LIT classification for each column. Semantic (KG) types are assigned separately to NE columns.
+          </Typography>
+          <Grid container spacing={2}>
+            {(data?.header || []).map((header, idx) => (
+              <Grid item xs={12} md={6} key={idx}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    border: '1px solid #eee',
+                    borderRadius: 1,
+                    p: 1,
+                    bgcolor: '#fafafa'
+                  }}
+                >
+                  <Chip label={`Col ${idx}: ${header}`} sx={{ mr: 2 }} color="primary" />
+                  <FormControl size="small" sx={{ minWidth: 110, mr: 2 }}>
+                    <InputLabel>Type</InputLabel>
+                    <Select
+                      value={columnClassification[idx]?.type || 'IGNORED'}
+                      label="Type"
+                      onChange={e => setColumnClassification(prev => ({
+                        ...prev,
+                        [idx]: {
+                          type: e.target.value,
+                          subtype: '',
+                          rawSubtype: '',
+                          derivedSubtype: ''
+                        }
+                      }))}
+                    >
+                      {COLUMN_TYPES.map((type) => (
+                        <MenuItem key={type} value={type}>{type}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  {columnClassification[idx]?.type === 'NE' && (
+                    <FormControl size="small" sx={{ minWidth: 130 }}>
+                      <InputLabel>Subtype</InputLabel>
+                      <Select
+                        value={columnClassification[idx]?.subtype || ''}
+                        label="Subtype"
+                        onChange={e => setColumnClassification(prev => ({
+                          ...prev,
+                          [idx]: {
+                            ...prev[idx],
+                            subtype: e.target.value,
+                            rawSubtype: e.target.value,
+                            derivedSubtype: e.target.value
+                          }
+                        }))}
+                      >
+                        {buildSubtypeOptions('NE', columnClassification[idx]?.subtype).map((subtype) => (
+                          <MenuItem key={subtype} value={subtype}>{subtype}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )}
+                  {columnClassification[idx]?.type === 'LIT' && (
+                    <FormControl size="small" sx={{ minWidth: 130 }}>
+                      <InputLabel>Subtype</InputLabel>
+                      <Select
+                        value={columnClassification[idx]?.subtype || ''}
+                        label="Subtype"
+                        onChange={e => setColumnClassification(prev => ({
+                          ...prev,
+                          [idx]: {
+                            ...prev[idx],
+                            subtype: e.target.value,
+                            rawSubtype: '',
+                            derivedSubtype: e.target.value
+                          }
+                        }))}
+                      >
+                        {buildSubtypeOptions('LIT', columnClassification[idx]?.subtype).map((subtype) => (
+                          <MenuItem key={subtype} value={subtype}>{subtype}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )}
+                </Box>
+              </Grid>
+            ))}
+          </Grid>
+          {columnEditorError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {columnEditorError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setColumnEditorOpen(false)} color="inherit">
+            Cancel
+          </Button>
+          <Button variant="contained" onClick={handleSaveColumnEditor}>
+            Save
           </Button>
         </DialogActions>
       </Dialog>

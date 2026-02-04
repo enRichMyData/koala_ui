@@ -30,6 +30,9 @@ function Login({ setLoggedIn }) {
 
       // Store token
       localStorage.setItem('token', response.data.access_token);
+      if (response.data.refresh_token) {
+        localStorage.setItem('refresh_token', response.data.refresh_token);
+      }
 
       // Also store user ID - extract from email or use email directly as ID
       const userId = email.split('@')[0] || 'default_user';

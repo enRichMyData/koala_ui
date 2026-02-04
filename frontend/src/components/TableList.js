@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getTables, deleteTable, uploadTable, exportTableCsv } from '../services/apiServices';
+import {
+  getTables,
+  deleteTable,
+  uploadTable,
+  exportTableCsv,
+  getLlmSettings,
+  updateLlmSettings
+} from '../services/apiServices';
 import Papa from 'papaparse';
 import {
   List,
@@ -34,6 +41,7 @@ import {
   TableRow,
   FormControlLabel,
   Checkbox,
+  TextField,
 } from '@mui/material';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -41,11 +49,7 @@ import FileUploadIcon from '@mui/icons-material/FileUpload';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
-
-const LIT_TYPES = ["NUMBER", "STRING", "DATETIME"];
-const NER_TYPES = ["LOCATION", "ORGANIZATION", "PERSON", "OTHER"];
-const COLUMN_TYPES = ["LIT", "NE", "IGNORED"];
-const EXPORT_FIELD_OPTIONS = ['id', 'name', 'description', 'types', 'score'];
+import { COLUMN_TYPES, LIT_TYPES, NER_TYPES } from '../constants/columnTypes';
 
 const TableList = () => {
   const navigate = useNavigate();
@@ -56,7 +60,6 @@ const TableList = () => {
   const [loading, setLoading] = useState(false);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
-  const [openExportDialog, setOpenExportDialog] = useState(false);
   const [selectedTable, setSelectedTable] = useState(null);
   const [file, setFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -67,8 +70,19 @@ const TableList = () => {
   const [columnClassification, setColumnClassification] = useState({});
   const [showColumnTypePanel, setShowColumnTypePanel] = useState(false);
   const [csvPreviewRows, setCsvPreviewRows] = useState([]);
-  const [exportFields, setExportFields] = useState(EXPORT_FIELD_OPTIONS);
-  const [exportTarget, setExportTarget] = useState(null);
+  const [autoDetectColumns, setAutoDetectColumns] = useState(false);
+  const [autoIdentifyConfig, setAutoIdentifyConfig] = useState({
+    provider: '',
+    model: ''
+  });
+  const [llmApiKey, setLlmApiKey] = useState('');
+  const [llmHasApiKey, setLlmHasApiKey] = useState(false);
+  const [showLlmApiKeyInput, setShowLlmApiKeyInput] = useState(false);
+  const [llmOptions, setLlmOptions] = useState({
+    providers: [],
+    endpoints: []
+  });
+  const [llmSettingsError, setLlmSettingsError] = useState(null);
 
   const currentHistoryRef = useRef(paginationHistory[historyIndex]);
   useEffect(() => {
@@ -86,8 +100,7 @@ const TableList = () => {
           options.nextCursor = historyItem.nextCursor;
         }
         
-        const encodedName = encodeURIComponent(datasetName);
-        const response = await getTables(encodedName, historyItem.page, 10, options);
+        const response = await getTables(datasetName, historyItem.page, 10, options);
         
         if (response.data && response.data.length > 0) {
           setTables(response.data);
@@ -119,6 +132,48 @@ const TableList = () => {
 
     fetchTables();
   }, [datasetName, historyIndex, paginationHistory]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadSettings = async () => {
+      try {
+        const settings = await getLlmSettings();
+        if (!isMounted) return;
+        const providers = settings?.allowed_providers || [];
+        const configuredProvider = settings?.provider || '';
+        const providerValid = !configuredProvider || providers.length === 0 || providers.includes(configuredProvider);
+        setAutoIdentifyConfig({
+          provider: providerValid ? configuredProvider : '',
+          model: settings?.model || ''
+        });
+        const hasKey = Boolean(settings?.has_api_key);
+        setLlmHasApiKey(hasKey);
+        setShowLlmApiKeyInput(!hasKey);
+        setLlmOptions({
+          providers,
+          endpoints: settings?.allowed_endpoints || []
+        });
+        setLlmSettingsError(
+          providerValid ? null : 'Saved LLM provider is not supported by this server.'
+        );
+      } catch (err) {
+        const storedProvider = localStorage.getItem('koala.llmProvider') || '';
+        const storedModel = localStorage.getItem('koala.llmModel') || '';
+        if (!isMounted) return;
+        setAutoIdentifyConfig({
+          provider: storedProvider,
+          model: storedModel
+        });
+        setLlmHasApiKey(false);
+        setShowLlmApiKeyInput(true);
+        setLlmSettingsError('Unable to load LLM settings from the profile.');
+      }
+    };
+    loadSettings();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handlePreviousPage = () => {
     if (historyIndex > 0) {
@@ -171,6 +226,7 @@ const TableList = () => {
     setColumnClassification({});
     setShowColumnTypePanel(false);
     setCsvPreviewRows([]);
+    setAutoDetectColumns(false);
   };
 
   const handleFileChange = (event) => {
@@ -181,6 +237,7 @@ const TableList = () => {
     setColumnClassification({});
     setShowColumnTypePanel(false);
     setCsvPreviewRows([]);
+    setAutoDetectColumns(false);
 
     if (selectedFile) {
       Papa.parse(selectedFile, {
@@ -230,6 +287,7 @@ const TableList = () => {
         hasClassification = true;
       } else if (type === "LIT" && subtype) {
         LIT[idx] = subtype;
+        hasClassification = true;
       }
       else {
         IGNORED.push(idx.toString());
@@ -256,7 +314,29 @@ const TableList = () => {
       if (showColumnTypePanel) {
         classificationPayload = buildColumnClassificationPayload();
       }
-      await uploadTable(datasetName, file, classificationPayload);
+      const llmProvider = autoIdentifyConfig.provider.trim();
+      const llmModel = autoIdentifyConfig.model.trim();
+      if (autoDetectColumns) {
+        if (llmOptions.providers.length > 0 && llmProvider && !llmOptions.providers.includes(llmProvider)) {
+          setError('Selected LLM provider is not supported.');
+          return;
+        }
+        await updateLlmSettings({
+          provider: llmProvider || null,
+          model: llmModel || null,
+          api_key: showLlmApiKeyInput ? (llmApiKey.trim() || undefined) : undefined
+        });
+        localStorage.setItem('koala.llmProvider', llmProvider);
+        localStorage.setItem('koala.llmModel', llmModel);
+        if (showLlmApiKeyInput && llmApiKey.trim()) {
+          setLlmHasApiKey(true);
+          setLlmApiKey('');
+          setShowLlmApiKeyInput(false);
+        }
+      }
+      await uploadTable(datasetName, file, classificationPayload, {
+        autoDetect: autoDetectColumns
+      });
       setUploadProgress(100);
 
       const response = await getTables(datasetName, currentPage);
@@ -270,26 +350,14 @@ const TableList = () => {
     }
   };
 
-  const handleToggleExportField = (field) =>
-    setExportFields(prev =>
-      prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field]
-    );
-
-  const handleOpenExportDialog = (tableName) => {
-    setExportTarget(tableName);
-    setOpenExportDialog(true);
-  };
-
-  const handleCloseExportDialog = () => setOpenExportDialog(false);
-
-  const handleConfirmExport = async () => {
+  const handleExport = async (tableName) => {
     try {
       setLoading(true);
-      const res = await exportTableCsv(datasetName, exportTarget, exportFields);
+      const res = await exportTableCsv(datasetName, tableName);
       const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.setAttribute('download', `${datasetName}_${exportTarget}_export.csv`);
+      link.setAttribute('download', `${datasetName}_${tableName}_export.csv`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -298,7 +366,6 @@ const TableList = () => {
       setError('Export failed: ' + (err.message || ''));
     } finally {
       setLoading(false);
-      handleCloseExportDialog();
     }
   };
 
@@ -345,7 +412,7 @@ const TableList = () => {
               to={`/dataset/${encodeURIComponent(datasetName)}/table/${encodeURIComponent(table.tableName)}`}
               sx={{ 
                 borderLeft: `4px solid ${
-                  table.status === 'DONE' ? 'green' : 
+                  table.status === 'READY' || table.status === 'DONE' ? 'green' :
                   table.status === 'processing' || table.status === 'DOING' ? 'orange' : 'grey'
                 }`,
                 mb: 1
@@ -360,6 +427,7 @@ const TableList = () => {
                   <>
                     <Typography component="span" variant="body2">
                       Rows: {table.totalRows} | Status: {table.status || 'Unknown'}
+                      {table.classificationStatus && ` | Types: ${table.classificationStatus}`}
                     </Typography>
                     {table.createdAt && (
                       <Typography component="span" variant="body2" sx={{ ml: 2 }}>
@@ -374,11 +442,11 @@ const TableList = () => {
                   edge="end"
                   aria-label="export"
                   sx={{ mr: 1 }}
-                  disabled={table.status !== 'DONE'}
+                  disabled={table.status !== 'READY'}
                   onClick={e => {
                     e.stopPropagation();
                     e.preventDefault();
-                    handleOpenExportDialog(table.tableName);
+                    handleExport(table.tableName);
                   }}
                 >
                   <FileDownloadIcon />
@@ -467,7 +535,7 @@ const TableList = () => {
             <Box sx={{ mt: 3, mb: 2 }}>
               <Alert severity="info" sx={{ mb: 1 }}>
                 <b>Column classification is optional.</b> <br />
-                If you do <b>not</b> specify column types, Koala will <b>automatically classify columns</b> using its entity linking algorithm.
+                You can set column types manually now or request automatic identification (placeholder).
               </Alert>
               <Typography variant="body2" color="text.secondary">
                 <b>Tip:</b> You can preview the first 5 rows of your table below to help you decide if you want to specify column types.
@@ -572,17 +640,102 @@ const TableList = () => {
                   ))}
                 </Grid>
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                  <b>Tip:</b> Columns set as <b>IGNORED</b> will not be used for annotation.<br />
-                  <b>If you leave all columns as IGNORED, Koala will automatically classify columns for you.</b>
+                  <b>Tip:</b> Columns set as <b>IGNORED</b> will not be tagged with types.<br />
+                  You can update column typing later from the table view.
                 </Typography>
               </Box>
             )}
 
-            {!showColumnTypePanel || Object.values(columnClassification).every(c => c.type === "IGNORED") ? (
-              <Alert severity="info" sx={{ mt: 2 }}>
-                <b>Automatic column classification will be applied by Koala.</b>
-              </Alert>
-            ) : null}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={autoDetectColumns}
+                  onChange={(e) => setAutoDetectColumns(e.target.checked)}
+                />
+              }
+              label="Auto-identify column types after upload (Moose)"
+            />
+
+            {autoDetectColumns && (
+              <Box sx={{ mt: 2 }}>
+                {llmSettingsError && (
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    {llmSettingsError}
+                  </Alert>
+                )}
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    {llmOptions.providers.length > 0 ? (
+                      <FormControl fullWidth>
+                        <InputLabel>LLM provider</InputLabel>
+                        <Select
+                          label="LLM provider"
+                          value={autoIdentifyConfig.provider}
+                          onChange={(e) => setAutoIdentifyConfig(prev => ({
+                            ...prev,
+                            provider: e.target.value
+                          }))}
+                        >
+                          <MenuItem value="">
+                            Server default
+                          </MenuItem>
+                          {llmOptions.providers.map((provider) => (
+                            <MenuItem key={provider} value={provider}>{provider}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    ) : (
+                      <TextField
+                        label="LLM provider"
+                        fullWidth
+                        value={autoIdentifyConfig.provider}
+                        placeholder="openrouter or ollama"
+                        onChange={(e) => setAutoIdentifyConfig(prev => ({
+                          ...prev,
+                          provider: e.target.value
+                        }))}
+                        helperText="No providers configured on the server."
+                      />
+                    )}
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      label="LLM model"
+                      fullWidth
+                      value={autoIdentifyConfig.model}
+                      placeholder="e.g. gpt-4o-mini"
+                      onChange={(e) => setAutoIdentifyConfig(prev => ({
+                        ...prev,
+                        model: e.target.value
+                      }))}
+                      helperText="Leave blank to use the server default."
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    {!showLlmApiKeyInput && llmHasApiKey ? (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          LLM API key is stored for your profile.
+                        </Typography>
+                        <Button size="small" onClick={() => setShowLlmApiKeyInput(true)}>
+                          Update key
+                        </Button>
+                      </Box>
+                    ) : (
+                      <TextField
+                        label="LLM API key"
+                        type="password"
+                        fullWidth
+                        value={llmApiKey}
+                        placeholder={llmHasApiKey ? 'Stored in profile (leave blank to keep)' : 'Enter API key'}
+                        onChange={(e) => setLlmApiKey(e.target.value)}
+                        helperText={llmHasApiKey ? 'Key is stored for your profile.' : 'Key will be stored for your profile.'}
+                      />
+                    )}
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
 
             {uploadProgress > 0 && (
               <Box sx={{ width: '100%', mt: 2 }}>
@@ -616,29 +769,6 @@ const TableList = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={openExportDialog} onClose={handleCloseExportDialog}>
-        <DialogTitle>Select annotation fields to include</DialogTitle>
-        <DialogContent dividers>
-          {EXPORT_FIELD_OPTIONS.map(field => (
-            <FormControlLabel
-              key={field}
-              control={
-                <Checkbox
-                  checked={exportFields.includes(field)}
-                  onChange={() => handleToggleExportField(field)}
-                />
-              }
-              label={field}
-            />
-          ))}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseExportDialog}>Cancel</Button>
-          <Button variant="contained" onClick={handleConfirmExport}>
-            Export
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 };

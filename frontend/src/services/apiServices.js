@@ -1,493 +1,398 @@
 import axios from 'axios';
-import * as jose from 'jose';
 
-const CROCODILE_API_URL = process.env.REACT_APP_CROCODILE_URL;
-const CROCODILE_SECRET = process.env.REACT_APP_CROCODILE_SECRET || 'secret';
-const LAMAPI_URL = process.env.REACT_APP_LAMAPI_URL;
-const LAMAPI_TOKEN = process.env.REACT_APP_LAMAPI_TOKEN;
+const BACKEND_API_URL = process.env.REACT_APP_BACKEND_URL;
+const encodeSegment = (value = '') => encodeURIComponent(value);
 
-// Helper function to get user email or ID from localStorage
-const getUserEmail = () => {
-  // First try to get the actual email from localStorage
-  const email = localStorage.getItem('userEmail');
-  if (email) return email;
-  
-  // Fall back to userId if email is not available
-  return localStorage.getItem('userId') || 'default_user'; 
-};
-
-// Helper function to generate a JWT token with jose
-const generateCrocodileToken = async () => {
-  const encoder = new TextEncoder();
-  // Use email as the key in the payload to match what Crocodile expects
-  const payload = { email: getUserEmail() };
-  
-  // Convert the secret to a Uint8Array
-  const secretKey = encoder.encode(CROCODILE_SECRET);
-  
-  // Sign the token with the HS256 algorithm
-  const token = await new jose.SignJWT(payload)
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('1h')  // Token expires in 1 hour
-    .sign(secretKey);
-  
-  return token;
-};
-
-// Crocodile API Client
-const crocodileApiClient = axios.create({
-  baseURL: CROCODILE_API_URL,
+const authClient = axios.create({
+  baseURL: BACKEND_API_URL
 });
 
-// Add a custom params serializer to handle arrays correctly
-crocodileApiClient.interceptors.request.use(config => {
-  // If there are array parameters that need repeating (like include_types, exclude_types)
+const backendApiClient = axios.create({
+  baseURL: BACKEND_API_URL
+});
+
+backendApiClient.interceptors.request.use(config => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+
   if (config.params) {
-    const newParams = new URLSearchParams();
-    
+    const params = new URLSearchParams();
     Object.entries(config.params).forEach(([key, value]) => {
       if (Array.isArray(value)) {
-        // For arrays, add each value with the same key
         value.forEach(item => {
-          newParams.append(key, item);
+          if (item !== undefined && item !== null) {
+            params.append(key, item);
+          }
         });
       } else if (value !== undefined && value !== null) {
-        // For non-arrays, just add the parameter
-        newParams.append(key, value);
+        params.append(key, value);
       }
     });
-    
-    // Replace the serialized params string in the URL
-    config.paramsSerializer = () => newParams.toString();
+    config.paramsSerializer = () => params.toString();
   }
   return config;
 });
 
-// Add auth token to every Crocodile API request
-crocodileApiClient.interceptors.request.use(async config => {
-  try {
-    const token = await generateCrocodileToken();
-    config.headers.Authorization = `Bearer ${token}`;
-  } catch (error) {
-    console.error('Error generating token:', error);
+let isRefreshing = false;
+let refreshQueue = [];
+
+const queueRefresh = (callback) => {
+  refreshQueue.push(callback);
+};
+
+const resolveRefreshQueue = (token) => {
+  refreshQueue.forEach(callback => callback(token));
+  refreshQueue = [];
+};
+
+const refreshAccessToken = async () => {
+  const refreshToken = localStorage.getItem('refresh_token');
+  if (!refreshToken) {
+    throw new Error('Missing refresh token');
   }
-  return config;
-});
-
-// Simple retry interceptor for specific status codes for Crocodile API
-crocodileApiClient.interceptors.response.use(null, async (error) => {
-  const { config, response } = error;
-  const maxRetries = 3;
-  if (response && response.status >= 500 && config.retryCount < maxRetries) {
-    config.retryCount = config.retryCount ? config.retryCount + 1 : 1;
-    return crocodileApiClient(config);  // Retry the request with the updated config
+  const response = await authClient.post('/refresh', {
+    refresh_token: refreshToken
+  });
+  const newAccessToken = response.data?.access_token;
+  const newRefreshToken = response.data?.refresh_token;
+  if (newAccessToken) {
+    localStorage.setItem('token', newAccessToken);
   }
-  return Promise.reject(error);
-});
+  if (newRefreshToken) {
+    localStorage.setItem('refresh_token', newRefreshToken);
+  }
+  return newAccessToken;
+};
 
-// LamAPI Client
-const lamapiClient = axios.create({
-  baseURL: LAMAPI_URL,
-});
+backendApiClient.interceptors.response.use(
+  response => response,
+  async error => {
+    const originalRequest = error.config;
+    if (!originalRequest || originalRequest._retry) {
+      return Promise.reject(error);
+    }
+    if (originalRequest.url?.includes('/login') || originalRequest.url?.includes('/refresh')) {
+      return Promise.reject(error);
+    }
+    if (error.response?.status === 401) {
+      if (isRefreshing) {
+        return new Promise(resolve => {
+          queueRefresh((token) => {
+            if (token) {
+              originalRequest.headers = originalRequest.headers || {};
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
+            resolve(backendApiClient(originalRequest));
+          });
+        });
+      }
+      originalRequest._retry = true;
+      isRefreshing = true;
+      try {
+        const token = await refreshAccessToken();
+        isRefreshing = false;
+        resolveRefreshQueue(token);
+        if (token) {
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+        }
+        return backendApiClient(originalRequest);
+      } catch (refreshError) {
+        isRefreshing = false;
+        refreshQueue = [];
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
+        return Promise.reject(refreshError);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
-// Attach token to every request for LamAPI
-lamapiClient.interceptors.request.use(config => {
-  config.params = config.params || {};
-  config.params['token'] = LAMAPI_TOKEN;
-  return config;
-});
 
-// Crocodile API functions
+const buildPaginationParams = (page, perPage, options = {}) => {
+  const params = {
+    page,
+    per_page: perPage
+  };
+  if (options.nextCursor) {
+    params.next_cursor = options.nextCursor;
+  } else if (options.prevCursor) {
+    params.prev_cursor = options.prevCursor;
+  }
+  return params;
+};
+
 const createDataset = async (datasetName) => {
-  try {
-    const response = await crocodileApiClient.post('/datasets', {
-      dataset_name: datasetName
-    }, {
-      params: { user_id: getUserEmail() }
-    });
-    return response.data.dataset;
-  } catch (error) {
-    console.error('Error creating dataset:', error);
-    throw error;
-  }
+  const response = await backendApiClient.post('/datasets', {
+    dataset_name: datasetName
+  });
+  return response.data;
 };
 
 const getDatasets = async (page = 1, perPage = 10, options = {}) => {
-  try {
-    const params = {
-      limit: perPage,
-      user_id: getUserEmail()
-    };
-    
-    if (options.nextCursor) {
-      params.next_cursor = options.nextCursor;
-    } else if (options.prevCursor) {
-      params.prev_cursor = options.prevCursor;
-    }
-    
-    const response = await crocodileApiClient.get('/datasets', {
-      params: params
-    });
-    
-    console.log('API Response:', response.data);
-    
-    // Transform data for compatibility with existing UI
-    const transformedData = {
-      data: response.data.data.map(ds => ({
-        datasetName: ds.dataset_name,
-        totalTables: ds.total_tables,
-        totalRows: ds.total_rows,
-        createdAt: ds.created_at
-      })),
-      pagination: {
-        currentPage: page,
-        totalPages: null, // Total pages cannot be determined with cursor-based pagination
-        next_cursor: response.data.pagination.next_cursor,
-        prev_cursor: response.data.pagination.prev_cursor
-      }
-    };
-    
-    return transformedData;
-  } catch (error) {
-    console.error('Error retrieving datasets:', error);
-    throw error;
-  }
-};
-
-const uploadTable = async (datasetName, file, columnClassification = null) => {
-  const formData = new FormData();
-  formData.append('file', file);
-
-  const tableName = file.name.replace(/\.[^/.]+$/, "");
-
-  // Always append column_classification, as JSON string or empty string
-  if (columnClassification) {
-    formData.append('column_classification', JSON.stringify(columnClassification));
-  } else {
-    formData.append('column_classification', '');
-  }
-
-  try {
-    const response = await crocodileApiClient.post(`/datasets/${datasetName}/tables/csv`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-      params: {
-        table_name: tableName,
-        user_id: getUserEmail()
-      }
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error uploading table:', error);
-    throw error;
-  }
-};
-
-const getTables = async (datasetName, page = 1, perPage = 10, options = {}) => {
-  try {
-    const params = {
-      limit: perPage,
-      user_id: getUserEmail()
-    };
-    
-    if (options.nextCursor) {
-      params.next_cursor = options.nextCursor;
-    } else if (options.prevCursor) {
-      params.prev_cursor = options.prevCursor;
-    }
-    
-    const response = await crocodileApiClient.get(`/datasets/${datasetName}/tables`, {
-      params: params
-    });
-    
-    console.log('API Response:', response.data);
-    
-    // Transform data for compatibility with existing UI
-    const transformedData = {
-      data: response.data.data.map(table => ({
-        tableName: table.table_name,
-        totalRows: table.total_rows,
-        createdAt: table.created_at,
-        status: table.status || 'processing'
-      })),
-      pagination: {
-        currentPage: page,
-        totalPages: Math.ceil(response.data.data.length / perPage) || 1,
-        next_cursor: response.data.pagination.next_cursor,
-        prev_cursor: response.data.pagination.prev_cursor
-      }
-    };
-    
-    return transformedData;
-  } catch (error) {
-    console.error('Error retrieving tables:', error);
-    throw error;
-  }
-};
-
-const getTableData = async (datasetName, tableName, perPage = 10, options = {}) => {
-  try {
-    // Support for cursor-based pagination
-    const params = {
-      limit: perPage,
-      user_id: getUserEmail()
-    };
-    
-    // Add next_cursor or prev_cursor if provided (but not both)
-    if (options.nextCursor) {
-      params.next_cursor = options.nextCursor;
-    } else if (options.prevCursor) {
-      params.prev_cursor = options.prevCursor;
-    }
-    
-    // Add search parameters if provided
-    if (options.search) {
-      params.search = options.search;
-    }
-    
-    // Add column parameter if provided
-    if (options.column !== undefined && options.column !== null) {
-      params.column = options.column;
-    }
-    
-    // Add search_columns if provided
-    if (options.searchColumns && options.searchColumns.length > 0) {
-      params.search_columns = options.searchColumns;
-    }
-    
-    // Simplified handling for type filtering parameters
-    if (options.includeTypes && options.includeTypes.length > 0) {
-      params.include_types = options.includeTypes;
-    }
-    
-    if (options.excludeTypes && options.excludeTypes.length > 0) {
-      params.exclude_types = options.excludeTypes;
-    }
-    
-    // Add sorting parameters
-    if (options.sortBy) {
-      params.sort_by = options.sortBy;
-    }
-    
-    if (options.sortDirection) {
-      params.sort_direction = options.sortDirection;
-    }
-    
-    console.log('Sending params:', params);
-    const response = await crocodileApiClient.get(`/datasets/${datasetName}/tables/${tableName}`, {
-      params: params
-    });
-    
-    console.log('API Response:', response.data);
-
-    // Return the response directly to maintain original format
-    return response.data;
-  } catch (error) {
-    console.error('Error retrieving table data:', error);
-    throw error;
-  }
+  const params = buildPaginationParams(page, perPage, options);
+  const response = await backendApiClient.get('/datasets', { params });
+  return response.data;
 };
 
 const deleteDataset = async (datasetName) => {
-  try {
-    const response = await crocodileApiClient.delete(`/datasets/${datasetName}`, {
-      params: { user_id: getUserEmail() }
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error deleting dataset:', error);
-    throw error;
+  const response = await backendApiClient.delete(`/datasets/${encodeSegment(datasetName)}`);
+  return response.data;
+};
+
+const uploadTable = async (datasetName, file, columnClassification = null, options = {}) => {
+  const resolvedOptions = typeof options === 'boolean'
+    ? { autoDetect: options }
+    : options;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  if (columnClassification) {
+    formData.append('column_classification', JSON.stringify(columnClassification));
   }
+  if (resolvedOptions.autoDetect) {
+    formData.append('auto_detect', 'true');
+  }
+  if (resolvedOptions.llmProvider) {
+    formData.append('llm_provider', resolvedOptions.llmProvider);
+  }
+  if (resolvedOptions.llmModel) {
+    formData.append('llm_model', resolvedOptions.llmModel);
+  }
+
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/upload`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+  return response.data;
+};
+
+const getTables = async (datasetName, page = 1, perPage = 10, options = {}) => {
+  const params = buildPaginationParams(page, perPage, options);
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables`,
+    { params }
+  );
+  return response.data;
 };
 
 const deleteTable = async (datasetName, tableName) => {
-  try {
-    const response = await crocodileApiClient.delete(`/datasets/${datasetName}/tables/${tableName}`, {
-      params: { user_id: getUserEmail() }
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error deleting table:', error);
-    throw error;
-  }
+  const response = await backendApiClient.delete(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}`
+  );
+  return response.data;
 };
 
-// Enhanced LamAPI function
-const fetchCandidates = async (query, options = {}) => {
-  try {
-    const params = {
-      name: query,
-      limit: options.limit || 100,
-      kg: 'wikidata',
-      cache: false // Always set cache to false as required
-    };
-    
-    // Add optional parameters if provided
-    if (options.kind) params.kind = options.kind;
-    if (options.ner_type) params.ner_type = options.ner_type;
-    if (options.types) params.types = options.types;
-  
-    console.log('Fetching candidates with params:', params);
-    // Make the API call to LamAPI
-    const response = await lamapiClient.get('/lookup/entity-retrieval', {
-      params: params
-    });
-    console.log('LamAPI Response:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching candidates:', error);
-    throw error;
+const getTableData = async (datasetName, tableName, perPage = 10, options = {}) => {
+  const params = {
+    per_page: perPage,
+    page: options.page || 1,
+    search: options.search,
+    sort_by: options.sortBy,
+    sort_direction: options.sortDirection
+  };
+  if (options.sortConfidenceColumn !== undefined && options.sortConfidenceColumn !== null && options.sortConfidenceColumn !== '') {
+    params.sort_confidence_column = options.sortConfidenceColumn;
   }
+
+  if (options.nextCursor) {
+    params.next_cursor = options.nextCursor;
+  } else if (options.prevCursor) {
+    params.prev_cursor = options.prevCursor;
+  }
+  if (options.includeTypes?.length) {
+    params.include_types = options.includeTypes;
+  }
+  if (options.excludeTypes?.length) {
+    params.exclude_types = options.excludeTypes;
+  }
+  if (options.includeNeTypes?.length) {
+    params.include_ne_types = options.includeNeTypes;
+  }
+  if (options.excludeNeTypes?.length) {
+    params.exclude_ne_types = options.excludeNeTypes;
+  }
+  if (options.reconciliationProvider) {
+    params.reconciliation_provider = options.reconciliationProvider;
+  }
+
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}`,
+    { params }
+  );
+  return response.data;
 };
 
-// Function to search for entity types (to get QIDs for types)
-const fetchEntityTypes = async (query) => {
-  try {
-    const response = await lamapiClient.get('/lookup/entity-retrieval', {
-      params: {
-        name: query,
-        limit: 50,
-        kg: 'wikidata',
-        cache: false,
-        kind: 'type' // Request types specifically
-      }
-    });
-    console.log('Entity Types Response:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching entity types:', error);
-    throw error;
+const exportTableCsv = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.includeReconciliation !== undefined) {
+    params.include_reconciliation = options.includeReconciliation;
   }
-};
-
-// Function to update an annotation with the correct endpoint
-const updateAnnotation = async (datasetName, tableName, rowId, columnId, entityData) => {
-  try {
-    // Format the request based on the required schema
-    const requestBody = {
-      entity_id: entityData.id,
-      match: true,
-      score: entityData.score || 1,
-      notes: "",
-      candidate_info: {
-        id: entityData.id,
-        name: entityData.name || "",
-        description: entityData.description || "",
-        types: entityData.types || []
-      }
-    };
-
-    console.log(`Updating annotation for ${datasetName}/${tableName}, row ${rowId}, column ${columnId}`, requestBody);
-    
-    // Use the row/column specific endpoint
-    const response = await crocodileApiClient.put(
-      `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}`,
-      requestBody,
-      {
-        params: { user_id: getUserEmail() }
-      }
-    );
-    return response.data;
-  } catch (error) {
-    console.error('Error updating annotation:', error);
-    throw error;
+  if (options.enrichmentFields?.length) {
+    params.enrichment_fields = options.enrichmentFields;
   }
-};
-
-// Function to delete a specific entity from cell annotations
-const deleteAnnotation = async (datasetName, tableName, rowId, columnId, entityId) => {
-  try {
-    // Using the RESTful endpoint structure for deleting a specific entity
-    const response = await crocodileApiClient.delete(
-      `/datasets/${datasetName}/tables/${tableName}/rows/${rowId}/columns/${columnId}/candidates/${entityId}`,
-      {
-        params: { user_id: getUserEmail() }
-      }
-    );
-    console.log(`Successfully deleted entity ${entityId} from ${datasetName}/${tableName}, row ${rowId}, column ${columnId}`);
-    return response.data;
-  } catch (error) {
-    console.error('Error deleting annotation:', error);
-    throw error;
-  }
-};
-
-// Streaming status fetcher for table progress
-const getTableStatus = async (datasetName, tableName, onProgress) => {
-  // onProgress: function to call with each progress update (parsed JSON)
-  const CROCODILE_API_URL = process.env.REACT_APP_CROCODILE_URL;
-  const url = `${CROCODILE_API_URL.replace(/\/$/, '')}/datasets/${encodeURIComponent(datasetName)}/tables/${encodeURIComponent(tableName)}/status`;
-
-  // Get a fresh JWT token for the request
-  const token = await generateCrocodileToken();
-
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'accept': 'application/json, text/event-stream'
-    }
-  });
-
-  if (!response.body) throw new Error('No response body for streaming status');
-
-  const reader = response.body.getReader();
-  let buffer = '';
-  let done = false;
-
-  while (!done) {
-    const { value, done: streamDone } = await reader.read();
-    if (streamDone) break;
-    buffer += new TextDecoder().decode(value);
-
-    // Split by newlines (SSE events are separated by \n\n)
-    let parts = buffer.split('\n\n');
-    buffer = parts.pop(); // last part may be incomplete
-
-    for (const part of parts) {
-      // Each event: look for "data: {json}"
-      const match = part.match(/^data:\s*(.*)$/m);
-      if (match) {
-        try {
-          const json = JSON.parse(match[1]);
-          if (onProgress) onProgress(json.data || json);
-          if ((json.data && json.data.status === 'DONE') || json.status === 'DONE') {
-            done = true;
-            break;
-          }
-        } catch (e) {
-          // ignore parse errors
-        }
-      }
-    }
-  }
-};
-
-// Export enriched CSV for a given table
-const exportTableCsv = async (datasetName, tableName, fields = []) => {
-  const response = await crocodileApiClient.get(
-    `/datasets/${datasetName}/tables/${tableName}/export`,
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/export`,
     {
-      params: { fields },
-      responseType: 'blob'
+      responseType: 'blob',
+      params
     }
   );
   return response;
 };
 
-export { 
-  getDatasets, 
-  getTables, 
-  getTableData, 
-  deleteDataset, 
-  deleteTable, 
-  fetchCandidates, 
-  fetchEntityTypes,
-  updateAnnotation,
-  deleteAnnotation,
-  createDataset, 
+const updateColumnClassification = async (datasetName, tableName, classification) => {
+  const response = await backendApiClient.put(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/classification`,
+    { classification }
+  );
+  return response.data;
+};
+
+const requestColumnIdentification = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.llmProvider) {
+    params.llm_provider = options.llmProvider;
+  }
+  if (options.llmModel) {
+    params.llm_model = options.llmModel;
+  }
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/identify`,
+    null,
+    { params }
+  );
+  return response.data;
+};
+
+const requestDpvAnnotation = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.llmProvider) {
+    params.llm_provider = options.llmProvider;
+  }
+  if (options.llmModel) {
+    params.llm_model = options.llmModel;
+  }
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/dpv/annotate`,
+    null,
+    { params }
+  );
+  return response.data;
+};
+
+const getColumnIdentifyStatus = async (datasetName, tableName) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/identify/status`
+  );
+  return response.data;
+};
+
+const getDpvStatus = async (datasetName, tableName) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/dpv/status`
+  );
+  return response.data;
+};
+
+const getLlmSettings = async () => {
+  const response = await backendApiClient.get('/users/me/llm-settings');
+  return response.data;
+};
+
+const updateLlmSettings = async (settings = {}) => {
+  const response = await backendApiClient.put('/users/me/llm-settings', settings);
+  return response.data;
+};
+
+const getReconciliationSettings = async () => {
+  const response = await backendApiClient.get('/users/me/reconciliation-settings');
+  return response.data;
+};
+
+const updateReconciliationSettings = async (settings = {}) => {
+  const response = await backendApiClient.put('/users/me/reconciliation-settings', settings);
+  return response.data;
+};
+
+const createReconciliationJob = async (datasetName, tableName, payload = {}) => {
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile`,
+    payload
+  );
+  return response.data;
+};
+
+const getReconciliationStatus = async (datasetName, tableName, jobId) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/${jobId}/status`
+  );
+  return response.data;
+};
+
+const triggerReconciliationColumnTypes = async (datasetName, tableName, payload = {}) => {
+  const response = await backendApiClient.post(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/column-types`,
+    payload
+  );
+  return response.data;
+};
+
+const getReconciliationColumnTypes = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.provider) {
+    params.provider = options.provider;
+  }
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/column-types`,
+    { params }
+  );
+  return response.data;
+};
+
+const getReconciliationCandidates = async (datasetName, tableName, row, col, provider) => {
+  const response = await backendApiClient.get(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/candidates`,
+    { params: { row, col, provider } }
+  );
+  return response.data;
+};
+
+const updateReconciliationCell = async (datasetName, tableName, payload = {}) => {
+  const response = await backendApiClient.put(
+    `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/reconcile/cell`,
+    payload
+  );
+  return response.data;
+};
+
+export {
+  createDataset,
+  getDatasets,
+  deleteDataset,
   uploadTable,
-  getTableStatus,
-  exportTableCsv
+  getTables,
+  deleteTable,
+  getTableData,
+  exportTableCsv,
+  updateColumnClassification,
+  requestColumnIdentification,
+  requestDpvAnnotation,
+  getColumnIdentifyStatus,
+  getDpvStatus,
+  getLlmSettings,
+  updateLlmSettings,
+  getReconciliationSettings,
+  updateReconciliationSettings,
+  createReconciliationJob,
+  getReconciliationStatus,
+  triggerReconciliationColumnTypes,
+  getReconciliationColumnTypes,
+  getReconciliationCandidates,
+  updateReconciliationCell
 };

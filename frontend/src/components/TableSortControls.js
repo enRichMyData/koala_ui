@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -21,20 +21,55 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import FilterListOffIcon from '@mui/icons-material/FilterListOff';
 
+const DEFAULT_SORT_PARAMS = {
+  sortBy: 'id',
+  sortDirection: 'asc',
+  sortConfidenceColumn: null
+};
+
 const TableSortControls = ({ 
-  headers = [], 
-  columnTypes,
+  headers = [],
+  columnTypes = [],
+  hasReconciliationScores = false,
   onSort, 
   currentSortParams = {},
   hasActiveFilters = false,
-  onClearFilters
+  onClearFilters,
+  compact = false
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
-  const [sortType, setSortType] = useState(currentSortParams.sortBy || '');
-  const [sortColumn, setSortColumn] = useState(
-    currentSortParams.column !== undefined ? currentSortParams.column : null
+  const [sortType, setSortType] = useState(currentSortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy);
+  const [sortDirection, setSortDirection] = useState(currentSortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection);
+  const [sortConfidenceColumn, setSortConfidenceColumn] = useState(
+    currentSortParams.sortConfidenceColumn ?? ''
   );
-  const [sortDirection, setSortDirection] = useState(currentSortParams.sortDirection || 'desc');
+
+  const neColumns = useMemo(
+    () =>
+      (headers || [])
+        .map((header, idx) => ({ idx, header }))
+        .filter((entry) => columnTypes?.[entry.idx] === 'NE'),
+    [headers, columnTypes]
+  );
+
+  useEffect(() => {
+    setSortType(currentSortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy);
+    setSortDirection(currentSortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection);
+    setSortConfidenceColumn(currentSortParams.sortConfidenceColumn ?? '');
+  }, [
+    currentSortParams.sortBy,
+    currentSortParams.sortDirection,
+    currentSortParams.sortConfidenceColumn
+  ]);
+
+  const normalizedSortBy = currentSortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy;
+  const normalizedSortDirection = currentSortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection;
+  const normalizedSortConfidenceColumn = currentSortParams.sortConfidenceColumn ?? null;
+  const isDefaultSort = (
+    normalizedSortBy === DEFAULT_SORT_PARAMS.sortBy &&
+    normalizedSortDirection === DEFAULT_SORT_PARAMS.sortDirection &&
+    normalizedSortConfidenceColumn === DEFAULT_SORT_PARAMS.sortConfidenceColumn
+  );
 
   const open = Boolean(anchorEl);
   
@@ -47,19 +82,22 @@ const TableSortControls = ({
   };
 
   const handleClearSort = () => {
-    setSortType('');
-    setSortColumn(null);
-    setSortDirection('desc');
-    onSort({ sortBy: null, column: null, sortDirection: null });
+    setSortType(DEFAULT_SORT_PARAMS.sortBy);
+    setSortDirection(DEFAULT_SORT_PARAMS.sortDirection);
+    setSortConfidenceColumn('');
+    onSort(DEFAULT_SORT_PARAMS);
     handleClose();
   };
 
   const handleSortTypeChange = (event) => {
-    setSortType(event.target.value);
-  };
-
-  const handleSortColumnChange = (event) => {
-    setSortColumn(event.target.value);
+    const value = event.target.value;
+    setSortType(value);
+    if (value === 'id') {
+      setSortDirection('asc');
+    }
+    if (value !== 'score') {
+      setSortConfidenceColumn('');
+    }
   };
 
   const handleDirectionChange = (direction) => {
@@ -67,70 +105,88 @@ const TableSortControls = ({
   };
 
   const handleApplySort = () => {
-    const sortParams = {
-      sortBy: sortType,
-      sortDirection: sortDirection
-    };
-    
-    // Only include column if sortType is 'confidence'
-    if (sortType === 'confidence') {
-      sortParams.column = sortColumn;
-    }
-    
-    onSort(sortParams);
+    const sortBy = sortType || DEFAULT_SORT_PARAMS.sortBy;
+    const selectedColumn =
+      sortBy === 'score' &&
+      sortConfidenceColumn !== '' &&
+      sortConfidenceColumn !== null &&
+      sortConfidenceColumn !== undefined
+        ? Number(sortConfidenceColumn)
+        : null;
+    onSort({
+      sortBy,
+      sortDirection: sortDirection || (sortBy === 'id' ? 'asc' : 'desc'),
+      sortConfidenceColumn: selectedColumn
+    });
     handleClose();
   };
 
-  // Filter headers to only include NE columns for column confidence sorting
-  const neColumns = headers
-    .map((header, index) => ({ header, index, isNE: columnTypes[index] === 'NE' }))
-    .filter(col => col.isNE);
-
   const getSortDescription = () => {
-    if (!currentSortParams.sortBy) return null;
-    
-    if (currentSortParams.sortBy === 'confidence_avg') {
-      return `Sorting by average row confidence (${currentSortParams.sortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
+    if (normalizedSortBy === 'id') {
+      return `Sorting by row ID (${normalizedSortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
     }
-    
-    if (currentSortParams.sortBy === 'confidence' && currentSortParams.column !== undefined) {
-      const columnName = headers[currentSortParams.column] || `Column ${currentSortParams.column}`;
-      return `Sorting by confidence in column "${columnName}" (${currentSortParams.sortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
+    if (normalizedSortBy === 'score_avg') {
+      return `Sorting by average confidence score across NE columns (${normalizedSortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
     }
-    
-    return null;
+    const selectedColumn = neColumns.find(
+      (entry) => Number(entry.idx) === Number(currentSortParams.sortConfidenceColumn)
+    );
+    const scopeText = selectedColumn
+      ? `"${selectedColumn.header}"`
+      : 'selected NE column';
+    return `Sorting by confidence score on ${scopeText} (${normalizedSortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
   };
 
   return (
-    <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Box
+      sx={{
+        mb: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 0.6,
+        maxWidth: '100%'
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.6,
+          flexWrap: 'wrap'
+        }}
+      >
         <Button
           variant="outlined"
           startIcon={<SortIcon />}
           onClick={handleClick}
           size="small"
-          color={currentSortParams.sortBy ? 'primary' : 'inherit'}
+          color={isDefaultSort ? 'inherit' : 'primary'}
+          sx={{ minHeight: 28, py: 0, px: 1, fontSize: '0.74rem', textTransform: 'none' }}
         >
-          Sort
+          Sort rows
         </Button>
         
-        {currentSortParams.sortBy && (
-          <Tooltip title={getSortDescription() || ''}>
-            <Chip
-              label={
-                currentSortParams.sortBy === 'confidence_avg' ? 'Average Confidence' : 
-                currentSortParams.sortBy === 'confidence' ? `Column Confidence` : 
-                'Custom Sort'
-              }
-              size="small"
-              color="primary"
-              onDelete={handleClearSort}
-              variant="outlined"
-            />
-          </Tooltip>
-        )}
+        <Tooltip title={getSortDescription()}>
+          <Chip
+            label={
+              normalizedSortBy === 'id'
+                ? `Row ID: ${normalizedSortDirection}`
+                : normalizedSortBy === 'score' &&
+                  normalizedSortConfidenceColumn !== null &&
+                  normalizedSortConfidenceColumn !== undefined
+                ? `Score: ${headers?.[currentSortParams.sortConfidenceColumn] || `Col ${currentSortParams.sortConfidenceColumn}`}`
+                : 'Score: row avg'
+            }
+            size="small"
+            color="primary"
+            onDelete={handleClearSort}
+            variant="outlined"
+            sx={{ maxWidth: compact ? 190 : '100%' }}
+          />
+        </Tooltip>
       </Box>
-      
+
       {hasActiveFilters && (
         <Button
           variant="outlined"
@@ -138,6 +194,7 @@ const TableSortControls = ({
           size="small"
           startIcon={<FilterListOffIcon />}
           onClick={onClearFilters}
+          sx={{ minHeight: 28, py: 0, px: 1, fontSize: '0.74rem', textTransform: 'none' }}
         >
           Clear Filters
         </Button>
@@ -148,11 +205,11 @@ const TableSortControls = ({
         open={open}
         onClose={handleClose}
         PaperProps={{
-          sx: { width: 350, maxWidth: '90vw', p: 1 }
+          sx: { width: 340, maxWidth: '92vw', p: 1 }
         }}
       >
         <Typography variant="subtitle1" sx={{ p: 1, fontWeight: 500 }}>
-          Sort by Confidence
+          Sort Rows
         </Typography>
         
         <Grid container spacing={2} sx={{ p: 1 }}>
@@ -165,49 +222,50 @@ const TableSortControls = ({
                 label="Sort Type"
                 onChange={handleSortTypeChange}
               >
-                <MenuItem value="">
-                  <em>None</em>
+                <MenuItem value="id">
+                  Row ID
                 </MenuItem>
-                <MenuItem value="confidence_avg">Average Row Confidence</MenuItem>
-                <MenuItem value="confidence">Column Confidence</MenuItem>
+                <MenuItem value="score_avg" disabled={!hasReconciliationScores}>
+                  Avg confidence score (row)
+                </MenuItem>
+                <MenuItem value="score" disabled={!hasReconciliationScores || neColumns.length === 0}>
+                  Confidence score (column)
+                </MenuItem>
               </Select>
               <FormHelperText>
-                {sortType === 'confidence_avg' ? 'Sort rows by their average confidence score across all entities' : 
-                 sortType === 'confidence' ? 'Sort rows by confidence score in a specific column' : 
-                 'Select a sort type'}
+                {sortType === 'id'
+                  ? 'Default order: row ID ascending (0, 1, 2...).'
+                  : sortType === 'score'
+                  ? 'Sort using one NE column.'
+                  : 'Sort using row average across NE columns.'}
               </FormHelperText>
             </FormControl>
           </Grid>
-          
-          {sortType === 'confidence' && (
-            <Grid item xs={12}>
-              <FormControl fullWidth size="small" disabled={neColumns.length === 0}>
-                <InputLabel id="sort-column-label">Column</InputLabel>
-                <Select
-                  labelId="sort-column-label"
-                  value={sortColumn !== null ? sortColumn : ''}
-                  label="Column"
-                  onChange={handleSortColumnChange}
-                >
-                  {neColumns.length === 0 ? (
-                    <MenuItem value="" disabled>No entity columns available</MenuItem>
-                  ) : (
-                    neColumns.map(col => (
-                      <MenuItem key={col.index} value={col.index}>
-                        {col.header || `Column ${col.index}`}
-                      </MenuItem>
-                    ))
-                  )}
-                </Select>
-                <FormHelperText>
-                  {neColumns.length === 0 ? 
-                    'No entity columns found in this table' : 
-                    'Select a column with named entities'}
-                </FormHelperText>
-              </FormControl>
-            </Grid>
-          )}
-          
+
+          <Grid item xs={12}>
+            <FormControl fullWidth size="small">
+              <InputLabel id="sort-column-label">Column scope</InputLabel>
+              <Select
+                labelId="sort-column-label"
+                value={sortConfidenceColumn}
+                label="Column scope"
+                onChange={(event) => setSortConfidenceColumn(event.target.value)}
+                disabled={!hasReconciliationScores || sortType !== 'score'}
+              >
+                {neColumns.map((entry) => (
+                  <MenuItem key={`sort-ne-col-${entry.idx}`} value={entry.idx}>
+                    {entry.header}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>
+                {sortType === 'score'
+                  ? 'Pick the NE column used for score sorting.'
+                  : 'Column is used only for column-score sorting.'}
+              </FormHelperText>
+            </FormControl>
+          </Grid>
+
           <Grid item xs={12}>
             <Paper variant="outlined" sx={{ p: 1 }}>
               <Typography variant="body2" sx={{ mb: 1 }}>Sort Direction:</Typography>
@@ -219,7 +277,7 @@ const TableSortControls = ({
                   onClick={() => handleDirectionChange('desc')}
                   sx={{ flexGrow: 1 }}
                 >
-                  Highest First
+                  {sortType === 'id' ? 'Descending' : 'Highest First'}
                 </Button>
                 <Button
                   variant={sortDirection === 'asc' ? 'contained' : 'outlined'}
@@ -228,7 +286,7 @@ const TableSortControls = ({
                   onClick={() => handleDirectionChange('asc')}
                   sx={{ flexGrow: 1 }}
                 >
-                  Lowest First
+                  {sortType === 'id' ? 'Ascending' : 'Lowest First'}
                 </Button>
               </Box>
             </Paper>
@@ -252,8 +310,16 @@ const TableSortControls = ({
             variant="contained"
             size="small"
             disabled={
-              !sortType || 
-              (sortType === 'confidence' && (sortColumn === null || sortColumn === undefined))
+              (sortType === 'score_avg' && !hasReconciliationScores) ||
+              (
+                sortType === 'score' &&
+                (
+                  !hasReconciliationScores ||
+                  sortConfidenceColumn === '' ||
+                  sortConfidenceColumn === null ||
+                  sortConfidenceColumn === undefined
+                )
+              )
             }
           >
             Apply Sort

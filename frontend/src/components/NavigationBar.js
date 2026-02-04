@@ -55,6 +55,9 @@ const NavigationBar = ({ onLogout, profileName }) => {
     };
     
     const isActive = (path) => {
+        if (path === '/') {
+            return location.pathname === '/';
+        }
         return location.pathname.startsWith(path);
     };
     
@@ -97,9 +100,18 @@ const NavigationBar = ({ onLogout, profileName }) => {
 
     return (
         <>
-            <AppBar position="static" color="default" elevation={1} sx={{ backgroundColor: 'white' }}>
+            <AppBar
+                position="sticky"
+                color="default"
+                elevation={0}
+                sx={{
+                    backgroundColor: 'rgba(255,255,255,0.95)',
+                    borderBottom: '1px solid #e3e8ef',
+                    backdropFilter: 'blur(6px)'
+                }}
+            >
                 <Container maxWidth="xl">
-                    <Toolbar disableGutters>
+                    <Toolbar disableGutters sx={{ minHeight: 62 }}>
                         {/* Mobile menu icon */}
                         <IconButton
                             color="inherit"
@@ -117,8 +129,8 @@ const NavigationBar = ({ onLogout, profileName }) => {
                                 src={logo} 
                                 alt="Koala" 
                                 sx={{ 
-                                    width: { xs: 40, md: 50 }, 
-                                    height: { xs: 40, md: 50 }, 
+                                    width: { xs: 34, md: 40 }, 
+                                    height: { xs: 34, md: 40 }, 
                                     mr: 1,
                                     transition: 'all 0.2s'
                                 }} 
@@ -133,7 +145,8 @@ const NavigationBar = ({ onLogout, profileName }) => {
                                     display: { xs: 'none', md: 'flex' },
                                     fontFamily: 'monospace',
                                     fontWeight: 700,
-                                    letterSpacing: '.2rem',
+                                    letterSpacing: '.18rem',
+                                    fontSize: '1.08rem',
                                     color: 'inherit',
                                     textDecoration: 'none',
                                 }}
@@ -151,16 +164,23 @@ const NavigationBar = ({ onLogout, profileName }) => {
                                     to={item.path}
                                     startIcon={item.icon}
                                     sx={{ 
-                                        my: 2, 
-                                        color: 'text.primary', 
+                                        my: 1, 
+                                        color: 'text.primary',
                                         display: 'flex',
                                         textTransform: 'none',
-                                        fontWeight: isActive(item.path) ? 'bold' : 'regular',
-                                        backgroundColor: isActive(item.path) ? 'rgba(0, 0, 0, 0.04)' : 'transparent',
+                                        fontSize: '0.9rem',
+                                        borderRadius: 999,
+                                        px: 1.25,
+                                        minHeight: 34,
+                                        fontWeight: isActive(item.path) ? 600 : 500,
+                                        backgroundColor: isActive(item.path) ? '#edf4ff' : 'transparent',
                                         '&.active': { 
-                                            fontWeight: 'bold',
-                                            backgroundColor: 'rgba(0, 0, 0, 0.08)'
-                                        }   
+                                            fontWeight: 600,
+                                            backgroundColor: '#edf4ff'
+                                        },
+                                        '&:hover': {
+                                            backgroundColor: isActive(item.path) ? '#e5efff' : '#f4f7fb'
+                                        }
                                     }}
                                 >
                                     {item.text}
@@ -177,14 +197,15 @@ const NavigationBar = ({ onLogout, profileName }) => {
                                             variant="body2" 
                                             sx={{ 
                                                 mr: 1, 
-                                                display: { xs: 'none', sm: 'block' } 
+                                                display: { xs: 'none', sm: 'block' },
+                                                color: 'text.secondary'
                                             }}
                                         >
                                             {profileName}
                                         </Typography>
                                         <Avatar 
                                             sx={{ 
-                                                bgcolor: 'primary.main',
+                                                bgcolor: '#2474d2',
                                                 width: 32,
                                                 height: 32
                                             }}
