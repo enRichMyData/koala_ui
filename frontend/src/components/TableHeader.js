@@ -15,7 +15,8 @@ const TableHeader = ({
   showRowIndex,
   allRowsSelected,
   someRowsSelected,
-  onToggleAllRows
+  onToggleAllRows,
+  compact = false
 }) => (
   <TableRow>
     {(showRowSelection || showRowIndex) && (
@@ -23,10 +24,13 @@ const TableHeader = ({
         sx={{
           backgroundColor: '#f5f5f5',
           borderBottom: '2px solid #ccc',
-          py: 1.5,
+          py: compact ? 0.75 : 1.1,
           px: 1,
           textAlign: 'center',
-          width: 56
+          width: 56,
+          position: 'sticky',
+          left: 0,
+          zIndex: 5
         }}
       >
         {showRowSelection ? (
@@ -76,13 +80,14 @@ const TableHeader = ({
           sx={{
             backgroundColor: bg,
             borderBottom: '2px solid #ccc',
-            py: 1.5,
-            px: 2,
+            py: compact ? 0.75 : 1.1,
+            px: compact ? 1.2 : 1.5,
             textAlign: 'center',
             cursor: isNE ? 'pointer' : 'default',
             transition: 'background 0.2s',
             outline: isActiveNeColumn ? '2px solid #7aa7d9' : 'none',
             outlineOffset: isActiveNeColumn ? '-2px' : 0,
+            zIndex: 3,
             '&:hover': { backgroundColor: isNE ? '#c8e6c9' : bg }
           }}
           onClick={() => {

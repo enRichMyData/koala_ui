@@ -28,7 +28,8 @@ const TableSortControls = ({
   onSort, 
   currentSortParams = {},
   hasActiveFilters = false,
-  onClearFilters
+  onClearFilters,
+  compact = false
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const [sortType, setSortType] = useState(currentSortParams.sortBy || 'score_avg');
@@ -120,17 +121,33 @@ const TableSortControls = ({
   };
 
   return (
-    <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Box
+      sx={{
+        mb: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 0.6,
+        maxWidth: '100%'
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.6,
+          flexWrap: 'wrap'
+        }}
+      >
         <Button
           variant="outlined"
           startIcon={<SortIcon />}
           onClick={handleClick}
           size="small"
           color={currentSortParams.sortBy ? 'primary' : 'inherit'}
-          sx={{ minHeight: 30, py: 0, px: 1, fontSize: '0.76rem', textTransform: 'none' }}
+          sx={{ minHeight: 28, py: 0, px: 1, fontSize: '0.74rem', textTransform: 'none' }}
         >
-          Sort
+          Sort rows
         </Button>
         
         <Tooltip title={getSortDescription()}>
@@ -139,17 +156,18 @@ const TableSortControls = ({
               currentSortParams.sortBy === 'score' &&
               currentSortParams.sortConfidenceColumn !== null &&
               currentSortParams.sortConfidenceColumn !== undefined
-                ? `Confidence: ${headers?.[currentSortParams.sortConfidenceColumn] || `Col ${currentSortParams.sortConfidenceColumn}`}`
-                : 'Confidence: row avg'
+                ? `Score: ${headers?.[currentSortParams.sortConfidenceColumn] || `Col ${currentSortParams.sortConfidenceColumn}`}`
+                : 'Score: row avg'
             }
             size="small"
             color="primary"
             onDelete={handleClearSort}
             variant="outlined"
+            sx={{ maxWidth: compact ? 190 : '100%' }}
           />
         </Tooltip>
       </Box>
-      
+
       {hasActiveFilters && (
         <Button
           variant="outlined"
@@ -157,7 +175,7 @@ const TableSortControls = ({
           size="small"
           startIcon={<FilterListOffIcon />}
           onClick={onClearFilters}
-          sx={{ minHeight: 30, py: 0, px: 1, fontSize: '0.76rem', textTransform: 'none' }}
+          sx={{ minHeight: 28, py: 0, px: 1, fontSize: '0.74rem', textTransform: 'none' }}
         >
           Clear Filters
         </Button>
@@ -168,7 +186,7 @@ const TableSortControls = ({
         open={open}
         onClose={handleClose}
         PaperProps={{
-          sx: { width: 350, maxWidth: '90vw', p: 1 }
+          sx: { width: 340, maxWidth: '92vw', p: 1 }
         }}
       >
         <Typography variant="subtitle1" sx={{ p: 1, fontWeight: 500 }}>

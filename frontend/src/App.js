@@ -7,6 +7,7 @@ import Login from './components/Login';
 import NavigationBar from './components/NavigationBar';
 import LandingPage from './components/LandingPage';
 import Profile from './components/Profile';
+import Documentation from './components/Documentation';
 import { CssBaseline } from '@mui/material';
 
 function App() {
@@ -33,6 +34,7 @@ function App() {
       {isLoggedIn && <NavigationBar onLogout={handleLogout} profileName={profileName} />}
       <Routes>
         <Route path="/" element={<LandingPage isLoggedIn={isLoggedIn} />} />
+        <Route path="/docs" element={<Documentation />} />
         <Route path="/login" element={!isLoggedIn ? <Login setLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/dataset" />} />
         <Route path="/dataset" element={isLoggedIn ? <DatasetList setIsLoggedIn={setIsLoggedIn} /> : <Navigate replace to="/login" />} />
         <Route path="/profile" element={isLoggedIn ? <Profile /> : <Navigate replace to="/login" />} />

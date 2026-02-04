@@ -224,7 +224,6 @@ const TableDataViewer = () => {
   const [nextCursor, setNextCursor] = useState(null);
   const [prevCursor, setPrevCursor] = useState(null);
   const [reconcilePanelExpanded, setReconcilePanelExpanded] = useState(false);
-  const [tableToolsExpanded, setTableToolsExpanded] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [activeFilters, setActiveFilters] = useState({
     includeTypes: [],
@@ -261,7 +260,8 @@ const TableDataViewer = () => {
     endpoints: []
   });
   const [llmSettingsError, setLlmSettingsError] = useState(null);
-  const [showDpvAnnotations, setShowDpvAnnotations] = useState(true);
+  const [showDpvAnnotations, setShowDpvAnnotations] = useState(false);
+  const [compactTable, setCompactTable] = useState(false);
   const [reconcileScope, setReconcileScope] = useState('cell');
   const [reconcileColumns, setReconcileColumns] = useState([]);
   const [selectedRows, setSelectedRows] = useState(new Set());
@@ -1345,27 +1345,27 @@ const TableDataViewer = () => {
         : `Table mode: ${(data?.total_rows || 0)} rows in scope.`;
   const compactActionButtonSx = {
     py: 0,
-    px: 0.9,
-    minHeight: 26,
-    fontSize: '0.74rem',
-    textTransform: 'none'
-  };
-  const compactPanelButtonSx = {
-    py: 0,
     px: 1,
     minHeight: 28,
     fontSize: '0.76rem',
     textTransform: 'none'
   };
+  const compactPanelButtonSx = {
+    py: 0,
+    px: 0.95,
+    minHeight: 26,
+    fontSize: '0.74rem',
+    textTransform: 'none'
+  };
   const compactIconButtonSx = {
-    minWidth: 30,
-    width: 30,
-    height: 30,
+    minWidth: 28,
+    width: 28,
+    height: 28,
     p: 0
   };
 
   return (
-    <Box sx={{ m: 2 }}>
+    <Box sx={{ m: { xs: 1, md: 1.5 } }}>
       <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
         <Button
           color="inherit"
@@ -1396,10 +1396,13 @@ const TableDataViewer = () => {
         </Typography>
       </Breadcrumbs>
 
-      <Card elevation={3}>
+      <Card elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
         <CardHeader
           sx={{
+            pb: 0.75,
             alignItems: 'flex-start',
+            bgcolor: '#fbfcff',
+            borderBottom: '1px solid #edf1f7',
             '& .MuiCardHeader-action': {
               alignSelf: 'center',
               mt: 0,
@@ -1451,12 +1454,11 @@ const TableDataViewer = () => {
               sx={{
                 display: 'inline-flex',
                 flexDirection: 'row',
-                flexWrap: 'nowrap',
+                flexWrap: { xs: 'wrap', lg: 'nowrap' },
                 alignItems: 'center',
-                gap: 0.5,
-                whiteSpace: 'nowrap',
-                overflowX: 'auto',
-                maxWidth: '100%',
+                gap: 0.4,
+                justifyContent: { xs: 'flex-start', lg: 'flex-end' },
+                maxWidth: { xs: 300, lg: '100%' },
                 '& .MuiButton-root': {
                   width: 'auto',
                   flex: '0 0 auto'
@@ -1506,7 +1508,7 @@ const TableDataViewer = () => {
         />
 
         {autoDetectStatus && (
-          <Box sx={{ px: 2, pb: 2 }}>
+          <Box sx={{ px: 2, pb: 1 }}>
             <Alert severity={autoDetectSeverity} onClose={() => setAutoDetectStatus(null)}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 {classificationStatus === 'AUTO_PENDING' && (
@@ -1519,7 +1521,7 @@ const TableDataViewer = () => {
         )}
 
         {dpvDetectStatus && (
-          <Box sx={{ px: 2, pb: 2 }}>
+          <Box sx={{ px: 2, pb: 1 }}>
             <Alert severity={dpvDetectSeverity} onClose={() => setDpvDetectStatus(null)}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 {dpvStatus === 'DPV_PENDING' && (
@@ -1532,7 +1534,7 @@ const TableDataViewer = () => {
         )}
 
         {reconcileStatus && (
-          <Box sx={{ px: 2, pb: 2 }}>
+          <Box sx={{ px: 2, pb: 1 }}>
             <Alert severity={reconcileSeverity} onClose={() => setReconcileStatus(null)}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 {reconcilePolling && (
@@ -1544,22 +1546,22 @@ const TableDataViewer = () => {
           </Box>
         )}
 
-        <CardContent sx={{ px: 2, py: 1 }}>
+        <CardContent sx={{ px: 1.5, py: 0.75, bgcolor: '#fcfdff' }}>
           <Accordion
             disableGutters
             elevation={0}
             expanded={reconcilePanelExpanded}
             onChange={(_, expanded) => setReconcilePanelExpanded(expanded)}
             sx={{
-              border: '1px solid #d9e2f0',
+              border: '1px solid #dde6f3',
               borderRadius: '8px',
-              bgcolor: '#fbfdff',
+              bgcolor: '#f9fbff',
               '&:before': { display: 'none' }
             }}
           >
             <AccordionSummary
               expandIcon={<ExpandMoreIcon />}
-              sx={{ minHeight: 40, px: 1.25 }}
+              sx={{ minHeight: 34, px: 1 }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', flexWrap: 'wrap' }}>
                 <Chip
@@ -1597,7 +1599,7 @@ const TableDataViewer = () => {
                 </Tooltip>
               </Box>
             </AccordionSummary>
-            <AccordionDetails sx={{ px: 1.25, py: 1 }}>
+            <AccordionDetails sx={{ px: 1, py: 0.75 }}>
               {missingReconcileCredentials && (
                 <Alert severity="warning" sx={{ mb: 1 }}>
                   {reconcileProvider === 'crocodile'
@@ -1606,7 +1608,7 @@ const TableDataViewer = () => {
                 </Alert>
               )}
 
-              <Grid container spacing={1}>
+              <Grid container spacing={0.75}>
                 <Grid item xs={12} md={3}>
                   <FormControl fullWidth size="small">
                     <InputLabel>Provider</InputLabel>
@@ -1678,7 +1680,7 @@ const TableDataViewer = () => {
                 </Grid>
               </Grid>
 
-              <Box sx={{ mt: 0.75, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+              <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
                 <FormHelperText sx={{ m: 0 }}>
                   {reconcileScope === 'cell'
                     ? 'Columns are derived from selected cells.'
@@ -1698,7 +1700,7 @@ const TableDataViewer = () => {
                 )}
               </Box>
 
-              <Divider sx={{ my: 1 }} />
+              <Divider sx={{ my: 0.75 }} />
 
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                 <Typography variant="subtitle2">NE type ranking</Typography>
@@ -1775,51 +1777,59 @@ const TableDataViewer = () => {
 
         <Divider />
 
-        <CardContent sx={{ p: 2 }}>
-          <TableSearch
-            onSearch={handleSearch}
-            loading={loading}
-            initialSearchText={searchText}
-          />
-
-          <Accordion
-            disableGutters
-            elevation={0}
-            expanded={tableToolsExpanded}
-            onChange={(_, expanded) => setTableToolsExpanded(expanded)}
+        <CardContent sx={{ px: 1.5, py: 1, bgcolor: '#f8fafd' }}>
+          <Paper
+            variant="outlined"
             sx={{
-              border: '1px solid #e4e8ef',
-              borderRadius: '8px',
-              '&:before': { display: 'none' },
-              mb: 1
+              p: 0.5,
+              borderColor: '#dce6f5',
+              bgcolor: '#ffffff'
             }}
           >
-            <AccordionSummary
-              expandIcon={<ExpandMoreIcon />}
-              sx={{ minHeight: 36, px: 1.25 }}
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                flexWrap: 'wrap'
+              }}
             >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-                <Typography variant="subtitle2">Table tools</Typography>
-                {hasActiveFilters && (
-                  <Chip label="Filters active" size="small" color="secondary" variant="outlined" />
-                )}
-                <Box sx={{ flex: 1 }} />
-                <Typography variant="caption" color="text.secondary">
-                  Sort, semantic filters, DPV display
-                </Typography>
+              <Box sx={{ flex: '1 1 300px', minWidth: 260 }}>
+                <TableSearch
+                  onSearch={handleSearch}
+                  loading={loading}
+                  initialSearchText={searchText}
+                  compact
+                  noPaper
+                />
               </Box>
-            </AccordionSummary>
-            <AccordionDetails sx={{ px: 1.5, py: 1 }}>
-              <TableSortControls
-                headers={data?.header || []}
-                columnTypes={columnTypes}
-                hasReconciliationScores={reconciliationScoreRange?.max !== null && reconciliationScoreRange?.max !== undefined}
-                onSort={handleSortChange}
-                currentSortParams={sortParams}
-                hasActiveFilters={hasActiveFilters}
-                onClearFilters={handleClearFilters}
-              />
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  flexWrap: 'wrap',
+                  flex: '1 1 420px',
+                  justifyContent: 'flex-end',
+                  '& .MuiButton-root': {
+                    minHeight: 28,
+                    fontSize: '0.74rem',
+                    textTransform: 'none',
+                    whiteSpace: 'nowrap',
+                    width: 'auto'
+                  }
+                }}
+              >
+                <TableSortControls
+                  headers={data?.header || []}
+                  columnTypes={columnTypes}
+                  hasReconciliationScores={reconciliationScoreRange?.max !== null && reconciliationScoreRange?.max !== undefined}
+                  onSort={handleSortChange}
+                  currentSortParams={sortParams}
+                  hasActiveFilters={hasActiveFilters}
+                  onClearFilters={handleClearFilters}
+                  compact
+                />
                 <Button
                   variant="outlined"
                   size="small"
@@ -1827,7 +1837,7 @@ const TableDataViewer = () => {
                   disabled={availableTypes.length === 0}
                   sx={compactPanelButtonSx}
                 >
-                  Filter linked NE types
+                  Filter NE types
                 </Button>
                 <Button
                   variant="outlined"
@@ -1838,16 +1848,24 @@ const TableDataViewer = () => {
                 >
                   {showDpvAnnotations ? 'Hide DPV' : 'Show DPV'}
                 </Button>
+                <Button
+                  variant={compactTable ? 'contained' : 'outlined'}
+                  size="small"
+                  onClick={() => setCompactTable(prev => !prev)}
+                  sx={compactPanelButtonSx}
+                >
+                  {compactTable ? 'Compact: on' : 'Compact: off'}
+                </Button>
                 {availableTypes.length === 0 && (
                   <Tooltip title="No linked NE types available for filtering.">
                     <Typography variant="caption" color="text.secondary">
-                      No types available
+                      No linked types yet
                     </Typography>
                   </Tooltip>
                 )}
               </Box>
-            </AccordionDetails>
-          </Accordion>
+            </Box>
+          </Paper>
         </CardContent>
 
         <Divider />
@@ -2099,9 +2117,11 @@ const TableDataViewer = () => {
             component={Paper}
             elevation={0}
             sx={{
-              maxHeight: '70vh',
+              maxHeight: '72vh',
               width: '100%',
               overflow: 'auto',
+              borderTop: '1px solid #e6ebf2',
+              borderRadius: 0,
               '&::-webkit-scrollbar': {
                 width: '8px',
                 height: '8px'
@@ -2117,7 +2137,7 @@ const TableDataViewer = () => {
           >
             <Table
               stickyHeader
-              size="medium"
+              size={compactTable ? 'small' : 'medium'}
               sx={{
                 minWidth: 650,
                 tableLayout: 'auto'
@@ -2139,6 +2159,7 @@ const TableDataViewer = () => {
                 allRowsSelected={allRowsSelected}
                 someRowsSelected={someRowsSelected}
                 onToggleAllRows={handleToggleAllRows}
+                compact={compactTable}
               />
               </TableHead>
               <TableBody>
@@ -2161,9 +2182,12 @@ const TableDataViewer = () => {
                             minWidth: 72,
                             maxWidth: 104,
                             verticalAlign: 'top',
-                            padding: '10px 12px',
+                            padding: compactTable ? '6px 8px' : '8px 10px',
                             textAlign: 'center',
-                            bgcolor: '#f5f5f5'
+                            bgcolor: selectedRows.has(row.idRow) ? '#dcedff' : '#f5f7fa',
+                            position: 'sticky',
+                            left: 0,
+                            zIndex: 2
                           }}
                         >
                           {showRowSelection ? (
@@ -2228,9 +2252,9 @@ const TableDataViewer = () => {
                           key={colIndex}
                           sx={{
                             minWidth: 100,
-                            maxWidth: 300,
+                            maxWidth: 320,
                             verticalAlign: 'top',
-                            padding: '10px 16px',
+                            padding: compactTable ? '6px 10px' : '8px 12px',
                             cursor: reconcileScope === 'cell' ? 'pointer' : 'default',
                             bgcolor: isCellSelected
                               ? '#e8f0fe'
@@ -2333,7 +2357,7 @@ const TableDataViewer = () => {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            p: 2,
+            p: 1.25,
             borderTop: '1px solid rgba(0, 0, 0, 0.12)'
           }}
         >
