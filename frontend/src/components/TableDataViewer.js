@@ -53,6 +53,7 @@ import {
   Tooltip,
   TextField,
   Checkbox,
+  FormControlLabel,
   FormHelperText
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
@@ -64,6 +65,7 @@ import PolicyIcon from '@mui/icons-material/Policy';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import TableHeader from './TableHeader';
 import TableSearch from './TableSearch';
 import TableSortControls from './TableSortControls';
@@ -203,6 +205,15 @@ const buildColumnClassificationPayload = (classificationState = {}) => {
   return payload;
 };
 
+const EXPORT_ENRICHMENT_OPTIONS = [
+  { key: 'id', label: 'Entity ID' },
+  { key: 'name', label: 'Entity name' },
+  { key: 'description', label: 'Description' },
+  { key: 'types', label: 'Types' },
+  { key: 'score', label: 'Score' },
+  { key: 'match', label: 'Match flag' }
+];
+
 const TableDataViewer = () => {
   const navigate = useNavigate();
   const { datasetName, tableName } = useParams();
@@ -289,6 +300,17 @@ const TableDataViewer = () => {
   const [candidateSelection, setCandidateSelection] = useState(null);
   const [candidateSaving, setCandidateSaving] = useState(false);
   const [candidateSaveError, setCandidateSaveError] = useState(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportIncludeReconciliation, setExportIncludeReconciliation] = useState(true);
+  const [exportEnrichmentFields, setExportEnrichmentFields] = useState([
+    'id',
+    'name',
+    'description',
+    'types',
+    'score'
+  ]);
+  const [exportSubmitting, setExportSubmitting] = useState(false);
+  const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
 
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
@@ -300,7 +322,6 @@ const TableDataViewer = () => {
         excludeTypes: activeFilters.excludeTypes?.length > 0 ? activeFilters.excludeTypes : undefined,
         includeNeTypes: activeFilters.includeNeTypes?.length > 0 ? activeFilters.includeNeTypes : undefined,
         excludeNeTypes: activeFilters.excludeNeTypes?.length > 0 ? activeFilters.excludeNeTypes : undefined,
-        reconciliationProvider: reconcileProvider || undefined,
         sortBy: sortParams.sortBy || undefined,
         sortDirection: sortParams.sortDirection || undefined,
         sortConfidenceColumn: sortParams.sortConfidenceColumn !== null ? sortParams.sortConfidenceColumn : undefined
@@ -318,7 +339,7 @@ const TableDataViewer = () => {
     } finally {
       setLoading(false);
     }
-  }, [datasetName, tableName, searchText, activeFilters, sortParams, reconcileProvider]);
+  }, [datasetName, tableName, searchText, activeFilters, sortParams]);
 
   const fetchReconciliationColumnTypes = useCallback(async () => {
     try {
@@ -586,21 +607,41 @@ const TableDataViewer = () => {
     setCurrentPage(1);
   };
 
+  const handleOpenExportDialog = () => {
+    setExportDialogOpen(true);
+  };
+
+  const handleToggleExportField = (fieldKey) => {
+    setExportEnrichmentFields((prev) => {
+      if (prev.includes(fieldKey)) {
+        return prev.filter((entry) => entry !== fieldKey);
+      }
+      return [...prev, fieldKey];
+    });
+  };
+
   const handleExport = async () => {
     try {
-      setLoading(true);
-      const res = await exportTableCsv(datasetName, tableName);
+      setExportSubmitting(true);
+      const includeReconciliation = exportIncludeReconciliation;
+      const selectedFields = includeReconciliation ? exportEnrichmentFields : [];
+      const res = await exportTableCsv(datasetName, tableName, {
+        includeReconciliation,
+        enrichmentFields: selectedFields
+      });
       const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.setAttribute('download', `${datasetName}_${tableName}_export.csv`);
+      const filenameSuffix = includeReconciliation && selectedFields.length > 0 ? '_export_enriched.csv' : '_export.csv';
+      link.setAttribute('download', `${datasetName}_${tableName}${filenameSuffix}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
+      setExportDialogOpen(false);
     } catch (err) {
       setError('Export failed: ' + (err.message || 'Unknown error'));
     } finally {
-      setLoading(false);
+      setExportSubmitting(false);
     }
   };
 
@@ -751,33 +792,36 @@ const TableDataViewer = () => {
     return payload;
   };
 
-  const handleReconcile = async () => {
-    setReconcileStatus(null);
+  const validateReconcileRequest = () => {
     if (reconcileProvider === 'lion_linker') {
       if (!reconcileSettings.lion.hasApiKey ||
         !reconcileSettings.lion.hasLlmApiKey ||
         !reconcileSettings.lion.hasLamapiToken) {
         setReconcileStatus('Missing Lion Linker or Lamapi credentials. Update your profile first.');
-        return;
+        return false;
       }
     } else if (reconcileProvider === 'crocodile') {
       if (!reconcileSettings.crocodile.hasApiKey) {
         setReconcileStatus('Missing Crocodile API key. Update your profile first.');
-        return;
+        return false;
       }
     }
     if (reconcileScope === 'cell' && selectedCells.size === 0) {
       setReconcileStatus('Select at least one cell to reconcile.');
-      return;
+      return false;
     }
     if (reconcileScope === 'rows' && selectedRows.size === 0) {
       setReconcileStatus('Select at least one row to reconcile.');
-      return;
+      return false;
     }
     if (reconcileScope !== 'cell' && reconcileColumns.length === 0) {
       setReconcileStatus('Select at least one column to reconcile.');
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const startReconcileJob = async () => {
     setReconcileSubmitting(true);
     try {
       const payload = buildReconcilePayload();
@@ -790,6 +834,25 @@ const TableDataViewer = () => {
     } finally {
       setReconcileSubmitting(false);
     }
+  };
+
+  const handleReconcile = async () => {
+    setReconcileStatus(null);
+    if (!validateReconcileRequest()) {
+      return;
+    }
+    const scoreRange = data?.reconciliation?.score_range || {};
+    const hasExistingReconciliation = scoreRange.min !== null || scoreRange.max !== null;
+    if (hasExistingReconciliation) {
+      setRerunConfirmOpen(true);
+      return;
+    }
+    await startReconcileJob();
+  };
+
+  const handleConfirmRerun = async () => {
+    setRerunConfirmOpen(false);
+    await startReconcileJob();
   };
 
   const handleTriggerColumnTypeRanking = async () => {
@@ -1433,7 +1496,7 @@ const TableDataViewer = () => {
                 variant="outlined"
                 size="small"
                 startIcon={<FileDownloadIcon fontSize="small" />}
-                onClick={handleExport}
+                onClick={handleOpenExportDialog}
                 sx={compactActionButtonSx}
               >
                 Export CSV
@@ -2321,6 +2384,104 @@ const TableDataViewer = () => {
           </Box>
         </Box>
       </Card>
+
+      <Dialog open={exportDialogOpen} onClose={() => setExportDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Export CSV</DialogTitle>
+        <DialogContent dividers>
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={exportIncludeReconciliation}
+                    onChange={(event) => setExportIncludeReconciliation(event.target.checked)}
+                  />
+                }
+                label="Include reconciliation enrichment columns"
+              />
+            </Grid>
+
+            {exportIncludeReconciliation && (
+              <>
+                <Grid item xs={12}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Select enrichment attributes
+                  </Typography>
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+                      gap: 0.5
+                    }}
+                  >
+                    {EXPORT_ENRICHMENT_OPTIONS.map((option) => (
+                      <FormControlLabel
+                        key={option.key}
+                        control={
+                          <Checkbox
+                            size="small"
+                            checked={exportEnrichmentFields.includes(option.key)}
+                            onChange={() => handleToggleExportField(option.key)}
+                          />
+                        }
+                        label={option.label}
+                      />
+                    ))}
+                  </Box>
+                  <FormHelperText>
+                    The selected attributes are appended per NE column, using the latest result per cell across all reconcilers.
+                  </FormHelperText>
+                </Grid>
+              </>
+            )}
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setExportDialogOpen(false)} color="inherit" disabled={exportSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleExport}
+            disabled={exportSubmitting || (exportIncludeReconciliation && exportEnrichmentFields.length === 0)}
+          >
+            {exportSubmitting ? 'Exporting...' : 'Download CSV'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={rerunConfirmOpen}
+        onClose={() => setRerunConfirmOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <WarningAmberIcon color="warning" fontSize="small" />
+          Re-run reconciliation?
+        </DialogTitle>
+        <DialogContent dividers>
+          <Alert severity="warning" sx={{ mb: 1.5 }}>
+            Existing reconciliation results will be updated with the new run.
+          </Alert>
+          <Typography variant="body2" color="text.secondary">
+            Do you want to continue and start a new reconciliation job?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRerunConfirmOpen(false)} color="inherit" disabled={reconcileSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirmRerun}
+            variant="contained"
+            color="warning"
+            disabled={reconcileSubmitting}
+          >
+            {reconcileSubmitting ? 'Starting...' : 'Yes, run again'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <TypeFilterModal
         open={typeFilterOpen}

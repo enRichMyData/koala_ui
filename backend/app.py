@@ -2505,6 +2505,53 @@ def extract_reconciliation_types(value: Any) -> List[Dict[str, str]]:
     return items
 
 
+def format_reconciliation_types_for_csv(value: Any) -> str:
+    entries = extract_reconciliation_types(value)
+    if not entries:
+        return ""
+    formatted: List[str] = []
+    for entry in entries:
+        type_id = normalize_optional_value(entry.get("id")) or ""
+        type_name = normalize_optional_value(entry.get("name")) or ""
+        if type_id and type_name:
+            formatted.append(f"{type_id}:{type_name}")
+        elif type_id:
+            formatted.append(type_id)
+        elif type_name:
+            formatted.append(type_name)
+    return " | ".join(formatted)
+
+
+def extract_final_score_value(final_payload: Dict[str, Any], cell_score: Optional[float]) -> Optional[float]:
+    if cell_score is not None:
+        return float(cell_score)
+    return parse_score_value(final_payload.get("score"))
+
+
+def extract_reconciliation_export_value(
+    field: str,
+    final_payload: Dict[str, Any],
+    cell_score: Optional[float]
+) -> str:
+    if field == "id":
+        return normalize_optional_value(final_payload.get("id")) or ""
+    if field == "name":
+        return normalize_optional_value(final_payload.get("name")) or ""
+    if field == "description":
+        return normalize_optional_value(final_payload.get("description")) or ""
+    if field == "types":
+        return format_reconciliation_types_for_csv(final_payload.get("types"))
+    if field == "score":
+        value = extract_final_score_value(final_payload, cell_score)
+        return str(value) if value is not None else ""
+    if field == "match":
+        match = final_payload.get("match")
+        if isinstance(match, bool):
+            return "true" if match else "false"
+        return ""
+    return ""
+
+
 def build_reconciliation_type_summary(
     db: Session,
     table_id: int,
@@ -3595,11 +3642,13 @@ def get_table_status_endpoint(
 def export_table_csv(
     dataset_name: str,
     table_name: str,
+    include_reconciliation: bool = Query(False),
+    enrichment_fields: Optional[List[str]] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     table = get_table_or_404(dataset_name, table_name, current_user["email"], db)
-    cursor = (
+    rows_cursor = (
         db.query(RowDB)
         .filter(RowDB.table_id == table.id)
         .order_by(RowDB.id_row.asc())
@@ -3609,14 +3658,77 @@ def export_table_csv(
     output = StringIO()
     writer = csv.writer(output)
 
-    header_row = table.header or []
+    base_header = table.header or []
+    header_row = list(base_header)
+    valid_enrichment_fields = [
+        "id",
+        "name",
+        "description",
+        "types",
+        "score",
+        "match"
+    ]
+    selected_fields: List[str] = []
+    if include_reconciliation:
+        raw_fields = enrichment_fields or ["id", "name", "description", "types", "score"]
+        for field in raw_fields:
+            clean = normalize_optional_value(field)
+            if clean and clean in valid_enrichment_fields and clean not in selected_fields:
+                selected_fields.append(clean)
+
+    enrichment_columns: List[int] = []
+    reconciliation_by_cell: Dict[tuple, ReconciliationCellDB] = {}
+    if include_reconciliation and selected_fields:
+        enrichment_columns = get_ne_column_indices(table)
+        if not enrichment_columns:
+            column_query = (
+                db.query(ReconciliationCellDB.col_idx)
+                .filter(ReconciliationCellDB.table_id == table.id)
+            )
+            enrichment_columns = sorted({col for (col,) in column_query.distinct().all() if col is not None})
+
+        if enrichment_columns:
+            recon_query = db.query(ReconciliationCellDB).filter(ReconciliationCellDB.table_id == table.id)
+            recon_query = recon_query.order_by(ReconciliationCellDB.updated_at.desc().nulls_last())
+            for cell in recon_query.all():
+                key = (cell.row_id, cell.col_idx)
+                if key not in reconciliation_by_cell:
+                    reconciliation_by_cell[key] = cell
+
+            field_suffix_map = {
+                "id": "link_id",
+                "name": "link_name",
+                "description": "link_description",
+                "types": "link_types",
+                "score": "link_score",
+                "match": "link_match"
+            }
+            for col_idx in enrichment_columns:
+                if col_idx < 0 or col_idx >= len(base_header):
+                    continue
+                col_name = base_header[col_idx]
+                for field in selected_fields:
+                    suffix = field_suffix_map[field]
+                    header_row.append(f"{col_name}__{suffix}")
+
     writer.writerow(header_row)
 
-    for row in cursor:
-        writer.writerow(row.data or [])
+    for row in rows_cursor:
+        row_values = list(row.data or [])
+        if include_reconciliation and selected_fields and enrichment_columns:
+            for col_idx in enrichment_columns:
+                cell = reconciliation_by_cell.get((row.id_row, col_idx))
+                final_payload = cell.final if cell and isinstance(cell.final, dict) else {}
+                cell_score = cell.score if cell else None
+                for field in selected_fields:
+                    row_values.append(
+                        extract_reconciliation_export_value(field, final_payload, cell_score)
+                    )
+        writer.writerow(row_values)
 
     output.seek(0)
-    filename = f"{dataset_name}_{table_name}_export.csv"
+    filename_suffix = "_enriched" if include_reconciliation and selected_fields else ""
+    filename = f"{dataset_name}_{table_name}_export{filename_suffix}.csv"
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",

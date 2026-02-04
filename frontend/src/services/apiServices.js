@@ -228,11 +228,19 @@ const getTableData = async (datasetName, tableName, perPage = 10, options = {}) 
   return response.data;
 };
 
-const exportTableCsv = async (datasetName, tableName) => {
+const exportTableCsv = async (datasetName, tableName, options = {}) => {
+  const params = {};
+  if (options.includeReconciliation !== undefined) {
+    params.include_reconciliation = options.includeReconciliation;
+  }
+  if (options.enrichmentFields?.length) {
+    params.enrichment_fields = options.enrichmentFields;
+  }
   const response = await backendApiClient.get(
     `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/export`,
     {
-      responseType: 'blob'
+      responseType: 'blob',
+      params
     }
   );
   return response;
