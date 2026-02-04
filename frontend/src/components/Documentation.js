@@ -33,13 +33,19 @@ const Documentation = () => {
                 <Typography variant="h6" sx={{ mb: 1 }}>1) Profile setup</Typography>
                 <List dense disablePadding>
                   <ListItem disableGutters>
-                    <ListItemText primary="Set shared LLM provider/model/API key." />
+                    <ListItemText primary="Set shared LLM provider/model/endpoint/API key (used by Moose and Lion Linker)." />
                   </ListItem>
                   <ListItem disableGutters>
-                    <ListItemText primary="Configure Lion Linker URL, API key, LLM key, Lamapi endpoint/token/KG/candidates." />
+                    <ListItemText primary="Configure Lion Linker URL, API key, and Lamapi endpoint/token/KG/candidates." />
                   </ListItem>
                   <ListItem disableGutters>
                     <ListItemText primary="Configure Crocodile URL and API key." />
+                  </ListItem>
+                  <ListItem disableGutters>
+                    <ListItemText primary="Configure Moose URL and API key." />
+                  </ListItem>
+                  <ListItem disableGutters>
+                    <ListItemText primary="Admins can manage users from Profile -> User admin tab." />
                   </ListItem>
                 </List>
               </CardContent>

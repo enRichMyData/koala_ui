@@ -276,9 +276,11 @@ const TableDataViewer = () => {
   const [reconcileProvider, setReconcileProvider] = useState('lion_linker');
   const [reconcileSettings, setReconcileSettings] = useState({
     availableProviders: ['lion_linker'],
+    llm: {
+      isConfigured: false
+    },
     lion: {
       hasApiKey: false,
-      hasLlmApiKey: false,
       hasLamapiToken: false
     },
     crocodile: {
@@ -428,17 +430,22 @@ const TableDataViewer = () => {
         const availableProviders = reconSettings?.available_providers || ['lion_linker'];
         const lionSettings = reconSettings?.lion_linker || {
           has_api_key: reconSettings?.has_api_key,
-          has_llm_api_key: reconSettings?.has_llm_api_key,
           has_lamapi_token: reconSettings?.has_lamapi_token
         };
         const crocSettings = reconSettings?.crocodile || {
           has_api_key: reconSettings?.crocodile_has_api_key
         };
+        const sharedLlm = reconSettings?.llm || {};
+        const llmConfigured = typeof sharedLlm?.is_configured === 'boolean'
+          ? sharedLlm.is_configured
+          : Boolean(settings?.is_configured);
         setReconcileSettings({
           availableProviders,
+          llm: {
+            isConfigured: llmConfigured
+          },
           lion: {
             hasApiKey: Boolean(lionSettings?.has_api_key),
-            hasLlmApiKey: Boolean(lionSettings?.has_llm_api_key),
             hasLamapiToken: Boolean(lionSettings?.has_lamapi_token)
           },
           crocodile: {
@@ -462,9 +469,11 @@ const TableDataViewer = () => {
         setLlmSettingsError('Unable to load LLM settings from the profile.');
         setReconcileSettings({
           availableProviders: ['lion_linker'],
+          llm: {
+            isConfigured: false
+          },
           lion: {
             hasApiKey: false,
-            hasLlmApiKey: false,
             hasLamapiToken: false
           },
           crocodile: {
@@ -793,9 +802,9 @@ const TableDataViewer = () => {
   const validateReconcileRequest = () => {
     if (reconcileProvider === 'lion_linker') {
       if (!reconcileSettings.lion.hasApiKey ||
-        !reconcileSettings.lion.hasLlmApiKey ||
+        !reconcileSettings.llm.isConfigured ||
         !reconcileSettings.lion.hasLamapiToken) {
-        setReconcileStatus('Missing Lion Linker or Lamapi credentials. Update your profile first.');
+        setReconcileStatus('Missing shared LLM, Lion Linker, or Lamapi credentials. Update your profile first.');
         return false;
       }
     } else if (reconcileProvider === 'crocodile') {
@@ -1324,7 +1333,7 @@ const TableDataViewer = () => {
   const missingReconcileCredentials = reconcileProvider === 'crocodile'
     ? !reconcileSettings.crocodile.hasApiKey
     : (!reconcileSettings.lion.hasApiKey ||
-      !reconcileSettings.lion.hasLlmApiKey ||
+      !reconcileSettings.llm.isConfigured ||
       !reconcileSettings.lion.hasLamapiToken);
 
   const showRowSelection = reconcileScope === 'rows';
@@ -1591,7 +1600,7 @@ const TableDataViewer = () => {
                 <Alert severity="warning" sx={{ mb: 1 }}>
                   {reconcileProvider === 'crocodile'
                     ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
-                    : 'Lion Linker or Lamapi credentials are missing. Update your profile to run reconciliation.'}
+                    : 'Shared LLM, Lion Linker, or Lamapi credentials are missing. Update your profile to run reconciliation.'}
                 </Alert>
               )}
 

@@ -60,18 +60,21 @@ docker-compose up --build
 
 Use the **Profile** page to configure credentials and service URLs per user:
 
-- Shared LLM provider/model/API key
+- Shared LLM provider/model/endpoint/API key (reused by Moose and Lion Linker)
 - Lion Linker:
   - base URL
   - API key
-  - LLM API key
   - Lamapi endpoint/token/KG/candidate count
-  - Lion model provider/model name
 - Crocodile:
+  - base URL
+  - API key
+- Moose:
   - base URL
   - API key
 
 Sensitive keys are stored server-side and only exposed as "has key" flags in the UI.
+
+Admin users also get a dedicated **User Admin** tab in Profile to create users, update roles/passwords, and delete users.
 
 ## Reconciliation Flow
 

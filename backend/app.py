@@ -316,15 +316,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
-class User(BaseModel):
-    email: str
-    password: str
-
-
 class Token(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
     token_type: str
+    email: Optional[str] = None
+    role: Optional[str] = None
 
 
 class DatasetCreate(BaseModel):
@@ -350,13 +347,21 @@ class ReconciliationSettingsUpdate(BaseModel):
     provider: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
-    llm_api_key: Optional[str] = None
-    model_api_provider: Optional[str] = None
-    model_name: Optional[str] = None
     lamapi_endpoint: Optional[str] = None
     lamapi_token: Optional[str] = None
     lamapi_kg: Optional[str] = None
     lamapi_num_candidates: Optional[int] = None
+
+
+class AdminUserCreate(BaseModel):
+    email: str
+    password: str
+    role: Optional[str] = "user"
+
+
+class AdminUserUpdate(BaseModel):
+    password: Optional[str] = None
+    role: Optional[str] = None
 
 
 class ReconcileCell(BaseModel):
@@ -416,7 +421,6 @@ def get_current_user(
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        role: str = payload.get("role", "user")
         token_type: str = payload.get("type", "access")
         if token_type != "access":
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -425,7 +429,7 @@ def get_current_user(
         user = db.query(UserDB).filter(UserDB.email == email).first()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        return {"email": user.email, "role": role}
+        return {"email": user.email, "role": user.role}
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -433,6 +437,17 @@ def get_current_user(
 def is_admin_user(user: dict):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required")
+
+
+VALID_USER_ROLES = {"user", "admin"}
+
+
+def normalize_user_role(value: Optional[str], default: str = "user") -> str:
+    role = normalize_optional_value(value) or default
+    role = role.lower()
+    if role not in VALID_USER_ROLES:
+        raise HTTPException(status_code=400, detail="Role must be one of: user, admin.")
+    return role
 
 
 def normalize_name(value: str) -> str:
@@ -459,12 +474,20 @@ def normalize_optional_value(value: Optional[Any]) -> Optional[str]:
 
 
 RECONCILIATION_PROVIDERS = {"lion_linker", "crocodile"}
+PROFILE_SERVICE_PROVIDERS = {"lion_linker", "crocodile", "moose"}
 
 
 def normalize_reconciliation_provider(value: Optional[str]) -> str:
     provider = normalize_optional_value(value) or "lion_linker"
     if provider not in RECONCILIATION_PROVIDERS:
         raise HTTPException(status_code=400, detail="Unsupported reconciliation provider.")
+    return provider
+
+
+def normalize_profile_service_provider(value: Optional[str]) -> str:
+    provider = normalize_optional_value(value) or "lion_linker"
+    if provider not in PROFILE_SERVICE_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported profile service provider.")
     return provider
 
 
@@ -504,7 +527,7 @@ def validate_llm_selection(provider: Optional[str], endpoint: Optional[str]) -> 
             )
     if endpoint:
         allowed_endpoints = get_allowed_llm_endpoints()
-        if not allowed_endpoints or endpoint not in allowed_endpoints:
+        if allowed_endpoints and endpoint not in allowed_endpoints:
             raise HTTPException(
                 status_code=400,
                 detail="LLM endpoint is not supported."
@@ -569,7 +592,7 @@ def load_llm_config(
         missing.append("LLM_PROVIDER")
     if not model:
         missing.append("LLM_MODEL")
-    requires_key = provider and provider.lower() != "ollama"
+    requires_key = bool(provider and provider.lower() != "ollama")
     if requires_key and not api_key:
         missing.append("LLM_API_KEY")
 
@@ -578,27 +601,64 @@ def load_llm_config(
         "model": model,
         "api_key": api_key,
         "endpoint": endpoint,
+        "requires_api_key": requires_key,
+        "is_configured": len(missing) == 0,
+        "missing": missing
+    }
+
+
+def resolve_service_base_url(
+    credentials: Optional[UserServiceCredential],
+    env_var: str,
+    default_base_url: str
+) -> str:
+    base_url = normalize_optional_value(credentials.base_url) if credentials and credentials.base_url else None
+    if not base_url:
+        base_url = normalize_optional_value(os.getenv(env_var)) or default_base_url
+    return base_url.rstrip("/")
+
+
+def resolve_service_api_key(
+    credentials: Optional[UserServiceCredential],
+    env_var: str
+) -> Optional[str]:
+    api_key = normalize_optional_value(credentials.api_key) if credentials and credentials.api_key else None
+    if not api_key:
+        api_key = normalize_optional_value(os.getenv(env_var))
+    return api_key
+
+
+def load_moose_service_config(
+    db: Session,
+    user_email: str
+) -> Dict[str, Any]:
+    credentials = get_user_service_credentials(db, user_email, "moose")
+    base_url = resolve_service_base_url(credentials, "MOOSE_BASE_URL", "https://moose.zooverse.dev")
+    api_key = resolve_service_api_key(credentials, "MOOSE_API_KEY")
+    missing = []
+    if not api_key:
+        missing.append("Moose API key")
+    return {
+        "base_url": base_url,
+        "api_key": api_key,
         "missing": missing
     }
 
 
 def load_moose_config(
+    db: Session,
+    user_email: str,
     llm_provider_override: Optional[str] = None,
     llm_model_override: Optional[str] = None,
     user_settings: Optional[UserLLMSettings] = None
 ) -> Dict[str, Any]:
-    base_url = (os.getenv("MOOSE_BASE_URL") or "https://moose.zooverse.dev").rstrip("/")
-    api_key = os.getenv("MOOSE_API_KEY")
+    moose_service = load_moose_service_config(db, user_email)
     llm_config = load_llm_config(llm_provider_override, llm_model_override, user_settings)
-
-    missing = []
-    if not api_key:
-        missing.append("MOOSE_API_KEY")
-    missing.extend(llm_config["missing"])
+    missing = list(moose_service["missing"]) + list(llm_config["missing"])
 
     return {
-        "base_url": base_url,
-        "api_key": api_key,
+        "base_url": moose_service["base_url"],
+        "api_key": moose_service["api_key"],
         "llm_provider": llm_config["provider"],
         "llm_model": llm_config["model"],
         "llm_api_key": llm_config["api_key"],
@@ -625,47 +685,49 @@ def build_moose_headers(config: Dict[str, Any]) -> Dict[str, str]:
     return headers
 
 
-def load_moose_status_config() -> Dict[str, Any]:
-    base_url = (os.getenv("MOOSE_BASE_URL") or "https://moose.zooverse.dev").rstrip("/")
-    api_key = os.getenv("MOOSE_API_KEY")
-    missing = []
-    if not api_key:
-        missing.append("MOOSE_API_KEY")
+def load_moose_status_config(db: Session, user_email: str) -> Dict[str, Any]:
+    service_config = load_moose_service_config(db, user_email)
     return {
-        "base_url": base_url,
-        "api_key": api_key,
+        "base_url": service_config["base_url"],
+        "api_key": service_config["api_key"],
         "request_timeout": MOOSE_REQUEST_TIMEOUT_SECONDS,
-        "missing": missing
+        "missing": service_config["missing"]
     }
 
 
 def load_lion_config(
     db: Session,
-    user_email: str
+    user_email: str,
+    user_settings: Optional[UserLLMSettings] = None,
+    require_llm: bool = False
 ) -> Dict[str, Any]:
     credentials = get_user_service_credentials(db, user_email, "lion_linker")
-    base_url = normalize_optional_value(credentials.base_url) if credentials and credentials.base_url else None
-    if not base_url:
-        base_url = (os.getenv("LION_LINKER_BASE_URL") or LION_DEFAULT_BASE_URL).rstrip("/")
-    else:
-        base_url = base_url.rstrip("/")
-    api_key = normalize_optional_value(credentials.api_key) if credentials and credentials.api_key else None
-    llm_api_key = normalize_optional_value(credentials.llm_api_key) if credentials and credentials.llm_api_key else None
-    if not api_key:
-        api_key = normalize_optional_value(os.getenv("LION_LINKER_API_KEY"))
-    if not llm_api_key:
-        llm_api_key = normalize_optional_value(os.getenv("LION_LINKER_LLM_API_KEY"))
-
-    missing = []
+    base_url = resolve_service_base_url(credentials, "LION_LINKER_BASE_URL", LION_DEFAULT_BASE_URL)
+    api_key = resolve_service_api_key(credentials, "LION_LINKER_API_KEY")
+    llm_config = {
+        "provider": None,
+        "model": None,
+        "api_key": None,
+        "endpoint": None,
+        "requires_api_key": False,
+        "missing": []
+    }
+    if require_llm:
+        llm_config = load_llm_config(user_settings=user_settings)
+    missing: List[str] = []
     if not api_key:
         missing.append("Lion Linker API key")
-    if not llm_api_key:
-        missing.append("Lion Linker LLM API key")
+    if require_llm:
+        missing.extend(llm_config["missing"])
 
     return {
         "base_url": base_url,
         "api_key": api_key,
-        "llm_api_key": llm_api_key,
+        "llm_provider": llm_config["provider"],
+        "llm_model": llm_config["model"],
+        "llm_api_key": llm_config["api_key"],
+        "llm_endpoint": llm_config["endpoint"],
+        "llm_requires_api_key": llm_config["requires_api_key"],
         "request_timeout": LION_REQUEST_TIMEOUT_SECONDS,
         "poll_interval": LION_POLL_INTERVAL_SECONDS,
         "poll_timeout": LION_POLL_TIMEOUT_SECONDS,
@@ -682,12 +744,6 @@ def load_lion_retriever_config(
     token = normalize_optional_value(credentials.lamapi_token) if credentials and credentials.lamapi_token else None
     kg = normalize_optional_value(credentials.lamapi_kg) if credentials and credentials.lamapi_kg else None
     num_candidates = credentials.lamapi_num_candidates if credentials and credentials.lamapi_num_candidates else None
-    model_api_provider = (
-        normalize_optional_value(credentials.model_api_provider)
-        if credentials and credentials.model_api_provider
-        else None
-    )
-    model_name = normalize_optional_value(credentials.model_name) if credentials and credentials.model_name else None
 
     if not endpoint:
         endpoint = normalize_optional_value(os.getenv("LION_LINKER_LAMAPI_ENDPOINT"))
@@ -702,10 +758,6 @@ def load_lion_retriever_config(
                 num_candidates = int(raw_num)
             except ValueError:
                 num_candidates = None
-    if not model_api_provider:
-        model_api_provider = normalize_optional_value(os.getenv("LION_LINKER_MODEL_API_PROVIDER"))
-    if not model_name:
-        model_name = normalize_optional_value(os.getenv("LION_LINKER_MODEL_NAME"))
 
     missing = []
     if not endpoint:
@@ -718,8 +770,6 @@ def load_lion_retriever_config(
         "token": token,
         "kg": kg or "wikidata",
         "num_candidates": num_candidates or 10,
-        "model_api_provider": model_api_provider,
-        "model_name": model_name,
         "missing": missing
     }
 
@@ -729,14 +779,8 @@ def load_crocodile_config(
     user_email: str
 ) -> Dict[str, Any]:
     credentials = get_user_service_credentials(db, user_email, "crocodile")
-    base_url = normalize_optional_value(credentials.base_url) if credentials and credentials.base_url else None
-    if not base_url:
-        base_url = (os.getenv("CROCODILE_BASE_URL") or CROCODILE_DEFAULT_BASE_URL).rstrip("/")
-    else:
-        base_url = base_url.rstrip("/")
-    api_key = normalize_optional_value(credentials.api_key) if credentials and credentials.api_key else None
-    if not api_key:
-        api_key = normalize_optional_value(os.getenv("CROCODILE_API_KEY"))
+    base_url = resolve_service_base_url(credentials, "CROCODILE_BASE_URL", CROCODILE_DEFAULT_BASE_URL)
+    api_key = resolve_service_api_key(credentials, "CROCODILE_API_KEY")
 
     missing = []
     if not api_key:
@@ -759,6 +803,8 @@ def build_lion_headers(config: Dict[str, Any]) -> Dict[str, str]:
     }
     if config.get("llm_api_key"):
         headers["X-LLM-API-Key"] = config["llm_api_key"]
+    if config.get("llm_endpoint"):
+        headers["X-LLM-Endpoint"] = config["llm_endpoint"]
     return headers
 
 
@@ -836,46 +882,67 @@ def get_crocodile_job_results(
 def serialize_reconciliation_settings(db: Session, user_email: str) -> Dict[str, Any]:
     lion_credentials = get_user_service_credentials(db, user_email, "lion_linker")
     crocodile_credentials = get_user_service_credentials(db, user_email, "crocodile")
-    server_api_key = normalize_optional_value(os.getenv("LION_LINKER_API_KEY"))
-    server_llm_key = normalize_optional_value(os.getenv("LION_LINKER_LLM_API_KEY"))
-    croc_server_key = normalize_optional_value(os.getenv("CROCODILE_API_KEY"))
+    moose_credentials = get_user_service_credentials(db, user_email, "moose")
+    llm_settings = get_user_llm_settings(db, user_email)
+    try:
+        llm_config = load_llm_config(user_settings=llm_settings)
+    except HTTPException:
+        provider = normalize_optional_value(llm_settings.provider) if llm_settings and llm_settings.provider else None
+        model = normalize_optional_value(llm_settings.model) if llm_settings and llm_settings.model else None
+        endpoint = normalize_optional_value(llm_settings.endpoint) if llm_settings and llm_settings.endpoint else None
+        api_key = normalize_optional_value(llm_settings.api_key) if llm_settings and llm_settings.api_key else None
+        requires_key = bool(provider and provider.lower() != "ollama")
+        missing = []
+        if not provider:
+            missing.append("LLM_PROVIDER")
+        if not model:
+            missing.append("LLM_MODEL")
+        if requires_key and not api_key:
+            missing.append("LLM_API_KEY")
+        llm_config = {
+            "provider": provider,
+            "model": model,
+            "api_key": api_key,
+            "endpoint": endpoint,
+            "requires_api_key": requires_key,
+            "is_configured": False,
+            "missing": missing
+        }
     retriever_config = load_lion_retriever_config(db, user_email)
-    lion_base_url = (
-        normalize_optional_value(lion_credentials.base_url)
-        if lion_credentials and lion_credentials.base_url
-        else None
-    )
-    if not lion_base_url:
-        lion_base_url = (os.getenv("LION_LINKER_BASE_URL") or LION_DEFAULT_BASE_URL).rstrip("/")
-    else:
-        lion_base_url = lion_base_url.rstrip("/")
-    crocodile_base_url = (
-        normalize_optional_value(crocodile_credentials.base_url)
-        if crocodile_credentials and crocodile_credentials.base_url
-        else None
-    )
-    if not crocodile_base_url:
-        crocodile_base_url = (os.getenv("CROCODILE_BASE_URL") or CROCODILE_DEFAULT_BASE_URL).rstrip("/")
-    else:
-        crocodile_base_url = crocodile_base_url.rstrip("/")
+    lion_base_url = resolve_service_base_url(lion_credentials, "LION_LINKER_BASE_URL", LION_DEFAULT_BASE_URL)
+    crocodile_base_url = resolve_service_base_url(crocodile_credentials, "CROCODILE_BASE_URL", CROCODILE_DEFAULT_BASE_URL)
+    moose_base_url = resolve_service_base_url(moose_credentials, "MOOSE_BASE_URL", "https://moose.zooverse.dev")
+    lion_api_key = resolve_service_api_key(lion_credentials, "LION_LINKER_API_KEY")
+    crocodile_api_key = resolve_service_api_key(crocodile_credentials, "CROCODILE_API_KEY")
+    moose_api_key = resolve_service_api_key(moose_credentials, "MOOSE_API_KEY")
+    llm_payload = {
+        "provider": llm_config["provider"],
+        "model": llm_config["model"],
+        "endpoint": llm_config["endpoint"],
+        "has_api_key": bool(llm_config["api_key"]),
+        "requires_api_key": bool(llm_config["requires_api_key"]),
+        "is_configured": bool(llm_config["is_configured"])
+    }
 
     lion_payload = {
         "base_url": lion_base_url,
-        "has_api_key": bool((lion_credentials and lion_credentials.api_key) or server_api_key),
-        "has_llm_api_key": bool((lion_credentials and lion_credentials.llm_api_key) or server_llm_key),
+        "has_api_key": bool(lion_api_key),
         "has_lamapi_token": bool(retriever_config.get("token")),
-        "model_api_provider": retriever_config.get("model_api_provider"),
-        "model_name": retriever_config.get("model_name"),
         "lamapi_endpoint": retriever_config.get("endpoint"),
         "lamapi_kg": retriever_config.get("kg"),
-        "lamapi_num_candidates": retriever_config.get("num_candidates")
+        "lamapi_num_candidates": retriever_config.get("num_candidates"),
+        "uses_shared_llm": True
     }
 
     crocodile_payload = {
         "base_url": crocodile_base_url,
-        "has_api_key": bool(
-            (crocodile_credentials and crocodile_credentials.api_key) or croc_server_key
-        )
+        "has_api_key": bool(crocodile_api_key)
+    }
+
+    moose_payload = {
+        "base_url": moose_base_url,
+        "has_api_key": bool(moose_api_key),
+        "uses_shared_llm": True
     }
 
     return {
@@ -883,17 +950,19 @@ def serialize_reconciliation_settings(db: Session, user_email: str) -> Dict[str,
         "available_providers": ["lion_linker", "crocodile"],
         "lion_base_url": lion_base_url,
         "crocodile_base_url": crocodile_base_url,
+        "moose_base_url": moose_base_url,
         "has_api_key": lion_payload["has_api_key"],
-        "has_llm_api_key": lion_payload["has_llm_api_key"],
+        "has_llm_api_key": llm_payload["has_api_key"],
         "has_lamapi_token": lion_payload["has_lamapi_token"],
-        "model_api_provider": lion_payload["model_api_provider"],
-        "model_name": lion_payload["model_name"],
         "lamapi_endpoint": lion_payload["lamapi_endpoint"],
         "lamapi_kg": lion_payload["lamapi_kg"],
         "lamapi_num_candidates": lion_payload["lamapi_num_candidates"],
         "crocodile_has_api_key": crocodile_payload["has_api_key"],
+        "moose_has_api_key": moose_payload["has_api_key"],
+        "llm": llm_payload,
         "lion_linker": lion_payload,
-        "crocodile": crocodile_payload
+        "crocodile": crocodile_payload,
+        "moose": moose_payload
     }
 
 
@@ -2106,6 +2175,19 @@ def get_user_service_credentials(
     )
 
 
+def serialize_admin_user(user: UserDB) -> Dict[str, Any]:
+    return {
+        "email": user.email,
+        "role": user.role or "user",
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "password_hash": user.password
+    }
+
+
+def count_admin_users(db: Session) -> int:
+    return db.query(func.count(UserDB.id)).filter(UserDB.role == "admin").scalar() or 0
+
+
 def serialize_row(row: RowDB) -> Dict[str, Any]:
     return {
         "idRow": row.id_row,
@@ -2888,20 +2970,6 @@ def create_admin_user():
         db.close()
 
 
-@app.post("/register", response_model=dict)
-def register(user: User, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    is_admin_user(current_user)
-
-    existing = db.query(UserDB).filter(UserDB.email == user.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="User already exists")
-
-    hashed_password = get_password_hash(user.password)
-    db.add(UserDB(email=user.email, password=hashed_password))
-    db.commit()
-    return {"msg": "User created successfully"}
-
-
 @app.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(UserDB).filter(UserDB.email == form_data.username).first()
@@ -2910,7 +2978,13 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
     access_token = create_access_token(data={"sub": user.email, "role": user.role})
     refresh_token = create_refresh_token(data={"sub": user.email, "role": user.role})
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "email": user.email,
+        "role": user.role
+    }
 
 
 @app.post("/refresh", response_model=Token)
@@ -2927,9 +3001,23 @@ def refresh_access_token(payload: RefreshTokenRequest, db: Session = Depends(get
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
         access_token = create_access_token(data={"sub": user.email, "role": user.role})
-        return {"access_token": access_token, "refresh_token": payload.refresh_token, "token_type": "bearer"}
+        return {
+            "access_token": access_token,
+            "refresh_token": payload.refresh_token,
+            "token_type": "bearer",
+            "email": user.email,
+            "role": user.role
+        }
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+@app.get("/users/me", response_model=dict)
+def get_me(current_user: dict = Depends(get_current_user)):
+    return {
+        "email": current_user["email"],
+        "role": current_user["role"]
+    }
 
 
 @app.get("/users/me/llm-settings", response_model=dict)
@@ -2938,11 +3026,19 @@ def get_llm_settings(
     db: Session = Depends(get_db)
 ):
     settings = get_user_llm_settings(db, current_user["email"])
+    provider = settings.provider if settings else None
+    model = settings.model if settings else None
+    endpoint = settings.endpoint if settings else None
+    has_api_key = bool(settings.api_key) if settings else bool(normalize_optional_value(os.getenv("LLM_API_KEY")))
+    requires_api_key = bool(provider and provider.lower() != "ollama")
+    is_configured = bool(provider and model and ((not requires_api_key) or has_api_key))
     return {
-        "provider": settings.provider if settings else None,
-        "model": settings.model if settings else None,
-        "endpoint": settings.endpoint if settings else None,
-        "has_api_key": bool(settings.api_key) if settings else False,
+        "provider": provider,
+        "model": model,
+        "endpoint": endpoint,
+        "has_api_key": has_api_key,
+        "requires_api_key": requires_api_key,
+        "is_configured": is_configured,
         "allowed_providers": get_allowed_llm_providers(),
         "allowed_endpoints": get_allowed_llm_endpoints()
     }
@@ -2981,7 +3077,16 @@ def update_llm_settings(
         "provider": settings.provider,
         "model": settings.model,
         "endpoint": settings.endpoint,
-        "has_api_key": bool(settings.api_key)
+        "has_api_key": bool(settings.api_key),
+        "requires_api_key": bool(settings.provider and settings.provider.lower() != "ollama"),
+        "is_configured": bool(
+            settings.provider and
+            settings.model and
+            (
+                settings.provider.lower() == "ollama" or
+                bool(settings.api_key)
+            )
+        )
     }
 
 
@@ -2999,7 +3104,7 @@ def update_reconciliation_settings(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    provider = normalize_reconciliation_provider(payload.provider)
+    provider = normalize_profile_service_provider(payload.provider)
 
     credentials = get_user_service_credentials(db, current_user["email"], provider)
     if not credentials:
@@ -3011,12 +3116,6 @@ def update_reconciliation_settings(
     if payload.api_key is not None:
         credentials.api_key = normalize_optional_value(payload.api_key)
     if provider == "lion_linker":
-        if payload.llm_api_key is not None:
-            credentials.llm_api_key = normalize_optional_value(payload.llm_api_key)
-        if payload.model_api_provider is not None:
-            credentials.model_api_provider = normalize_optional_value(payload.model_api_provider)
-        if payload.model_name is not None:
-            credentials.model_name = normalize_optional_value(payload.model_name)
         if payload.lamapi_endpoint is not None:
             credentials.lamapi_endpoint = normalize_optional_value(payload.lamapi_endpoint)
         if payload.lamapi_token is not None:
@@ -3032,38 +3131,110 @@ def update_reconciliation_settings(
     return serialize_reconciliation_settings(db, current_user["email"])
 
 
-@app.post("/upload-users", response_model=dict)
-def upload_users(file: UploadFile = File(...), current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+@app.get("/admin/users", response_model=dict)
+def list_users_admin(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     is_admin_user(current_user)
-
-    try:
-        content = file.file.read().decode("utf-8").splitlines()
-        reader = csv.DictReader(content)
-        for row in reader:
-            email = row.get("email")
-            password = row.get("password")
-            if not email or not password:
-                continue
-            if db.query(UserDB).filter(UserDB.email == email).first():
-                continue
-            hashed_password = get_password_hash(password)
-            db.add(UserDB(email=email, password=hashed_password))
-        db.commit()
-        return {"msg": "Users uploaded successfully"}
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Error processing file: {str(exc)}")
+    users = db.query(UserDB).order_by(UserDB.created_at.asc(), UserDB.email.asc()).all()
+    return {
+        "users": [serialize_admin_user(user) for user in users]
+    }
 
 
-@app.delete("/delete-user/{email}", response_model=dict)
-def delete_user(email: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+@app.post("/admin/users", response_model=dict)
+def create_user_admin(
+    payload: AdminUserCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     is_admin_user(current_user)
+    email = normalize_optional_value(payload.email)
+    password = normalize_optional_value(payload.password)
+    role = normalize_user_role(payload.role)
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+    if not password:
+        raise HTTPException(status_code=400, detail="Password is required.")
+    existing = db.query(UserDB).filter(UserDB.email == email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="User already exists")
 
-    user = db.query(UserDB).filter(UserDB.email == email).first()
+    user = UserDB(
+        email=email,
+        password=get_password_hash(password),
+        role=role,
+        created_at=datetime.utcnow()
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "msg": "User created successfully",
+        "user": serialize_admin_user(user)
+    }
+
+
+@app.put("/admin/users/{email}", response_model=dict)
+def update_user_admin(
+    email: str,
+    payload: AdminUserUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    is_admin_user(current_user)
+    target_email = normalize_optional_value(email)
+    if not target_email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+    user = db.query(UserDB).filter(UserDB.email == target_email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    password_changed = False
+    role_changed = False
+
+    if payload.password is not None:
+        next_password = normalize_optional_value(payload.password)
+        if not next_password:
+            raise HTTPException(status_code=400, detail="Password cannot be empty.")
+        user.password = get_password_hash(next_password)
+        password_changed = True
+
+    if payload.role is not None:
+        next_role = normalize_user_role(payload.role)
+        if user.role == "admin" and next_role != "admin" and count_admin_users(db) <= 1:
+            raise HTTPException(status_code=400, detail="At least one admin account is required.")
+        if user.role != next_role:
+            user.role = next_role
+            role_changed = True
+
+    if not password_changed and not role_changed:
+        raise HTTPException(status_code=400, detail="No changes supplied.")
+
+    db.commit()
+    db.refresh(user)
+    return {
+        "msg": "User updated successfully",
+        "user": serialize_admin_user(user)
+    }
+
+
+@app.delete("/admin/users/{email}", response_model=dict)
+def delete_user_admin(
+    email: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    is_admin_user(current_user)
+    target_email = normalize_optional_value(email)
+    if not target_email:
+        raise HTTPException(status_code=400, detail="Email is required.")
+    user = db.query(UserDB).filter(UserDB.email == target_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role == "admin" and count_admin_users(db) <= 1:
+        raise HTTPException(status_code=400, detail="At least one admin account is required.")
     db.delete(user)
     db.commit()
-    return {"msg": f"User {email} deleted successfully"}
+    return {"msg": f"User {target_email} deleted successfully"}
 
 
 @app.post("/datasets", response_model=dict)
@@ -3256,7 +3427,13 @@ def upload_table(
     moose_config = None
     user_settings = get_user_llm_settings(db, current_user["email"])
     if auto_detect and not has_classification:
-        moose_config = load_moose_config(llm_provider, llm_model, user_settings)
+        moose_config = load_moose_config(
+            db,
+            current_user["email"],
+            llm_provider,
+            llm_model,
+            user_settings
+        )
         if moose_config["missing"]:
             missing = ", ".join(moose_config["missing"])
             raise HTTPException(status_code=500, detail=f"Missing Moose configuration: {missing}")
@@ -3830,7 +4007,13 @@ def identify_columns(
         raise HTTPException(status_code=400, detail="Table header is empty.")
 
     user_settings = get_user_llm_settings(db, current_user["email"])
-    config = load_moose_config(llm_provider, llm_model, user_settings)
+    config = load_moose_config(
+        db,
+        current_user["email"],
+        llm_provider,
+        llm_model,
+        user_settings
+    )
     if config["missing"]:
         missing = ", ".join(config["missing"])
         raise HTTPException(status_code=500, detail=f"Missing Moose configuration: {missing}")
@@ -3869,7 +4052,13 @@ def annotate_dpv_columns(
         raise HTTPException(status_code=400, detail="Table header is empty.")
 
     user_settings = get_user_llm_settings(db, current_user["email"])
-    config = load_moose_config(llm_provider, llm_model, user_settings)
+    config = load_moose_config(
+        db,
+        current_user["email"],
+        llm_provider,
+        llm_model,
+        user_settings
+    )
     if config["missing"]:
         missing = ", ".join(config["missing"])
         raise HTTPException(status_code=500, detail=f"Missing Moose configuration: {missing}")
@@ -3914,7 +4103,7 @@ def get_identify_status(
             "job_id": None
         }
 
-    config = load_moose_status_config()
+    config = load_moose_status_config(db, current_user["email"])
     if config["missing"]:
         missing = ", ".join(config["missing"])
         raise HTTPException(status_code=500, detail=f"Missing Moose configuration: {missing}")
@@ -3979,7 +4168,7 @@ def get_dpv_status(
             "job_id": None
         }
 
-    config = load_moose_status_config()
+    config = load_moose_status_config(db, current_user["email"])
     if config["missing"]:
         missing = ", ".join(config["missing"])
         raise HTTPException(status_code=500, detail=f"Missing Moose configuration: {missing}")
@@ -4148,7 +4337,8 @@ def reconcile_table(
     job_response: Dict[str, Any]
 
     if provider == "lion_linker":
-        config = load_lion_config(db, current_user["email"])
+        user_llm_settings = get_user_llm_settings(db, current_user["email"])
+        config = load_lion_config(db, current_user["email"], user_llm_settings, require_llm=True)
         if config["missing"]:
             missing = ", ".join(config["missing"])
             raise HTTPException(status_code=500, detail=f"Missing Lion Linker configuration: {missing}")
@@ -4156,12 +4346,12 @@ def reconcile_table(
         if retriever_config["missing"]:
             missing = ", ".join(retriever_config["missing"])
             raise HTTPException(status_code=500, detail=f"Missing Lamapi configuration: {missing}")
-        model_provider = retriever_config.get("model_api_provider")
-        model_name = retriever_config.get("model_name")
+        model_provider = config.get("llm_provider")
+        model_name = config.get("llm_model")
         if not model_provider or not model_name:
             raise HTTPException(
                 status_code=400,
-                detail="Lion Linker model provider and model name are required. Set them in the profile or env."
+                detail="LLM provider and model are required. Set them in your profile."
             )
 
         lion_config = {

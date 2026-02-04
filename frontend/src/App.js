@@ -25,6 +25,7 @@ function App() {
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('userEmail');
     localStorage.removeItem('userId');
+    localStorage.removeItem('userRole');
     setIsLoggedIn(false);
   };
 
