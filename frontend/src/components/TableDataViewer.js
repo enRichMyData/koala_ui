@@ -214,6 +214,12 @@ const EXPORT_ENRICHMENT_OPTIONS = [
   { key: 'match', label: 'Match flag' }
 ];
 
+const DEFAULT_SORT_PARAMS = {
+  sortBy: 'id',
+  sortDirection: 'asc',
+  sortConfidenceColumn: null
+};
+
 const TableDataViewer = () => {
   const navigate = useNavigate();
   const { datasetName, tableName } = useParams();
@@ -231,11 +237,7 @@ const TableDataViewer = () => {
     includeNeTypes: [],
     excludeNeTypes: []
   });
-  const [sortParams, setSortParams] = useState({
-    sortBy: 'score_avg',
-    sortDirection: 'desc',
-    sortConfidenceColumn: null
-  });
+  const [sortParams, setSortParams] = useState(DEFAULT_SORT_PARAMS);
   const [typeFilterOpen, setTypeFilterOpen] = useState(false);
   const [columnEditorOpen, setColumnEditorOpen] = useState(false);
   const [columnClassification, setColumnClassification] = useState({});
@@ -599,11 +601,7 @@ const TableDataViewer = () => {
       includeNeTypes: [],
       excludeNeTypes: []
     });
-    setSortParams({
-      sortBy: 'score_avg',
-      sortDirection: 'desc',
-      sortConfidenceColumn: null
-    });
+    setSortParams(DEFAULT_SORT_PARAMS);
     setCurrentPage(1);
   };
 
@@ -1196,9 +1194,9 @@ const TableDataViewer = () => {
     activeFilters.excludeTypes?.length > 0 ||
     activeFilters.includeNeTypes?.length > 0 ||
     activeFilters.excludeNeTypes?.length > 0 ||
-    sortParams.sortBy !== 'score_avg' ||
-    (sortParams.sortDirection && sortParams.sortDirection !== 'desc') ||
-    sortParams.sortConfidenceColumn !== null;
+    (sortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy) !== DEFAULT_SORT_PARAMS.sortBy ||
+    (sortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection) !== DEFAULT_SORT_PARAMS.sortDirection ||
+    (sortParams.sortConfidenceColumn ?? null) !== DEFAULT_SORT_PARAMS.sortConfidenceColumn;
 
   if (loading && !data) {
     return <CircularProgress />;

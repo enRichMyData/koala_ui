@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Paper, TextField, InputAdornment, IconButton, Button, Tooltip, Box } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -11,6 +11,10 @@ const TableSearch = ({
   noPaper = false
 }) => {
   const [searchText, setSearchText] = useState(initialSearchText);
+
+  useEffect(() => {
+    setSearchText(initialSearchText || '');
+  }, [initialSearchText]);
 
   const handleSearchChange = (e) => {
     setSearchText(e.target.value);
@@ -51,7 +55,7 @@ const TableSearch = ({
                 <InputAdornment position="end">
                   <IconButton
                     aria-label="clear search"
-                    onClick={() => setSearchText('')}
+                    onClick={handleClearSearch}
                     edge="end"
                     size="small"
                   >
@@ -83,13 +87,6 @@ const TableSearch = ({
               </Button>
             </span>
           </Tooltip>
-          {searchText && (
-            <Tooltip title="Clear search">
-              <IconButton onClick={handleClearSearch} color="default" size="small">
-                <ClearIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
         </Box>
       </form>
     </Box>

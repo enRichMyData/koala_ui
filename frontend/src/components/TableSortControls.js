@@ -21,6 +21,12 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import FilterListOffIcon from '@mui/icons-material/FilterListOff';
 
+const DEFAULT_SORT_PARAMS = {
+  sortBy: 'id',
+  sortDirection: 'asc',
+  sortConfidenceColumn: null
+};
+
 const TableSortControls = ({ 
   headers = [],
   columnTypes = [],
@@ -32,8 +38,8 @@ const TableSortControls = ({
   compact = false
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
-  const [sortType, setSortType] = useState(currentSortParams.sortBy || 'score_avg');
-  const [sortDirection, setSortDirection] = useState(currentSortParams.sortDirection || 'desc');
+  const [sortType, setSortType] = useState(currentSortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy);
+  const [sortDirection, setSortDirection] = useState(currentSortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection);
   const [sortConfidenceColumn, setSortConfidenceColumn] = useState(
     currentSortParams.sortConfidenceColumn ?? ''
   );
@@ -47,14 +53,23 @@ const TableSortControls = ({
   );
 
   useEffect(() => {
-    setSortType(currentSortParams.sortBy || 'score_avg');
-    setSortDirection(currentSortParams.sortDirection || 'desc');
+    setSortType(currentSortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy);
+    setSortDirection(currentSortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection);
     setSortConfidenceColumn(currentSortParams.sortConfidenceColumn ?? '');
   }, [
     currentSortParams.sortBy,
     currentSortParams.sortDirection,
     currentSortParams.sortConfidenceColumn
   ]);
+
+  const normalizedSortBy = currentSortParams.sortBy || DEFAULT_SORT_PARAMS.sortBy;
+  const normalizedSortDirection = currentSortParams.sortDirection || DEFAULT_SORT_PARAMS.sortDirection;
+  const normalizedSortConfidenceColumn = currentSortParams.sortConfidenceColumn ?? null;
+  const isDefaultSort = (
+    normalizedSortBy === DEFAULT_SORT_PARAMS.sortBy &&
+    normalizedSortDirection === DEFAULT_SORT_PARAMS.sortDirection &&
+    normalizedSortConfidenceColumn === DEFAULT_SORT_PARAMS.sortConfidenceColumn
+  );
 
   const open = Boolean(anchorEl);
   
@@ -67,20 +82,19 @@ const TableSortControls = ({
   };
 
   const handleClearSort = () => {
-    setSortType('score_avg');
-    setSortDirection('desc');
+    setSortType(DEFAULT_SORT_PARAMS.sortBy);
+    setSortDirection(DEFAULT_SORT_PARAMS.sortDirection);
     setSortConfidenceColumn('');
-    onSort({
-      sortBy: 'score_avg',
-      sortDirection: 'desc',
-      sortConfidenceColumn: null
-    });
+    onSort(DEFAULT_SORT_PARAMS);
     handleClose();
   };
 
   const handleSortTypeChange = (event) => {
     const value = event.target.value;
     setSortType(value);
+    if (value === 'id') {
+      setSortDirection('asc');
+    }
     if (value !== 'score') {
       setSortConfidenceColumn('');
     }
@@ -91,7 +105,7 @@ const TableSortControls = ({
   };
 
   const handleApplySort = () => {
-    const sortBy = sortType || 'score_avg';
+    const sortBy = sortType || DEFAULT_SORT_PARAMS.sortBy;
     const selectedColumn =
       sortBy === 'score' &&
       sortConfidenceColumn !== '' &&
@@ -101,15 +115,18 @@ const TableSortControls = ({
         : null;
     onSort({
       sortBy,
-      sortDirection: sortDirection,
+      sortDirection: sortDirection || (sortBy === 'id' ? 'asc' : 'desc'),
       sortConfidenceColumn: selectedColumn
     });
     handleClose();
   };
 
   const getSortDescription = () => {
-    if (currentSortParams.sortBy === 'score_avg' || !currentSortParams.sortBy) {
-      return `Sorting by average confidence score across NE columns (${currentSortParams.sortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
+    if (normalizedSortBy === 'id') {
+      return `Sorting by row ID (${normalizedSortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
+    }
+    if (normalizedSortBy === 'score_avg') {
+      return `Sorting by average confidence score across NE columns (${normalizedSortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
     }
     const selectedColumn = neColumns.find(
       (entry) => Number(entry.idx) === Number(currentSortParams.sortConfidenceColumn)
@@ -117,7 +134,7 @@ const TableSortControls = ({
     const scopeText = selectedColumn
       ? `"${selectedColumn.header}"`
       : 'selected NE column';
-    return `Sorting by confidence score on ${scopeText} (${currentSortParams.sortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
+    return `Sorting by confidence score on ${scopeText} (${normalizedSortDirection === 'desc' ? 'highest first' : 'lowest first'})`;
   };
 
   return (
@@ -144,7 +161,7 @@ const TableSortControls = ({
           startIcon={<SortIcon />}
           onClick={handleClick}
           size="small"
-          color={currentSortParams.sortBy ? 'primary' : 'inherit'}
+          color={isDefaultSort ? 'inherit' : 'primary'}
           sx={{ minHeight: 28, py: 0, px: 1, fontSize: '0.74rem', textTransform: 'none' }}
         >
           Sort rows
@@ -153,9 +170,11 @@ const TableSortControls = ({
         <Tooltip title={getSortDescription()}>
           <Chip
             label={
-              currentSortParams.sortBy === 'score' &&
-              currentSortParams.sortConfidenceColumn !== null &&
-              currentSortParams.sortConfidenceColumn !== undefined
+              normalizedSortBy === 'id'
+                ? `Row ID: ${normalizedSortDirection}`
+                : normalizedSortBy === 'score' &&
+                  normalizedSortConfidenceColumn !== null &&
+                  normalizedSortConfidenceColumn !== undefined
                 ? `Score: ${headers?.[currentSortParams.sortConfidenceColumn] || `Col ${currentSortParams.sortConfidenceColumn}`}`
                 : 'Score: row avg'
             }
@@ -203,6 +222,9 @@ const TableSortControls = ({
                 label="Sort Type"
                 onChange={handleSortTypeChange}
               >
+                <MenuItem value="id">
+                  Row ID
+                </MenuItem>
                 <MenuItem value="score_avg" disabled={!hasReconciliationScores}>
                   Avg confidence score (row)
                 </MenuItem>
@@ -211,7 +233,9 @@ const TableSortControls = ({
                 </MenuItem>
               </Select>
               <FormHelperText>
-                {sortType === 'score'
+                {sortType === 'id'
+                  ? 'Default order: row ID ascending (0, 1, 2...).'
+                  : sortType === 'score'
                   ? 'Sort using one NE column.'
                   : 'Sort using row average across NE columns.'}
               </FormHelperText>
@@ -253,7 +277,7 @@ const TableSortControls = ({
                   onClick={() => handleDirectionChange('desc')}
                   sx={{ flexGrow: 1 }}
                 >
-                  Highest First
+                  {sortType === 'id' ? 'Descending' : 'Highest First'}
                 </Button>
                 <Button
                   variant={sortDirection === 'asc' ? 'contained' : 'outlined'}
@@ -262,7 +286,7 @@ const TableSortControls = ({
                   onClick={() => handleDirectionChange('asc')}
                   sx={{ flexGrow: 1 }}
                 >
-                  Lowest First
+                  {sortType === 'id' ? 'Ascending' : 'Lowest First'}
                 </Button>
               </Box>
             </Paper>
@@ -286,8 +310,16 @@ const TableSortControls = ({
             variant="contained"
             size="small"
             disabled={
-              !hasReconciliationScores ||
-              (sortType === 'score' && (sortConfidenceColumn === '' || sortConfidenceColumn === null || sortConfidenceColumn === undefined))
+              (sortType === 'score_avg' && !hasReconciliationScores) ||
+              (
+                sortType === 'score' &&
+                (
+                  !hasReconciliationScores ||
+                  sortConfidenceColumn === '' ||
+                  sortConfidenceColumn === null ||
+                  sortConfidenceColumn === undefined
+                )
+              )
             }
           >
             Apply Sort
