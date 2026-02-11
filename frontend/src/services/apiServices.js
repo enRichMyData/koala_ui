@@ -270,6 +270,9 @@ const requestColumnIdentification = async (datasetName, tableName, options = {})
   if (options.llmModel) {
     params.llm_model = options.llmModel;
   }
+  if (options.force) {
+    params.force = true;
+  }
   const response = await backendApiClient.post(
     `/datasets/${encodeSegment(datasetName)}/tables/${encodeSegment(tableName)}/columns/identify`,
     null,

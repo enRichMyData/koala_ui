@@ -6,10 +6,12 @@ const TableHeader = ({
   columnTypes,
   columnSubtypes,
   columnSpecificSubtypes,
+  columnTypeDetails,
   columnDpvAnnotations,
   columnReconciliationTypes,
   showDpvAnnotations,
   onNeColumnClick,
+  onOpenColumnTypeDetails,
   activeNeColumn,
   showRowSelection,
   showRowIndex,
@@ -53,6 +55,16 @@ const TableHeader = ({
       const specificSubtype = columnSpecificSubtypes?.[index] || '';
       const showSpecific = specificSubtype && specificSubtype !== subtype;
       const bg = isNE ? '#e8f5e9' : '#fff9c4';
+      const typeDetails = columnTypeDetails?.[index] || null;
+      const hasTypeDetails = Boolean(
+        typeDetails && (
+          typeDetails.typeId ||
+          typeDetails.coarseTypeId ||
+          typeDetails.fineTypeId ||
+          typeDetails.confidence !== null ||
+          typeDetails.fineConfidence !== null
+        )
+      );
       const dpvEntry = columnDpvAnnotations?.[index] || null;
       const dpvType = dpvEntry?.typeId || '';
       const dpvConfidence = typeof dpvEntry?.confidence === 'number' ? dpvEntry.confidence : null;
@@ -105,20 +117,38 @@ const TableHeader = ({
           </Box>
           {subtype && (
             <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-              <Chip
-                label={subtype}
-                size="small"
-                sx={{ fontSize: '0.65rem' }}
-                color={isNE ? 'success' : 'warning'}
-                variant="outlined"
-              />
-              {showSpecific && (
+              <Tooltip title={hasTypeDetails ? 'Click to view type details' : ''} arrow>
                 <Chip
-                  label={specificSubtype}
+                  label={subtype}
                   size="small"
-                  sx={{ fontSize: '0.65rem' }}
+                  onClick={hasTypeDetails ? (event) => {
+                    event.stopPropagation();
+                    onOpenColumnTypeDetails?.(index);
+                  } : undefined}
+                  sx={{
+                    fontSize: '0.65rem',
+                    cursor: hasTypeDetails ? 'pointer' : 'default'
+                  }}
+                  color={isNE ? 'success' : 'warning'}
                   variant="outlined"
                 />
+              </Tooltip>
+              {showSpecific && (
+                <Tooltip title={hasTypeDetails ? 'Click to view type details' : ''} arrow>
+                  <Chip
+                    label={specificSubtype}
+                    size="small"
+                    onClick={hasTypeDetails ? (event) => {
+                      event.stopPropagation();
+                      onOpenColumnTypeDetails?.(index);
+                    } : undefined}
+                    sx={{
+                      fontSize: '0.65rem',
+                      cursor: hasTypeDetails ? 'pointer' : 'default'
+                    }}
+                    variant="outlined"
+                  />
+                </Tooltip>
               )}
             </Box>
           )}

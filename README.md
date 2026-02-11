@@ -1,11 +1,14 @@
 # Koala UI
 
-Koala UI is a React + Flask workspace to manage datasets, inspect tables, run reconciliation jobs, and export enriched CSV files.
+Koala UI is a React + FastAPI workspace to manage datasets, inspect tables, run reconciliation jobs, and export enriched CSV files.
+
+![Koala UI screenshot](docs/images/koala_ui_screenshot.png)
 
 ## Highlights
 
 - Dataset and table management with PostgreSQL persistence
 - Manual and automatic NE/LIT column classification
+- Moose-powered auto-identification and DPV column annotation
 - Reconciliation with multiple providers:
   - Lion Linker
   - Crocodile
@@ -26,7 +29,7 @@ Koala UI is a React + Flask workspace to manage datasets, inspect tables, run re
 ## Stack
 
 - Frontend: React + Material UI
-- Backend: Flask
+- Backend: FastAPI
 - Database: PostgreSQL
 - Containerized with Docker Compose
 

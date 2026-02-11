@@ -146,6 +146,54 @@ const getSpecificSubtype = (value) => {
   return String(value);
 };
 
+const getFineSubtype = (value) => {
+  if (!value || typeof value !== 'object') return '';
+  return value.fine_type_id || value.fine || value.fineTypeId || value.fineType || '';
+};
+
+const parseOptionalNumber = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const getClassificationTypeDetails = (value, group) => {
+  if (!value) return null;
+
+  const isObject = typeof value === 'object';
+  const typeId = isObject
+    ? (value.type_id || value.typeId || value.type || value.specific || '')
+    : String(value);
+  const coarseTypeId = isObject
+    ? (value.coarse_type_id || value.coarseTypeId || value.coarse || value.coarse_type || '')
+    : '';
+  const fineTypeId = isObject ? getFineSubtype(value) : '';
+  const confidence = isObject ? parseOptionalNumber(value.confidence ?? value.score) : null;
+  const fineConfidence = isObject
+    ? parseOptionalNumber(value.fine_confidence ?? value.fineConfidence ?? value.fine_score)
+    : null;
+
+  if (!(typeId || coarseTypeId || fineTypeId || confidence !== null || fineConfidence !== null)) {
+    return null;
+  }
+
+  return {
+    group,
+    typeId: typeId || '',
+    coarseTypeId: coarseTypeId || '',
+    fineTypeId: fineTypeId || '',
+    confidence,
+    fineConfidence
+  };
+};
+
 const getCoarseSubtype = (value) => {
   if (!value) return '';
   if (typeof value === 'object') {
@@ -153,6 +201,14 @@ const getCoarseSubtype = (value) => {
     return getLitCoarseType(coarse || value.type_id || value.specific || '');
   }
   return getLitCoarseType(value);
+};
+
+const getCoarseNeSubtype = (value) => {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    return value.coarse_type_id || value.coarse || value.coarse_type || value.type_id || value.specific || value.type || '';
+  }
+  return String(value);
 };
 
 const buildClassificationState = (headers, classifiedColumns) => {
@@ -315,6 +371,9 @@ const TableDataViewer = () => {
   ]);
   const [exportSubmitting, setExportSubmitting] = useState(false);
   const [rerunConfirmOpen, setRerunConfirmOpen] = useState(false);
+  const [autoIdentifyOverwriteConfirmOpen, setAutoIdentifyOverwriteConfirmOpen] = useState(false);
+  const [columnTypeDetailsOpen, setColumnTypeDetailsOpen] = useState(false);
+  const [selectedTypeDetailsIndex, setSelectedTypeDetailsIndex] = useState(null);
 
   const fetchTableData = useCallback(async (options = {}) => {
     setLoading(true);
@@ -567,6 +626,13 @@ const TableDataViewer = () => {
     };
   }, [dpvIdentifyPolling, datasetName, tableName, fetchTableData]);
 
+  const hasExistingClassification = useMemo(() => {
+    const classifiedColumns = data?.classified_columns || {};
+    const neColumns = classifiedColumns?.NE || {};
+    const litColumns = classifiedColumns?.LIT || {};
+    return Object.keys(neColumns).length > 0 || Object.keys(litColumns).length > 0;
+  }, [data?.classified_columns]);
+
   const handlePreviousPage = () => {
     if (prevCursor) {
       fetchTableData({ prevCursor });
@@ -698,11 +764,11 @@ const TableDataViewer = () => {
     return { llmProvider, llmModel };
   };
 
-  const handleSubmitAutoIdentify = async () => {
+  const handleSubmitAutoIdentify = async (force = false) => {
     try {
       setAutoIdentifySubmitting(true);
       await persistLlmSettings();
-      const response = await requestColumnIdentification(datasetName, tableName);
+      const response = await requestColumnIdentification(datasetName, tableName, { force });
       const modelLabel = response?.llm_provider && response?.llm_model
         ? ` using ${response.llm_provider}:${response.llm_model}`
         : '';
@@ -715,10 +781,27 @@ const TableDataViewer = () => {
       setAutoIdentifyOpen(false);
       await fetchTableData();
     } catch (err) {
+      if (err?.response?.status === 409 && !force) {
+        setAutoIdentifyOverwriteConfirmOpen(true);
+        return;
+      }
       setAutoDetectStatus(err?.response?.data?.detail || err?.message || 'Failed to request auto identification.');
     } finally {
       setAutoIdentifySubmitting(false);
     }
+  };
+
+  const handleConfirmAutoIdentify = async () => {
+    if (hasExistingClassification) {
+      setAutoIdentifyOverwriteConfirmOpen(true);
+      return;
+    }
+    await handleSubmitAutoIdentify(false);
+  };
+
+  const handleConfirmOverwriteAutoIdentify = async () => {
+    setAutoIdentifyOverwriteConfirmOpen(false);
+    await handleSubmitAutoIdentify(true);
   };
 
   const handleSubmitDpvAnnotation = async () => {
@@ -1259,7 +1342,7 @@ const TableDataViewer = () => {
   );
   const columnSubtypes = data.header.map((_, idx) =>
     classified?.NE?.hasOwnProperty(idx)
-      ? getSpecificSubtype(classified.NE[idx])
+      ? getCoarseNeSubtype(classified.NE[idx])
       : classified?.LIT?.hasOwnProperty(idx)
         ? getCoarseSubtype(classified.LIT[idx])
         : ''
@@ -1268,6 +1351,26 @@ const TableDataViewer = () => {
     classified?.LIT?.hasOwnProperty(idx)
       ? getSpecificSubtype(classified.LIT[idx])
       : ''
+  );
+  const columnTypeDetails = data.header.map((_, idx) => {
+    if (classified?.NE?.hasOwnProperty(idx)) {
+      return getClassificationTypeDetails(classified.NE[idx], 'NE');
+    }
+    if (classified?.LIT?.hasOwnProperty(idx)) {
+      return getClassificationTypeDetails(classified.LIT[idx], 'LIT');
+    }
+    return null;
+  });
+  const selectedTypeDetails = selectedTypeDetailsIndex !== null
+    ? columnTypeDetails[selectedTypeDetailsIndex]
+    : null;
+  const selectedTypeHeader = selectedTypeDetailsIndex !== null
+    ? (data?.header?.[selectedTypeDetailsIndex] || `Column ${selectedTypeDetailsIndex}`)
+    : '';
+  const showTypeIdInDetails = Boolean(
+    selectedTypeDetails?.typeId &&
+    selectedTypeDetails.typeId !== selectedTypeDetails?.coarseTypeId &&
+    selectedTypeDetails.typeId !== selectedTypeDetails?.fineTypeId
   );
   const classificationStatus = data?.classification_status || 'UNSET';
   const classificationLabel = classificationStatus === 'AUTO_PENDING'
@@ -2145,10 +2248,15 @@ const TableDataViewer = () => {
                 columnTypes={columnTypes}
                 columnSubtypes={columnSubtypes}
                 columnSpecificSubtypes={columnSpecificSubtypes}
+                columnTypeDetails={columnTypeDetails}
                 columnDpvAnnotations={columnDpvAnnotations}
                 columnReconciliationTypes={reconciliationColumnTypeTopByIndex}
                 showDpvAnnotations={showDpvAnnotations}
                 onNeColumnClick={(colIndex) => setSelectedNeColumn(colIndex)}
+                onOpenColumnTypeDetails={(colIndex) => {
+                  setSelectedTypeDetailsIndex(colIndex);
+                  setColumnTypeDetailsOpen(true);
+                }}
                 activeNeColumn={selectedNeColumn}
                 showRowSelection={showRowSelection}
                 showRowIndex={showRowIndex}
@@ -2503,6 +2611,98 @@ const TableDataViewer = () => {
         </DialogActions>
       </Dialog>
 
+      <Dialog
+        open={autoIdentifyOverwriteConfirmOpen}
+        onClose={() => setAutoIdentifyOverwriteConfirmOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <WarningAmberIcon color="warning" fontSize="small" />
+          Overwrite classification?
+        </DialogTitle>
+        <DialogContent dividers>
+          <Alert severity="warning" sx={{ mb: 1.5 }}>
+            This table already has a saved NE/LIT classification.
+          </Alert>
+          <Typography variant="body2" color="text.secondary">
+            Running auto-identify again will replace existing column types with the new Moose result.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setAutoIdentifyOverwriteConfirmOpen(false)}
+            color="inherit"
+            disabled={autoIdentifySubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirmOverwriteAutoIdentify}
+            variant="contained"
+            color="warning"
+            disabled={autoIdentifySubmitting}
+          >
+            {autoIdentifySubmitting ? 'Starting...' : 'Yes, overwrite'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={columnTypeDetailsOpen}
+        onClose={() => setColumnTypeDetailsOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Column type details</DialogTitle>
+        <DialogContent dividers>
+          {selectedTypeDetails ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+              <Typography variant="body2" color="text.secondary">
+                Column {selectedTypeDetailsIndex}: <b>{selectedTypeHeader}</b>
+              </Typography>
+              <Typography variant="body2">
+                Group: <b>{selectedTypeDetails.group || 'N/A'}</b>
+              </Typography>
+              {selectedTypeDetails.coarseTypeId && (
+                <Typography variant="body2">
+                  Coarse type: <b>{selectedTypeDetails.coarseTypeId}</b>
+                </Typography>
+              )}
+              {selectedTypeDetails.fineTypeId && (
+                <Typography variant="body2">
+                  Fine type: <b>{selectedTypeDetails.fineTypeId}</b>
+                </Typography>
+              )}
+              {showTypeIdInDetails && (
+                <Typography variant="body2">
+                  Type ID: <b>{selectedTypeDetails.typeId}</b>
+                </Typography>
+              )}
+              {selectedTypeDetails.confidence !== null && (
+                <Typography variant="body2">
+                  Confidence: <b>{Math.round(selectedTypeDetails.confidence * 100)}%</b>
+                </Typography>
+              )}
+              {selectedTypeDetails.fineConfidence !== null && (
+                <Typography variant="body2">
+                  Fine confidence: <b>{Math.round(selectedTypeDetails.fineConfidence * 100)}%</b>
+                </Typography>
+              )}
+            </Box>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No additional type details are available for this column.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setColumnTypeDetailsOpen(false)} color="inherit">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <TypeFilterModal
         open={typeFilterOpen}
         onClose={() => setTypeFilterOpen(false)}
@@ -2527,7 +2727,7 @@ const TableDataViewer = () => {
           </Button>
           <Button
             variant="contained"
-            onClick={handleSubmitAutoIdentify}
+            onClick={handleConfirmAutoIdentify}
             disabled={autoIdentifySubmitting}
           >
             {autoIdentifySubmitting ? 'Starting…' : 'Run auto identify'}
