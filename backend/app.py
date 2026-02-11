@@ -534,11 +534,12 @@ def validate_llm_selection(provider: Optional[str], endpoint: Optional[str]) -> 
             )
 
 MOOSE_DEFAULT_SCHEMA = "sti"
-MOOSE_DEFAULT_INCLUDE_SCORES = True
 MOOSE_DEFAULT_SAMPLE_SIZE = 25
 MOOSE_REQUEST_TIMEOUT_SECONDS = 30
 MOOSE_POLL_INTERVAL_SECONDS = 2
 MOOSE_POLL_TIMEOUT_SECONDS = 120
+MOOSE_COMPLETED_STATUSES = {"completed", "complete", "success", "succeeded", "done", "finished"}
+MOOSE_FAILED_STATUSES = {"failed", "error", "errored", "cancelled", "canceled"}
 
 LION_DEFAULT_BASE_URL = "https://lion.zooverse.dev"
 LION_REQUEST_TIMEOUT_SECONDS = 30
@@ -664,7 +665,6 @@ def load_moose_config(
         "llm_api_key": llm_config["api_key"],
         "llm_endpoint": llm_config["endpoint"],
         "schema": MOOSE_DEFAULT_SCHEMA,
-        "include_scores": MOOSE_DEFAULT_INCLUDE_SCORES,
         "sample_size": MOOSE_DEFAULT_SAMPLE_SIZE,
         "request_timeout": MOOSE_REQUEST_TIMEOUT_SECONDS,
         "poll_interval": MOOSE_POLL_INTERVAL_SECONDS,
@@ -1034,16 +1034,11 @@ def submit_moose_tabular_job(
     if not sampled_rows:
         raise HTTPException(status_code=400, detail="No rows available for auto-identification.")
 
+    table_identifier = f"{dataset_name}.{table_name}"
     payload = {
-        "tasks": [
-            {
-                "task_id": f"{dataset_name}:{table_name}",
-                "table_id": f"{dataset_name}.{table_name}",
-                "sampled_rows": sampled_rows
-            }
-        ],
         "schema": schema_override or config["schema"],
-        "include_scores": config["include_scores"],
+        "table_id": table_identifier,
+        "sampled_rows": sampled_rows,
         "llm": {
             "provider": config["llm_provider"],
             "model": config["llm_model"]
@@ -1055,9 +1050,13 @@ def submit_moose_tabular_job(
         response = client.post(url, json=payload, headers=build_moose_headers(config))
 
     if response.status_code >= 400:
+        detail = f"Moose request failed ({response.status_code})."
+        response_body = normalize_optional_value(response.text)
+        if response_body:
+            detail = f"{detail} {response_body[:400]}"
         raise HTTPException(
             status_code=502,
-            detail=f"Moose request failed ({response.status_code})."
+            detail=detail
         )
 
     data = response.json()
@@ -1075,47 +1074,165 @@ def poll_moose_job(config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
             response = client.get(url, headers=build_moose_headers(config))
             response.raise_for_status()
             payload = response.json()
-            status = (payload.get("status") or "").lower()
-            if status == "completed":
+            status = normalize_moose_job_status(payload)
+            if status in MOOSE_COMPLETED_STATUSES:
                 return payload
-            if status in {"failed", "error"}:
+            if status in MOOSE_FAILED_STATUSES:
                 raise RuntimeError(f"Moose job {job_id} failed with status '{status}'.")
             time.sleep(config["poll_interval"])
     raise TimeoutError(f"Moose job {job_id} did not complete in time.")
 
 
+def normalize_moose_job_status(job_payload: Dict[str, Any]) -> str:
+    if not isinstance(job_payload, dict):
+        return ""
+    for status_value in (
+        job_payload.get("status"),
+        (job_payload.get("job") or {}).get("status") if isinstance(job_payload.get("job"), dict) else None
+    ):
+        normalized = normalize_optional_value(status_value)
+        if normalized:
+            return normalized.lower()
+    return ""
+
+
+def iterate_moose_result_columns(job_payload: Dict[str, Any]):
+    def walk(node: Any):
+        if isinstance(node, dict):
+            columns = node.get("columns")
+            if isinstance(columns, list):
+                for column in columns:
+                    if isinstance(column, dict):
+                        yield column
+
+            looks_like_column = (
+                any(key in node for key in ("column", "column_name", "name", "header", "field"))
+                and any(
+                    key in node
+                    for key in ("type_id", "coarse_type_id", "specific_type_id", "type", "semantic_type", "dpv_type_id")
+                )
+            )
+            if looks_like_column:
+                yield node
+
+            for key in ("result", "results", "tables", "tasks", "annotations", "predictions", "items"):
+                nested = node.get(key)
+                if isinstance(nested, (dict, list)):
+                    yield from walk(nested)
+        elif isinstance(node, list):
+            for item in node:
+                yield from walk(item)
+
+    if isinstance(job_payload, dict):
+        yield from walk(job_payload)
+
+
+def extract_moose_column_name(column: Dict[str, Any]) -> str:
+    for key in ("column", "column_name", "name", "header", "field", "attribute"):
+        value = normalize_optional_value(column.get(key))
+        if value:
+            return normalize_name(value)
+    return ""
+
+
+def extract_moose_column_types(column: Dict[str, Any]) -> Dict[str, Any]:
+    specific = None
+    for key in ("type_id", "specific_type_id", "specific_type", "type", "semantic_type", "dpv_type_id"):
+        value = normalize_optional_value(column.get(key))
+        if value:
+            specific = value
+            break
+
+    coarse = None
+    for key in ("coarse_type_id", "coarse_type", "coarse", "category", "group"):
+        value = normalize_optional_value(column.get(key))
+        if value:
+            coarse = value
+            break
+
+    fine = None
+    for key in ("fine_type_id", "fine_type", "fineTypeId", "fineType"):
+        value = normalize_optional_value(column.get(key))
+        if value:
+            fine = value
+            break
+
+    if not specific and coarse:
+        specific = coarse
+    if not coarse and specific:
+        coarse = specific
+
+    confidence = (
+        parse_score_value(column.get("confidence"))
+        if isinstance(column, dict)
+        else None
+    )
+    if confidence is None:
+        confidence = parse_score_value(column.get("score")) if isinstance(column, dict) else None
+
+    fine_confidence = (
+        parse_score_value(column.get("fine_confidence"))
+        if isinstance(column, dict)
+        else None
+    )
+    if fine_confidence is None and isinstance(column, dict):
+        fine_confidence = parse_score_value(column.get("fine_score"))
+
+    return {
+        "specific": specific,
+        "coarse": coarse,
+        "fine": fine,
+        "confidence": confidence,
+        "fine_confidence": fine_confidence
+    }
+
+
+def is_ne_moose_type(type_id: Optional[str], coarse_type: Optional[str]) -> bool:
+    for raw in (type_id, coarse_type):
+        if not raw:
+            continue
+        normalized = raw.strip().upper()
+        if normalized == "NE" or normalized.startswith("NE:"):
+            return True
+    return False
+
+
 def extract_moose_classification(
     header: List[str],
     job_payload: Dict[str, Any]
-) -> Dict[str, Dict[int, str]]:
+) -> Dict[str, Dict[int, Any]]:
     classification = {"NE": {}, "LIT": {}}
     header_lookup = {
         normalize_name(name).lower(): idx
         for idx, name in enumerate(header)
     }
-    results = (job_payload.get("result") or {}).get("results") or []
-    for result in results:
-        columns = result.get("columns") or []
-        for column in columns:
-            column_name = normalize_name(column.get("column") or "")
-            if not column_name:
-                continue
-            idx = header_lookup.get(column_name.lower())
-            if idx is None:
-                continue
-            type_id = column.get("type_id") or column.get("coarse_type_id")
-            if not type_id:
-                continue
-            type_id = str(type_id)
-            coarse_type = str(column.get("coarse_type_id") or "")
-            group = "NE" if type_id.startswith("NE:") or coarse_type.startswith("NE:") else "LIT"
-            if group == "LIT":
-                classification[group][idx] = {
-                    "type_id": type_id,
-                    "coarse_type_id": column.get("coarse_type_id") or type_id
-                }
-            else:
-                classification[group][idx] = type_id
+    for column in iterate_moose_result_columns(job_payload):
+        column_name = extract_moose_column_name(column)
+        if not column_name:
+            continue
+        idx = header_lookup.get(column_name.lower())
+        if idx is None:
+            continue
+
+        type_values = extract_moose_column_types(column)
+        type_id = type_values["specific"]
+        coarse_type = type_values["coarse"]
+        if not type_id:
+            continue
+
+        value_payload: Dict[str, Any] = {
+            "type_id": type_id,
+            "coarse_type_id": coarse_type or type_id
+        }
+        if type_values.get("fine"):
+            value_payload["fine_type_id"] = type_values["fine"]
+        if type_values.get("confidence") is not None:
+            value_payload["confidence"] = type_values["confidence"]
+        if type_values.get("fine_confidence") is not None:
+            value_payload["fine_confidence"] = type_values["fine_confidence"]
+
+        group = "NE" if is_ne_moose_type(type_id, coarse_type) else "LIT"
+        classification[group][idx] = value_payload
     return classification
 
 
@@ -1128,31 +1245,41 @@ def extract_moose_dpv_annotations(
         normalize_name(name).lower(): idx
         for idx, name in enumerate(header)
     }
-    results = (job_payload.get("result") or {}).get("results") or []
-    for result in results:
-        columns = result.get("columns") or []
-        for column in columns:
-            column_name = normalize_name(column.get("column") or "")
-            if not column_name:
-                continue
-            idx = header_lookup.get(column_name.lower())
-            if idx is None:
-                continue
-            type_id = column.get("type_id")
-            if not type_id:
-                continue
-            annotations[idx] = {
-                "type_id": str(type_id),
-                "confidence": column.get("confidence"),
-                "distribution": column.get("distribution")
-            }
+    for column in iterate_moose_result_columns(job_payload):
+        column_name = extract_moose_column_name(column)
+        if not column_name:
+            continue
+        idx = header_lookup.get(column_name.lower())
+        if idx is None:
+            continue
+
+        type_values = extract_moose_column_types(column)
+        type_id = type_values["specific"]
+        if not type_id:
+            continue
+        annotation_payload = {
+            "type_id": str(type_id),
+            "confidence": (
+                type_values.get("confidence")
+                if type_values.get("confidence") is not None
+                else column.get("confidence", column.get("score"))
+            ),
+            "distribution": column.get("distribution", column.get("probabilities"))
+        }
+        if type_values.get("coarse"):
+            annotation_payload["coarse_type_id"] = type_values["coarse"]
+        if type_values.get("fine"):
+            annotation_payload["fine_type_id"] = type_values["fine"]
+        if type_values.get("fine_confidence") is not None:
+            annotation_payload["fine_confidence"] = type_values["fine_confidence"]
+        annotations[idx] = annotation_payload
     return annotations
 
 
 def apply_column_classification(
     db: Session,
     table: TableDB,
-    classification: Dict[str, Dict[int, str]],
+    classification: Dict[str, Dict[int, Any]],
     classification_status: str
 ) -> None:
     header = table.header or []
@@ -1222,6 +1349,13 @@ def apply_dpv_annotations(
     table.dpv_status = status
     table.updated_at = datetime.utcnow()
     db.commit()
+
+
+def has_existing_column_classification(table: TableDB) -> bool:
+    classified_columns = table.classified_columns if isinstance(table.classified_columns, dict) else {}
+    ne_entries = classified_columns.get("NE", {}) if isinstance(classified_columns.get("NE", {}), dict) else {}
+    lit_entries = classified_columns.get("LIT", {}) if isinstance(classified_columns.get("LIT", {}), dict) else {}
+    return bool(ne_entries or lit_entries)
 
 
 def build_row_type_summary(
@@ -2395,16 +2529,18 @@ def extract_reconciliation_cell_score(
     return 0.0
 
 
-def build_row_types(row: List[Any], classification: Dict[str, Dict[int, str]]) -> List[str]:
+def build_row_types(row: List[Any], classification: Dict[str, Dict[int, Any]]) -> List[str]:
     row_types: List[str] = []
     if not classification:
         return row_types
     for idx, subtype in classification.get("NE", {}).items():
-        if idx < len(row) and normalize_cell(row[idx]):
-            row_types.append(subtype)
+        normalized_subtype = extract_classification_value(subtype)
+        if normalized_subtype and idx < len(row) and normalize_cell(row[idx]):
+            row_types.append(normalized_subtype)
     for idx, subtype in classification.get("LIT", {}).items():
-        if idx < len(row) and normalize_cell(row[idx]):
-            row_types.append(subtype)
+        normalized_subtype = extract_classification_value(subtype, prefer_coarse=True)
+        if normalized_subtype and idx < len(row) and normalize_cell(row[idx]):
+            row_types.append(normalized_subtype)
     return list(dict.fromkeys(row_types))
 
 
@@ -3998,6 +4134,7 @@ def identify_columns(
     background_tasks: BackgroundTasks,
     llm_provider: Optional[str] = Query(None),
     llm_model: Optional[str] = Query(None),
+    force: Optional[bool] = Query(False),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -4005,6 +4142,11 @@ def identify_columns(
     header = table.header or []
     if not header:
         raise HTTPException(status_code=400, detail="Table header is empty.")
+    if has_existing_column_classification(table) and not force:
+        raise HTTPException(
+            status_code=409,
+            detail="This table already has a column classification. Confirm and retry to overwrite it."
+        )
 
     user_settings = get_user_llm_settings(db, current_user["email"])
     config = load_moose_config(
@@ -4069,7 +4211,7 @@ def annotate_dpv_columns(
         sampled_rows,
         dataset_name,
         table_name,
-        schema_override="dpv"
+        schema_override="dpv_pd"
     )
 
     table.dpv_status = "DPV_PENDING"
@@ -4113,8 +4255,8 @@ def get_identify_status(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Unable to fetch Moose job status: {exc}")
 
-    status = (payload.get("status") or "").lower()
-    if status == "completed":
+    status = normalize_moose_job_status(payload)
+    if status in MOOSE_COMPLETED_STATUSES:
         classification = extract_moose_classification(table.header or [], payload)
         if classification.get("NE") or classification.get("LIT"):
             apply_column_classification(db, table, classification, "AUTO")
@@ -4135,7 +4277,7 @@ def get_identify_status(
             "job_id": job_id,
             "job_status": "completed"
         }
-    if status in {"failed", "error"}:
+    if status in MOOSE_FAILED_STATUSES:
         table.classification_status = "AUTO_FAILED"
         table.moose_job_id = None
         table.updated_at = datetime.utcnow()
@@ -4178,8 +4320,8 @@ def get_dpv_status(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Unable to fetch Moose job status: {exc}")
 
-    status = (payload.get("status") or "").lower()
-    if status == "completed":
+    status = normalize_moose_job_status(payload)
+    if status in MOOSE_COMPLETED_STATUSES:
         annotations = extract_moose_dpv_annotations(table.header or [], payload)
         if annotations:
             apply_dpv_annotations(db, table, annotations, "DPV")
@@ -4200,7 +4342,7 @@ def get_dpv_status(
             "job_id": job_id,
             "job_status": "completed"
         }
-    if status in {"failed", "error"}:
+    if status in MOOSE_FAILED_STATUSES:
         table.dpv_status = "DPV_FAILED"
         table.dpv_job_id = None
         table.updated_at = datetime.utcnow()
