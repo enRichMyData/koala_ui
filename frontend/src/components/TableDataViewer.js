@@ -164,6 +164,14 @@ const parseOptionalNumber = (value) => {
   return null;
 };
 
+const sameNumberArray = (left = [], right = []) => {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (Number(left[i]) !== Number(right[i])) return false;
+  }
+  return true;
+};
+
 const getClassificationTypeDetails = (value, group) => {
   if (!value) return null;
 
@@ -306,6 +314,63 @@ const getProviderTag = (providerId, providerMeta = null) => {
     return parts[0].slice(0, 3).toUpperCase();
   }
   return 'REC';
+};
+
+const toFiniteNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatReconcileProgress = (progress) => {
+  if (!progress || typeof progress !== 'object') return '';
+
+  const totalCells = toFiniteNumber(progress.total_cells);
+  const processedCells = toFiniteNumber(progress.processed_cells);
+  const totalMentions = toFiniteNumber(progress.total_mentions);
+  const processedMentions = toFiniteNumber(progress.processed_mentions);
+  const percent = toFiniteNumber(progress.percent);
+  const clampedPercent = percent === null
+    ? null
+    : Math.max(0, Math.min(100, percent));
+  const percentLabel = clampedPercent === null
+    ? ''
+    : `${Math.round(clampedPercent)}%`;
+
+  if (totalCells !== null && totalCells > 0 && processedCells !== null) {
+    const done = Math.max(0, Math.min(Math.round(totalCells), Math.round(processedCells)));
+    const total = Math.round(totalCells);
+    return `${done}/${total} cells${percentLabel ? ` (${percentLabel})` : ''}`;
+  }
+  if (totalMentions !== null && totalMentions > 0 && processedMentions !== null) {
+    const done = Math.max(0, Math.min(Math.round(totalMentions), Math.round(processedMentions)));
+    const total = Math.round(totalMentions);
+    return `${done}/${total} mentions${percentLabel ? ` (${percentLabel})` : ''}`;
+  }
+  if (percentLabel) return percentLabel;
+  return '';
+};
+
+const formatReconcileRuntimeStatus = (statusValue, progress = null, providerId = null) => {
+  const normalized = String(statusValue || 'queued').toLowerCase();
+  const supportsClientProgress = String(providerId || '').toLowerCase() === 'wikidata';
+  if (!supportsClientProgress) {
+    return `Reconciliation ${normalized}...`;
+  }
+  const phase = String(progress?.phase || '').toLowerCase();
+  const progressLabel = formatReconcileProgress(progress);
+
+  let label = normalized;
+  if (phase === 'querying') {
+    label = 'querying Wikidata';
+  } else if (phase === 'applying') {
+    label = 'applying matches';
+  } else if (phase === 'completed') {
+    label = 'completed';
+  }
+
+  return progressLabel
+    ? `Reconciliation ${label}... ${progressLabel}`
+    : `Reconciliation ${label}...`;
 };
 
 const TableDataViewer = () => {
@@ -475,15 +540,54 @@ const TableDataViewer = () => {
   }, [data]);
 
   useEffect(() => {
-    if (data?.header?.length) {
-      setReconcileColumns(data.header.map((_, idx) => idx));
-    }
-  }, [data?.header]);
+    const header = data?.header || [];
+    const classified = data?.classified_columns || {};
+    const neMap = classified?.NE || {};
+    const neIndices = Object.keys(neMap)
+      .map((key) => Number(key))
+      .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < header.length)
+      .sort((left, right) => left - right);
+
+    setReconcileColumns((prev) => {
+      if (neIndices.length === 0) {
+        return [];
+      }
+      const previous = Array.isArray(prev)
+        ? prev
+          .map((idx) => Number(idx))
+          .filter((idx) => Number.isInteger(idx) && neIndices.includes(idx))
+          .sort((left, right) => left - right)
+        : [];
+      const next = previous.length > 0 ? previous : neIndices;
+      return sameNumberArray(previous, next) ? prev : next;
+    });
+  }, [data?.header, data?.classified_columns]);
 
   useEffect(() => {
     setSelectedRows(new Set());
     setSelectedCells(new Set());
   }, [data?.rows, reconcileScope]);
+
+  useEffect(() => {
+    const header = data?.header || [];
+    const neColumns = data?.classified_columns?.NE || {};
+    const neSet = new Set(
+      Object.keys(neColumns)
+        .map((key) => Number(key))
+        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < header.length)
+    );
+    setSelectedCells((prev) => {
+      const next = new Set(
+        Array.from(prev).filter((entry) => {
+          const parts = String(entry).split(':');
+          if (parts.length !== 2) return false;
+          const colIdx = Number(parts[1]);
+          return Number.isInteger(colIdx) && neSet.has(colIdx);
+        })
+      );
+      return next.size === prev.size ? prev : next;
+    });
+  }, [data?.header, data?.classified_columns]);
 
   useEffect(() => {
     if (data?.classification_status === 'AUTO_PENDING') {
@@ -713,6 +817,18 @@ const TableDataViewer = () => {
     return Object.keys(neColumns).length > 0 || Object.keys(litColumns).length > 0;
   }, [data?.classified_columns]);
 
+  const neColumnIndexes = useMemo(() => {
+    const header = data?.header || [];
+    const classifiedColumns = data?.classified_columns || {};
+    const neColumns = classifiedColumns?.NE || {};
+    return Object.keys(neColumns)
+      .map((key) => Number(key))
+      .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < header.length)
+      .sort((left, right) => left - right);
+  }, [data?.header, data?.classified_columns]);
+
+  const neColumnIndexSet = useMemo(() => new Set(neColumnIndexes), [neColumnIndexes]);
+
   const handlePreviousPage = () => {
     if (prevCursor) {
       fetchTableData({ prevCursor });
@@ -920,6 +1036,10 @@ const TableDataViewer = () => {
   };
 
   const toggleCellSelection = (rowId, colIndex) => {
+    const neColumns = data?.classified_columns?.NE || {};
+    const isNeColumn = Object.prototype.hasOwnProperty.call(neColumns, colIndex) ||
+      Object.prototype.hasOwnProperty.call(neColumns, String(colIndex));
+    if (!isNeColumn) return;
     const key = `${rowId}:${colIndex}`;
     setSelectedCells(prev => {
       const next = new Set(prev);
@@ -938,6 +1058,9 @@ const TableDataViewer = () => {
   };
 
   const buildReconcilePayload = () => {
+    const selectedNeColumns = (reconcileColumns || [])
+      .map((idx) => Number(idx))
+      .filter((idx) => Number.isInteger(idx) && neColumnIndexSet.has(idx));
     const payload = {
       provider: reconcileProvider,
       scope: reconcileScope,
@@ -948,21 +1071,25 @@ const TableDataViewer = () => {
       const cells = Array.from(selectedCells).map((entry) => {
         const [row, col] = entry.split(':').map(Number);
         return { row, col };
-      });
+      }).filter((entry) => neColumnIndexSet.has(entry.col));
       payload.cells = cells;
     } else if (reconcileScope === 'rows') {
       payload.rows = Array.from(selectedRows);
-      payload.columns = reconcileColumns;
+      payload.columns = selectedNeColumns;
     } else if (reconcileScope === 'page') {
       payload.rows = (data?.rows || []).map((row) => row.idRow);
-      payload.columns = reconcileColumns;
+      payload.columns = selectedNeColumns;
     } else if (reconcileScope === 'table') {
-      payload.columns = reconcileColumns;
+      payload.columns = selectedNeColumns;
     }
     return payload;
   };
 
   const validateReconcileRequest = () => {
+    if (neColumnIndexes.length === 0) {
+      setReconcileStatus('No NE columns available. Set column types before running reconciliation.');
+      return false;
+    }
     const providerConfig = reconcileSettings.providers?.[reconcileProvider] || null;
     const providerLabel = getProviderLabel(reconcileProvider, providerConfig);
     const missingItems = Array.isArray(providerConfig?.missing)
@@ -988,13 +1115,30 @@ const TableDataViewer = () => {
       setReconcileStatus('Select at least one cell to reconcile.');
       return false;
     }
+    if (reconcileScope === 'cell') {
+      const selectedNeCells = Array.from(selectedCells).filter((entry) => {
+        const parts = String(entry).split(':');
+        if (parts.length !== 2) return false;
+        const colIdx = Number(parts[1]);
+        return Number.isInteger(colIdx) && neColumnIndexSet.has(colIdx);
+      });
+      if (selectedNeCells.length === 0) {
+        setReconcileStatus('Select at least one NE cell to reconcile.');
+        return false;
+      }
+    }
     if (reconcileScope === 'rows' && selectedRows.size === 0) {
       setReconcileStatus('Select at least one row to reconcile.');
       return false;
     }
-    if (reconcileScope !== 'cell' && reconcileColumns.length === 0) {
-      setReconcileStatus('Select at least one column to reconcile.');
-      return false;
+    if (reconcileScope !== 'cell') {
+      const selectedNeColumns = (reconcileColumns || [])
+        .map((idx) => Number(idx))
+        .filter((idx) => Number.isInteger(idx) && neColumnIndexSet.has(idx));
+      if (selectedNeColumns.length === 0) {
+        setReconcileStatus('Select at least one NE column to reconcile.');
+        return false;
+      }
     }
     return true;
   };
@@ -1005,7 +1149,9 @@ const TableDataViewer = () => {
       const payload = buildReconcilePayload();
       const response = await createReconciliationJob(datasetName, tableName, payload);
       setReconcileJobId(response?.job_id || null);
-      setReconcileStatus(response?.detail || 'Reconciliation job queued.');
+      setReconcileStatus(
+        formatReconcileRuntimeStatus(response?.status || 'queued', response?.progress, reconcileProvider)
+      );
       setReconcilePolling(true);
     } catch (err) {
       setReconcileStatus(err?.response?.data?.detail || err?.message || 'Failed to start reconciliation.');
@@ -1056,6 +1202,29 @@ const TableDataViewer = () => {
   };
 
   useEffect(() => {
+    const activeJob = data?.reconciliation?.active_job;
+    if (!activeJob) return;
+    const activeJobId = Number(activeJob?.job_id);
+    if (!Number.isInteger(activeJobId) || activeJobId <= 0) return;
+    const status = String(activeJob?.status || 'queued').toLowerCase();
+    const terminalStatuses = ['completed', 'succeeded', 'success', 'done', 'finished', 'failed', 'error', 'canceled', 'cancelled', 'sync_failed', 'timeout'];
+    if (terminalStatuses.includes(status)) return;
+
+    if (activeJob?.provider && activeJob.provider !== reconcileProvider) {
+      setReconcileProvider(activeJob.provider);
+    }
+    if (reconcileJobId !== activeJobId) {
+      setReconcileJobId(activeJobId);
+    }
+    if (!reconcilePolling) {
+      setReconcilePolling(true);
+      setReconcileStatus(
+        formatReconcileRuntimeStatus(status, activeJob?.progress, activeJob?.provider || reconcileProvider)
+      );
+    }
+  }, [data?.reconciliation?.active_job, reconcileJobId, reconcilePolling, reconcileProvider]);
+
+  useEffect(() => {
     if (!reconcilePolling || !reconcileJobId) return;
     let cancelled = false;
     const successStatuses = ['completed', 'succeeded', 'success', 'done', 'finished'];
@@ -1064,7 +1233,7 @@ const TableDataViewer = () => {
       try {
         const status = await getReconciliationStatus(datasetName, tableName, reconcileJobId);
         if (cancelled) return;
-        const resolved = status?.status || 'queued';
+        const resolved = String(status?.status || 'queued').toLowerCase();
         if (successStatuses.includes(resolved) && status?.synced) {
           setReconcilePolling(false);
           setReconcileStatus('Reconciliation completed.');
@@ -1080,7 +1249,9 @@ const TableDataViewer = () => {
           setReconcileJobId(null);
           return;
         }
-        setReconcileStatus(`Reconciliation ${resolved}...`);
+        setReconcileStatus(
+          formatReconcileRuntimeStatus(resolved, status?.progress, status?.provider || reconcileProvider)
+        );
       } catch (err) {
         if (!cancelled) {
           setReconcileStatus(err?.response?.data?.detail || 'Unable to check reconciliation status.');
@@ -1093,7 +1264,7 @@ const TableDataViewer = () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [reconcilePolling, reconcileJobId, datasetName, tableName, fetchTableData, fetchReconciliationColumnTypes]);
+  }, [reconcilePolling, reconcileJobId, datasetName, tableName, reconcileProvider, fetchTableData, fetchReconciliationColumnTypes]);
 
   useEffect(() => {
     if (!['PENDING', 'RUNNING'].includes(reconcileColumnTypesStatus)) return;
@@ -1795,7 +1966,7 @@ const TableDataViewer = () => {
                         handleReconcile();
                       }}
                       onFocus={(event) => event.stopPropagation()}
-                      disabled={reconcileSubmitting || loading}
+                      disabled={reconcileSubmitting || loading || neColumnIndexes.length === 0}
                       sx={compactIconButtonSx}
                     >
                       {reconcileSubmitting ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon fontSize="small" />}
@@ -1805,6 +1976,11 @@ const TableDataViewer = () => {
               </Box>
             </AccordionSummary>
             <AccordionDetails sx={{ px: 1, py: 0.75 }}>
+              {neColumnIndexes.length === 0 && (
+                <Alert severity="warning" sx={{ mb: 1 }}>
+                  No NE columns found. Set column types before running reconciliation.
+                </Alert>
+              )}
               {missingReconcileCredentials && (
                 <Alert severity="warning" sx={{ mb: 1 }}>
                   {missingReconcileMessage}
@@ -1844,29 +2020,34 @@ const TableDataViewer = () => {
                   </FormControl>
                 </Grid>
                 <Grid item xs={12} md={4}>
-                  <FormControl fullWidth size="small" disabled={reconcileScope === 'cell'}>
-                    <InputLabel>Columns</InputLabel>
+                  <FormControl fullWidth size="small" disabled={reconcileScope === 'cell' || neColumnIndexes.length === 0}>
+                    <InputLabel>NE Columns</InputLabel>
                     <Select
-                      label="Columns"
+                      label="NE Columns"
                       multiple
                       value={reconcileColumns}
                       onChange={(event) => {
                         const value = event.target.value;
-                        const parsed = (Array.isArray(value) ? value : [value]).map((entry) => Number(entry));
+                        const parsed = (Array.isArray(value) ? value : [value])
+                          .map((entry) => Number(entry))
+                          .filter((idx) => Number.isInteger(idx) && neColumnIndexSet.has(idx));
                         setReconcileColumns(parsed);
                       }}
                       renderValue={(selected) => {
                         if (!selected?.length) return 'No columns';
-                        if (selected.length === (data?.header || []).length) return 'All columns';
+                        if (selected.length === neColumnIndexes.length) return 'All NE columns';
                         return `${selected.length} columns`;
                       }}
                     >
-                      {(data?.header || []).map((header, idx) => (
+                      {neColumnIndexes.map((idx) => {
+                        const header = data?.header?.[idx] || `Column ${idx}`;
+                        return (
                         <MenuItem key={`${header}-${idx}`} value={idx}>
                           <Checkbox checked={reconcileColumns.includes(idx)} />
-                          <Typography variant="body2">{header}</Typography>
+                          <Typography variant="body2">{header} ({idx})</Typography>
                         </MenuItem>
-                      ))}
+                      );
+                      })}
                     </Select>
                   </FormControl>
                 </Grid>
@@ -1886,7 +2067,7 @@ const TableDataViewer = () => {
               <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
                 <FormHelperText sx={{ m: 0 }}>
                   {reconcileScope === 'cell'
-                    ? 'Columns are derived from selected cells.'
+                    ? 'Columns are derived from selected NE cells.'
                     : 'Link columns must be NE columns; Koala maps row/column indexes back automatically.'}
                 </FormHelperText>
                 {(reconcileScope === 'cell' || reconcileScope === 'rows') && (
@@ -2456,6 +2637,7 @@ const TableDataViewer = () => {
                               ? ` (${Math.round(reconConfidence * 100)}%)`
                               : ''}`
                             : '';
+                          const isNeColumn = neColumnIndexSet.has(colIndex);
                           const isCellSelected = selectedCells.has(`${row.idRow}:${colIndex}`);
                           const isReconciled = Boolean(reconLabel);
                           const isNil = !reconLabel && hasCandidates && hasMatchSignal && !hasMatch;
@@ -2468,7 +2650,7 @@ const TableDataViewer = () => {
                             maxWidth: 320,
                             verticalAlign: 'top',
                             padding: compactTable ? '6px 10px' : '8px 12px',
-                            cursor: reconcileScope === 'cell' ? 'pointer' : 'default',
+                            cursor: reconcileScope === 'cell' && isNeColumn ? 'pointer' : 'default',
                             bgcolor: isCellSelected
                               ? '#e8f0fe'
                               : isReconciled
@@ -2477,7 +2659,7 @@ const TableDataViewer = () => {
                             borderBottom: isCellSelected ? '2px solid #90caf9' : undefined
                           }}
                           onClick={() => {
-                            if (reconcileScope === 'cell') {
+                            if (reconcileScope === 'cell' && isNeColumn) {
                               toggleCellSelection(row.idRow, colIndex);
                             }
                           }}

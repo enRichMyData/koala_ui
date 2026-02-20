@@ -40,6 +40,7 @@ import tempfile
 import uuid
 from io import StringIO
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 
 # Initialize FastAPI app
@@ -229,6 +230,7 @@ class ReconciliationJobDB(Base):
     row_map = Column(JSONB, default=list)
     col_map = Column(JSONB, default=list)
     synced_at = Column(DateTime, nullable=True)
+    progress = Column(JSONB, default=dict)
     error = Column(JSONB, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -2521,15 +2523,73 @@ def sync_wikidata_results(
     top_k: int = 5
 ) -> None:
     touched_rows: Set[int] = set()
-    row_ids = [int(value) for value in (job.row_map or []) if isinstance(value, int) or str(value).isdigit()]
-    if not row_ids:
-        job.synced_at = datetime.utcnow()
-        job.updated_at = datetime.utcnow()
-        db.commit()
-        return
 
-    selected_columns = [int(value) for value in (job.selected_columns or []) if isinstance(value, int) or str(value).isdigit()]
-    if not selected_columns:
+    def persist_progress(
+        phase: str,
+        *,
+        processed_mentions: Optional[int] = None,
+        total_mentions: Optional[int] = None,
+        processed_cells: Optional[int] = None,
+        total_cells: Optional[int] = None,
+        failed_mentions: Optional[int] = None,
+        last_error: Optional[str] = None,
+        force: bool = False
+    ) -> None:
+        previous = dict(job.progress or {})
+        next_progress = dict(previous)
+        next_progress["phase"] = phase
+        if processed_mentions is not None:
+            next_progress["processed_mentions"] = max(0, int(processed_mentions))
+        if total_mentions is not None:
+            next_progress["total_mentions"] = max(0, int(total_mentions))
+        if processed_cells is not None:
+            next_progress["processed_cells"] = max(0, int(processed_cells))
+        if total_cells is not None:
+            next_progress["total_cells"] = max(0, int(total_cells))
+        if failed_mentions is not None:
+            next_progress["failed_mentions"] = max(0, int(failed_mentions))
+        if last_error:
+            next_progress["last_error"] = str(last_error)
+        elif failed_mentions == 0:
+            next_progress.pop("last_error", None)
+
+        percent: Optional[float] = None
+        cells_total = next_progress.get("total_cells")
+        cells_done = next_progress.get("processed_cells")
+        mentions_total = next_progress.get("total_mentions")
+        mentions_done = next_progress.get("processed_mentions")
+        if isinstance(cells_total, int) and cells_total > 0 and isinstance(cells_done, int):
+            percent = max(0.0, min(100.0, (float(cells_done) / float(cells_total)) * 100.0))
+        elif isinstance(mentions_total, int) and mentions_total > 0 and isinstance(mentions_done, int):
+            percent = max(0.0, min(100.0, (float(mentions_done) / float(mentions_total)) * 100.0))
+        elif phase in {"completed", "done", "succeeded", "success", "finished"}:
+            percent = 100.0
+        elif phase in {"queued", "preparing"}:
+            percent = 0.0
+        if percent is not None:
+            next_progress["percent"] = round(percent, 2)
+
+        if force or next_progress != previous:
+            job.progress = next_progress
+            job.updated_at = datetime.utcnow()
+            db.commit()
+
+    row_ids = [int(value) for value in (job.row_map or []) if isinstance(value, int) or str(value).isdigit()]
+    selected_columns = [
+        int(value)
+        for value in (job.selected_columns or [])
+        if isinstance(value, int) or str(value).isdigit()
+    ]
+    if not row_ids or not selected_columns:
+        persist_progress(
+            "completed",
+            processed_mentions=0,
+            total_mentions=0,
+            processed_cells=0,
+            total_cells=0,
+            failed_mentions=0,
+            force=True
+        )
         job.synced_at = datetime.utcnow()
         job.updated_at = datetime.utcnow()
         db.commit()
@@ -2552,7 +2612,8 @@ def sync_wikidata_results(
         .order_by(RowDB.id_row.asc())
         .all()
     )
-    mention_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+    target_cells: List[tuple] = []
     for row in rows:
         data = row.data or []
         for col_idx in selected_columns:
@@ -2563,52 +2624,160 @@ def sync_wikidata_results(
             mention = normalize_optional_value(data[col_idx] if col_idx < len(data) else "")
             if not mention:
                 continue
-            if mention not in mention_cache:
-                mention_cache[mention] = reconcile_wikidata_query(config, mention, limit=top_k)
-            candidate_ranking = mention_cache.get(mention) or []
-            final_value: Dict[str, Any] = {}
-            if candidate_ranking:
-                winning = candidate_ranking[0]
-                final_value = {
-                    "id": winning.get("id"),
-                    "name": winning.get("name"),
-                    "types": winning.get("types"),
-                    "description": winning.get("description"),
-                    "confidence_score": winning.get("confidence_score") or winning.get("score"),
-                    "match": True
-                }
+            target_cells.append((row.id_row, col_idx, mention))
 
-            cell = (
-                db.query(ReconciliationCellDB)
-                .filter(
-                    ReconciliationCellDB.table_id == job.table_id,
-                    ReconciliationCellDB.row_id == row.id_row,
-                    ReconciliationCellDB.col_idx == col_idx,
-                    ReconciliationCellDB.provider == job.provider
-                )
-                .first()
+    total_cells = len(target_cells)
+    if total_cells == 0:
+        persist_progress(
+            "completed",
+            processed_mentions=0,
+            total_mentions=0,
+            processed_cells=0,
+            total_cells=0,
+            failed_mentions=0,
+            force=True
+        )
+        mark_reconciliation_column_types_stale(db, job.table_id)
+        job.synced_at = datetime.utcnow()
+        job.updated_at = datetime.utcnow()
+        db.commit()
+        return
+
+    unique_mentions = sorted({mention for _, _, mention in target_cells})
+    total_mentions = len(unique_mentions)
+    mention_cache: Dict[str, List[Dict[str, Any]]] = {}
+    failed_mentions = 0
+    last_error: Optional[str] = None
+    persist_progress(
+        "querying",
+        processed_mentions=0,
+        total_mentions=total_mentions,
+        processed_cells=0,
+        total_cells=total_cells,
+        failed_mentions=0,
+        force=True
+    )
+
+    if total_mentions > 0:
+        max_workers = min(16, max(1, total_mentions))
+        mention_update_stride = max(1, total_mentions // 20)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_mention = {
+                executor.submit(reconcile_wikidata_query, config, mention, top_k): mention
+                for mention in unique_mentions
+            }
+            processed_mentions = 0
+            for future in as_completed(future_to_mention):
+                mention = future_to_mention[future]
+                try:
+                    mention_cache[mention] = future.result() or []
+                except Exception as exc:
+                    failed_mentions += 1
+                    last_error = str(exc)
+                    mention_cache[mention] = []
+                    logger.warning("Wikidata query failed for mention '%s': %s", mention, exc)
+                processed_mentions += 1
+                if processed_mentions == total_mentions or processed_mentions % mention_update_stride == 0:
+                    persist_progress(
+                        "querying",
+                        processed_mentions=processed_mentions,
+                        total_mentions=total_mentions,
+                        processed_cells=0,
+                        total_cells=total_cells,
+                        failed_mentions=failed_mentions,
+                        last_error=last_error
+                    )
+
+    persist_progress(
+        "applying",
+        processed_mentions=total_mentions,
+        total_mentions=total_mentions,
+        processed_cells=0,
+        total_cells=total_cells,
+        failed_mentions=failed_mentions,
+        last_error=last_error
+    )
+
+    scoped_rows = sorted({row_id for row_id, _, _ in target_cells})
+    scoped_cols = sorted({col_idx for _, col_idx, _ in target_cells})
+    existing_cells: Dict[tuple, ReconciliationCellDB] = {}
+    if scoped_rows and scoped_cols:
+        existing = (
+            db.query(ReconciliationCellDB)
+            .filter(
+                ReconciliationCellDB.table_id == job.table_id,
+                ReconciliationCellDB.provider == job.provider,
+                ReconciliationCellDB.row_id.in_(scoped_rows),
+                ReconciliationCellDB.col_idx.in_(scoped_cols)
             )
-            if not cell:
-                cell = ReconciliationCellDB(
-                    table_id=job.table_id,
-                    row_id=row.id_row,
-                    col_idx=col_idx,
-                    provider=job.provider
-                )
-                db.add(cell)
-            cell.job_id = job.id
-            cell.external_job_id = job.external_job_id
-            cell.mention = mention
-            cell.cell_id = f"{row.id_row}:{col_idx}"
-            cell.final = final_value
-            cell.score = extract_reconciliation_cell_score(candidate_ranking, final_value)
-            cell.candidate_ranking = candidate_ranking
-            cell.explanation = None
-            cell.updated_at = datetime.utcnow()
-            touched_rows.add(row.id_row)
+            .all()
+        )
+        existing_cells = {(cell.row_id, cell.col_idx): cell for cell in existing}
+
+    processed_cells = 0
+    pending_since_commit = 0
+    cell_update_stride = max(1, total_cells // 20)
+    for row_id, col_idx, mention in target_cells:
+        candidate_ranking = mention_cache.get(mention) or []
+        final_value: Dict[str, Any] = {}
+        if candidate_ranking:
+            winning = candidate_ranking[0]
+            final_value = {
+                "id": winning.get("id"),
+                "name": winning.get("name"),
+                "types": winning.get("types"),
+                "description": winning.get("description"),
+                "confidence_score": winning.get("confidence_score") or winning.get("score"),
+                "match": True
+            }
+
+        cell = existing_cells.get((row_id, col_idx))
+        if not cell:
+            cell = ReconciliationCellDB(
+                table_id=job.table_id,
+                row_id=row_id,
+                col_idx=col_idx,
+                provider=job.provider
+            )
+            db.add(cell)
+            existing_cells[(row_id, col_idx)] = cell
+
+        cell.job_id = job.id
+        cell.external_job_id = job.external_job_id
+        cell.mention = mention
+        cell.cell_id = f"{row_id}:{col_idx}"
+        cell.final = final_value
+        cell.score = extract_reconciliation_cell_score(candidate_ranking, final_value)
+        cell.candidate_ranking = candidate_ranking
+        cell.explanation = None
+        cell.updated_at = datetime.utcnow()
+
+        touched_rows.add(row_id)
+        processed_cells += 1
+        pending_since_commit += 1
+
+        if pending_since_commit >= 200:
+            db.commit()
+            pending_since_commit = 0
+
+        if processed_cells == total_cells or processed_cells % cell_update_stride == 0:
+            if pending_since_commit > 0:
+                db.commit()
+                pending_since_commit = 0
+            persist_progress(
+                "applying",
+                processed_mentions=total_mentions,
+                total_mentions=total_mentions,
+                processed_cells=processed_cells,
+                total_cells=total_cells,
+                failed_mentions=failed_mentions,
+                last_error=last_error
+            )
+
+    if pending_since_commit > 0:
         db.commit()
 
-    if touched_rows:
+    if table and touched_rows:
         recompute_row_reconciliation_scores(
             db,
             table,
@@ -2616,6 +2785,22 @@ def sync_wikidata_results(
             row_ids=list(touched_rows)
         )
     mark_reconciliation_column_types_stale(db, job.table_id)
+
+    final_progress = dict(job.progress or {})
+    final_progress.update({
+        "phase": "completed",
+        "processed_mentions": total_mentions,
+        "total_mentions": total_mentions,
+        "processed_cells": total_cells,
+        "total_cells": total_cells,
+        "failed_mentions": failed_mentions,
+        "percent": 100.0
+    })
+    if failed_mentions > 0 and last_error:
+        final_progress["last_error"] = last_error
+    elif failed_mentions == 0:
+        final_progress.pop("last_error", None)
+    job.progress = final_progress
     job.synced_at = datetime.utcnow()
     job.updated_at = datetime.utcnow()
     db.commit()
@@ -2669,6 +2854,10 @@ def process_reconciliation_sync(job_id: int) -> None:
             if config["missing"]:
                 job.status = "error"
                 job.error = {"detail": "Missing Wikidata Reconciler configuration", "missing": config["missing"]}
+                progress = dict(job.progress or {})
+                progress["phase"] = "failed"
+                progress["last_error"] = "Missing Wikidata Reconciler configuration"
+                job.progress = progress
                 job.updated_at = datetime.utcnow()
                 db.commit()
                 return
@@ -2842,10 +3031,18 @@ def process_reconciliation_job(job_id: int) -> None:
             if config["missing"]:
                 job.status = "error"
                 job.error = {"detail": "Missing Wikidata Reconciler configuration", "missing": config["missing"]}
+                progress = dict(job.progress or {})
+                progress["phase"] = "failed"
+                progress["last_error"] = "Missing Wikidata Reconciler configuration"
+                job.progress = progress
                 job.updated_at = datetime.utcnow()
                 db.commit()
                 return
             job.status = "running"
+            progress = dict(job.progress or {})
+            progress["phase"] = "querying"
+            progress["percent"] = 0.0
+            job.progress = progress
             job.updated_at = datetime.utcnow()
             db.commit()
             try:
@@ -2856,6 +3053,10 @@ def process_reconciliation_job(job_id: int) -> None:
             except Exception as exc:
                 job.status = "sync_failed"
                 job.error = {"detail": str(exc)}
+                progress = dict(job.progress or {})
+                progress["phase"] = "failed"
+                progress["last_error"] = str(exc)
+                job.progress = progress
                 job.updated_at = datetime.utcnow()
                 db.commit()
             return
@@ -3642,11 +3843,16 @@ def ensure_reconciliation_jobs_schema():
     if "reconciliation_jobs" not in inspector.get_table_names():
         return
     existing_columns = {col["name"] for col in inspector.get_columns("reconciliation_jobs")}
-    if "top_k" not in existing_columns:
-        with engine.begin() as conn:
-            conn.execute(
-                text("ALTER TABLE reconciliation_jobs ADD COLUMN IF NOT EXISTS top_k INTEGER")
-            )
+    columns_to_add = {
+        "top_k": "INTEGER",
+        "progress": "JSONB"
+    }
+    for column, ddl in columns_to_add.items():
+        if column not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f"ALTER TABLE reconciliation_jobs ADD COLUMN IF NOT EXISTS {column} {ddl}")
+                )
 
 
 @app.on_event("startup")
@@ -4536,6 +4742,54 @@ def get_table_data(
                 "updated_at": cell.updated_at.isoformat() if cell.updated_at else None
             }
 
+    terminal_job_statuses = {
+        "completed",
+        "succeeded",
+        "success",
+        "done",
+        "finished",
+        "failed",
+        "error",
+        "canceled",
+        "cancelled",
+        "sync_failed",
+        "timeout"
+    }
+    active_job_query = (
+        db.query(ReconciliationJobDB)
+        .filter(ReconciliationJobDB.table_id == table.id)
+    )
+    if provider_filter:
+        active_job_query = active_job_query.filter(ReconciliationJobDB.provider == provider_filter)
+    active_jobs = (
+        active_job_query
+        .order_by(ReconciliationJobDB.updated_at.desc().nulls_last(), ReconciliationJobDB.id.desc())
+        .limit(20)
+        .all()
+    )
+    active_job = next(
+        (
+            job
+            for job in active_jobs
+            if (job.status or "").lower() not in terminal_job_statuses
+        ),
+        None
+    )
+    active_job_payload = None
+    if active_job:
+        active_job_payload = {
+            "job_id": active_job.id,
+            "external_job_id": active_job.external_job_id,
+            "provider": active_job.provider,
+            "status": active_job.status,
+            "scope": active_job.scope,
+            "top_k": active_job.top_k,
+            "progress": active_job.progress or {},
+            "synced": bool(active_job.synced_at),
+            "created_at": active_job.created_at.isoformat() if active_job.created_at else None,
+            "updated_at": active_job.updated_at.isoformat() if active_job.updated_at else None
+        }
+
     response_payload = {
         "data": {
             "dataset_name": dataset_name,
@@ -4566,6 +4820,7 @@ def get_table_data(
                 "provider": provider_filter or "all",
                 "type_summary": reconciliation_type_summary,
                 "score_range": reconciliation_score_range,
+                "active_job": active_job_payload,
                 "filters": {
                     "include_ne_types": include_ne_filtered,
                     "exclude_ne_types": exclude_ne_filtered,
@@ -5090,6 +5345,37 @@ def reconcile_table(
     else:
         raise HTTPException(status_code=400, detail="Invalid reconciliation scope.")
 
+    classified = table.classified_columns or {}
+    ne_entries = classified.get("NE", {}) if isinstance(classified, dict) else {}
+    ne_indices: Set[int] = set()
+    if isinstance(ne_entries, dict):
+        for key in ne_entries.keys():
+            try:
+                ne_indices.add(int(key))
+            except (TypeError, ValueError):
+                continue
+    ne_selected_columns = [idx for idx in selected_columns if idx in ne_indices]
+    if not ne_selected_columns:
+        raise HTTPException(
+            status_code=400,
+            detail="No NE columns selected for reconciliation. Classify columns first."
+        )
+    selected_columns = sorted(set(ne_selected_columns))
+    if scope == "cell":
+        if cell_whitelist is not None:
+            cell_whitelist = {cell for cell in cell_whitelist if cell[1] in selected_columns}
+        selected_cells_payload = [entry for entry in selected_cells_payload if entry.get("col") in selected_columns]
+        selected_rows = sorted({
+            int(entry.get("row"))
+            for entry in selected_cells_payload
+            if entry.get("row") is not None
+        })
+        if not selected_rows:
+            raise HTTPException(
+                status_code=400,
+                detail="No NE cells selected for reconciliation. Select cells in NE columns only."
+            )
+
     rows_query = (
         db.query(RowDB)
         .filter(RowDB.table_id == table.id)
@@ -5110,23 +5396,7 @@ def reconcile_table(
         "table": inline_table
     }
     row_map = [row.id_row for row in rows]
-
-    classified = table.classified_columns or {}
-    ne_entries = classified.get("NE", {}) if isinstance(classified, dict) else {}
-    ne_indices: Set[int] = set()
-    if isinstance(ne_entries, dict):
-        for key in ne_entries.keys():
-            try:
-                ne_indices.add(int(key))
-            except (TypeError, ValueError):
-                continue
-    ne_selected_columns = [idx for idx in selected_columns if idx in ne_indices]
-    if not ne_selected_columns:
-        raise HTTPException(
-            status_code=400,
-            detail="No NE columns selected for reconciliation. Classify columns first."
-        )
-    link_columns = [header[idx] for idx in ne_selected_columns]
+    link_columns = [header[idx] for idx in selected_columns]
     resolved_top_k = payload.top_k if payload.top_k is not None else 5
     try:
         resolved_top_k = int(resolved_top_k)
@@ -5237,6 +5507,16 @@ def reconcile_table(
     if not external_job_id:
         raise HTTPException(status_code=502, detail=f"{provider} did not return a job_id.")
 
+    initial_progress = {
+        "phase": "queued",
+        "processed_mentions": 0,
+        "total_mentions": 0,
+        "processed_cells": 0,
+        "total_cells": 0,
+        "failed_mentions": 0,
+        "percent": 0.0
+    } if provider == "wikidata" else {}
+
     job = ReconciliationJobDB(
         table_id=table.id,
         provider=provider,
@@ -5249,6 +5529,7 @@ def reconcile_table(
         selected_cells=selected_cells_payload,
         row_map=row_map,
         col_map=selected_columns,
+        progress=initial_progress,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
@@ -5263,6 +5544,7 @@ def reconcile_table(
         "external_job_id": external_job_id,
         "status": status,
         "top_k": job.top_k,
+        "progress": job.progress or {},
         "detail": "Reconciliation job queued."
     }
 
@@ -5294,6 +5576,7 @@ def get_reconciliation_status(
         "provider": job.provider,
         "status": job.status,
         "top_k": job.top_k,
+        "progress": job.progress or {},
         "synced": bool(job.synced_at),
         "error": job.error
     }
