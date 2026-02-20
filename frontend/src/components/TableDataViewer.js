@@ -276,6 +276,38 @@ const DEFAULT_SORT_PARAMS = {
   sortConfidenceColumn: null
 };
 
+const DEFAULT_RECON_PROVIDER = 'lion_linker';
+
+const PROVIDER_LABEL_OVERRIDES = {
+  lion_linker: 'Lion Linker',
+  crocodile: 'Crocodile',
+  refined: 'ReFinED',
+  wikidata: 'Wikidata Reconciler'
+};
+
+const getProviderLabel = (providerId, providerMeta = null) => {
+  if (providerMeta?.label) return providerMeta.label;
+  if (PROVIDER_LABEL_OVERRIDES[providerId]) return PROVIDER_LABEL_OVERRIDES[providerId];
+  if (!providerId) return 'Reconciler';
+  return providerId
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+};
+
+const getProviderTag = (providerId, providerMeta = null) => {
+  const label = getProviderLabel(providerId, providerMeta);
+  const parts = label.replace(/[^A-Za-z0-9 ]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 3).toUpperCase();
+  }
+  return 'REC';
+};
+
 const TableDataViewer = () => {
   const navigate = useNavigate();
   const { datasetName, tableName } = useParams();
@@ -329,18 +361,22 @@ const TableDataViewer = () => {
   const [reconcileStatus, setReconcileStatus] = useState(null);
   const [reconcileSubmitting, setReconcileSubmitting] = useState(false);
   const [reconcilePolling, setReconcilePolling] = useState(false);
-  const [reconcileProvider, setReconcileProvider] = useState('lion_linker');
+  const [reconcileProvider, setReconcileProvider] = useState(DEFAULT_RECON_PROVIDER);
   const [reconcileSettings, setReconcileSettings] = useState({
-    availableProviders: ['lion_linker'],
+    availableProviders: [DEFAULT_RECON_PROVIDER],
     llm: {
-      isConfigured: false
+      isConfigured: false,
+      missing: []
     },
-    lion: {
-      hasApiKey: false,
-      hasLamapiToken: false
-    },
-    crocodile: {
-      hasApiKey: false
+    providers: {
+      [DEFAULT_RECON_PROVIDER]: {
+        id: DEFAULT_RECON_PROVIDER,
+        label: getProviderLabel(DEFAULT_RECON_PROVIDER),
+        hasApiKey: false,
+        requiresApiKey: true,
+        usesSharedLlm: true,
+        missing: ['Lion Linker API key']
+      }
     }
   });
   const [reconcileColumnTypes, setReconcileColumnTypes] = useState(null);
@@ -486,34 +522,73 @@ const TableDataViewer = () => {
         setLlmSettingsError(
           providerValid ? null : 'Saved LLM provider is not supported by this server.'
         );
-        const availableProviders = reconSettings?.available_providers || ['lion_linker'];
-        const lionSettings = reconSettings?.lion_linker || {
-          has_api_key: reconSettings?.has_api_key,
-          has_lamapi_token: reconSettings?.has_lamapi_token
-        };
-        const crocSettings = reconSettings?.crocodile || {
-          has_api_key: reconSettings?.crocodile_has_api_key
-        };
+        const availableProviders = Array.isArray(reconSettings?.available_providers) &&
+          reconSettings.available_providers.length > 0
+          ? reconSettings.available_providers
+          : [DEFAULT_RECON_PROVIDER];
         const sharedLlm = reconSettings?.llm || {};
         const llmConfigured = typeof sharedLlm?.is_configured === 'boolean'
           ? sharedLlm.is_configured
           : Boolean(settings?.is_configured);
+        const rawProviderMap = reconSettings?.reconciler_providers || reconSettings?.reconcilers || {};
+        const normalizedProviders = {};
+        availableProviders.forEach((providerId) => {
+          const providerPayload = rawProviderMap?.[providerId] || reconSettings?.[providerId] || {};
+          const hasApiKey = Boolean(
+            providerPayload?.has_api_key ||
+            (providerId === 'lion_linker' ? reconSettings?.has_api_key : false) ||
+            (providerId === 'crocodile' ? reconSettings?.crocodile_has_api_key : false) ||
+            (providerId === 'refined' ? reconSettings?.refined_has_api_key : false) ||
+            (providerId === 'wikidata' ? reconSettings?.wikidata_has_api_key : false)
+          );
+          const hasLamapiToken = Boolean(
+            providerPayload?.has_lamapi_token ||
+            (providerId === 'lion_linker' ? reconSettings?.has_lamapi_token : false)
+          );
+          const requiresApiKey = providerPayload?.requires_api_key !== undefined
+            ? Boolean(providerPayload.requires_api_key)
+            : providerId !== 'wikidata';
+          let missing = Array.isArray(providerPayload?.missing)
+            ? providerPayload.missing.filter(Boolean)
+            : [];
+          if (missing.length === 0 && providerId === 'lion_linker') {
+            missing = [];
+            if (!hasApiKey) missing.push('Lion Linker API key');
+            if (!hasLamapiToken) missing.push('Lamapi token');
+            if (!llmConfigured) missing.push('LLM provider/model/API key');
+          }
+          normalizedProviders[providerId] = {
+            id: providerId,
+            label: getProviderLabel(providerId, providerPayload),
+            hasApiKey,
+            hasLamapiToken,
+            requiresApiKey,
+            usesSharedLlm: Boolean(providerPayload?.uses_shared_llm || providerId === 'lion_linker'),
+            missing
+          };
+        });
+        if (!normalizedProviders[DEFAULT_RECON_PROVIDER]) {
+          normalizedProviders[DEFAULT_RECON_PROVIDER] = {
+            id: DEFAULT_RECON_PROVIDER,
+            label: getProviderLabel(DEFAULT_RECON_PROVIDER),
+            hasApiKey: false,
+            hasLamapiToken: false,
+            requiresApiKey: true,
+            usesSharedLlm: true,
+            missing: ['Lion Linker API key']
+          };
+        }
         setReconcileSettings({
           availableProviders,
           llm: {
-            isConfigured: llmConfigured
+            isConfigured: llmConfigured,
+            missing: Array.isArray(sharedLlm?.missing) ? sharedLlm.missing : []
           },
-          lion: {
-            hasApiKey: Boolean(lionSettings?.has_api_key),
-            hasLamapiToken: Boolean(lionSettings?.has_lamapi_token)
-          },
-          crocodile: {
-            hasApiKey: Boolean(crocSettings?.has_api_key)
-          }
+          providers: normalizedProviders
         });
         const defaultProvider = availableProviders.includes(reconSettings?.provider)
           ? reconSettings.provider
-          : (availableProviders[0] || 'lion_linker');
+          : (availableProviders[0] || DEFAULT_RECON_PROVIDER);
         setReconcileProvider(defaultProvider);
       } catch (err) {
         const storedProvider = localStorage.getItem('koala.llmProvider') || '';
@@ -527,19 +602,24 @@ const TableDataViewer = () => {
         setShowLlmApiKeyInput(true);
         setLlmSettingsError('Unable to load LLM settings from the profile.');
         setReconcileSettings({
-          availableProviders: ['lion_linker'],
+          availableProviders: [DEFAULT_RECON_PROVIDER],
           llm: {
-            isConfigured: false
+            isConfigured: false,
+            missing: []
           },
-          lion: {
-            hasApiKey: false,
-            hasLamapiToken: false
-          },
-          crocodile: {
-            hasApiKey: false
+          providers: {
+            [DEFAULT_RECON_PROVIDER]: {
+              id: DEFAULT_RECON_PROVIDER,
+              label: getProviderLabel(DEFAULT_RECON_PROVIDER),
+              hasApiKey: false,
+              hasLamapiToken: false,
+              requiresApiKey: true,
+              usesSharedLlm: true,
+              missing: ['Lion Linker API key']
+            }
           }
         });
-        setReconcileProvider('lion_linker');
+        setReconcileProvider(DEFAULT_RECON_PROVIDER);
       }
     };
     loadSettings();
@@ -883,18 +963,26 @@ const TableDataViewer = () => {
   };
 
   const validateReconcileRequest = () => {
-    if (reconcileProvider === 'lion_linker') {
-      if (!reconcileSettings.lion.hasApiKey ||
-        !reconcileSettings.llm.isConfigured ||
-        !reconcileSettings.lion.hasLamapiToken) {
-        setReconcileStatus('Missing shared LLM, Lion Linker, or Lamapi credentials. Update your profile first.');
-        return false;
+    const providerConfig = reconcileSettings.providers?.[reconcileProvider] || null;
+    const providerLabel = getProviderLabel(reconcileProvider, providerConfig);
+    const missingItems = Array.isArray(providerConfig?.missing)
+      ? providerConfig.missing.filter(Boolean)
+      : [];
+    if (missingItems.length === 0 && providerConfig) {
+      if (providerConfig.requiresApiKey && !providerConfig.hasApiKey) {
+        missingItems.push(`${providerLabel} API key`);
       }
-    } else if (reconcileProvider === 'crocodile') {
-      if (!reconcileSettings.crocodile.hasApiKey) {
-        setReconcileStatus('Missing Crocodile API key. Update your profile first.');
-        return false;
+      if (providerConfig.usesSharedLlm && !reconcileSettings.llm.isConfigured) {
+        missingItems.push('LLM provider/model/API key');
       }
+      if (reconcileProvider === 'lion_linker' && !providerConfig.hasLamapiToken) {
+        missingItems.push('Lamapi token');
+      }
+    }
+    const uniqueMissing = [...new Set(missingItems)];
+    if (uniqueMissing.length > 0) {
+      setReconcileStatus(`Missing ${uniqueMissing.join(', ')}. Update your profile first.`);
+      return false;
     }
     if (reconcileScope === 'cell' && selectedCells.size === 0) {
       setReconcileStatus('Select at least one cell to reconcile.');
@@ -1329,10 +1417,10 @@ const TableDataViewer = () => {
 
   const candidateList = candidatePayload?.candidate_ranking || candidatePayload?.candidates || [];
   const hasCandidateMatch = candidateList.some((candidate) => candidate.match === true);
-  const candidateProvider = candidatePayload?.provider ||
-    candidateCellMeta?.provider ||
-    reconcileProvider;
-  const isNilCandidateSet = candidateProvider === 'lion_linker' && candidateList.length > 0 && !hasCandidateMatch;
+  const hasCandidateMatchSignal = candidateList.some(
+    (candidate) => candidate?.match !== undefined && candidate?.match !== null
+  );
+  const isNilCandidateSet = candidateList.length > 0 && hasCandidateMatchSignal && !hasCandidateMatch;
 
   const classified = data.classified_columns || { NE: {}, LIT: {} };
   const columnTypes = data.header.map((_, idx) =>
@@ -1432,12 +1520,30 @@ const TableDataViewer = () => {
           ? 'warning'
           : 'default';
   const columnTypeSampling = reconcileColumnTypes?.sampling || null;
-  const reconcileProviderLabel = reconcileProvider === 'crocodile' ? 'Crocodile' : 'Lion Linker';
-  const missingReconcileCredentials = reconcileProvider === 'crocodile'
-    ? !reconcileSettings.crocodile.hasApiKey
-    : (!reconcileSettings.lion.hasApiKey ||
-      !reconcileSettings.llm.isConfigured ||
-      !reconcileSettings.lion.hasLamapiToken);
+  const activeReconcileProvider = reconcileSettings.providers?.[reconcileProvider] || null;
+  const reconcileProviderLabel = getProviderLabel(reconcileProvider, activeReconcileProvider);
+  const providerMissingItems = Array.isArray(activeReconcileProvider?.missing)
+    ? activeReconcileProvider.missing.filter(Boolean)
+    : [];
+  const fallbackMissingItems = [];
+  if (providerMissingItems.length === 0 && activeReconcileProvider) {
+    if (activeReconcileProvider.requiresApiKey && !activeReconcileProvider.hasApiKey) {
+      fallbackMissingItems.push(`${reconcileProviderLabel} API key`);
+    }
+    if (activeReconcileProvider.usesSharedLlm && !reconcileSettings.llm.isConfigured) {
+      fallbackMissingItems.push('LLM provider/model/API key');
+    }
+    if (reconcileProvider === 'lion_linker' && !activeReconcileProvider.hasLamapiToken) {
+      fallbackMissingItems.push('Lamapi token');
+    }
+  }
+  const mergedMissingCredentials = providerMissingItems.length > 0
+    ? providerMissingItems
+    : fallbackMissingItems;
+  const missingReconcileCredentials = mergedMissingCredentials.length > 0;
+  const missingReconcileMessage = missingReconcileCredentials
+    ? `Missing ${[...new Set(mergedMissingCredentials)].join(', ')}. Update your profile to run reconciliation.`
+    : '';
 
   const showRowSelection = reconcileScope === 'rows';
   const showRowIndex = reconcileScope === 'rows' || reconcileScope === 'cell';
@@ -1701,9 +1807,7 @@ const TableDataViewer = () => {
             <AccordionDetails sx={{ px: 1, py: 0.75 }}>
               {missingReconcileCredentials && (
                 <Alert severity="warning" sx={{ mb: 1 }}>
-                  {reconcileProvider === 'crocodile'
-                    ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
-                    : 'Shared LLM, Lion Linker, or Lamapi credentials are missing. Update your profile to run reconciliation.'}
+                  {missingReconcileMessage}
                 </Alert>
               )}
 
@@ -1716,9 +1820,9 @@ const TableDataViewer = () => {
                       value={reconcileProvider}
                       onChange={(e) => setReconcileProvider(e.target.value)}
                     >
-                      {(reconcileSettings.availableProviders || ['lion_linker']).map((provider) => (
+                      {(reconcileSettings.availableProviders || [DEFAULT_RECON_PROVIDER]).map((provider) => (
                         <MenuItem key={provider} value={provider}>
-                          {provider === 'crocodile' ? 'Crocodile' : 'Lion Linker'}
+                          {getProviderLabel(provider, reconcileSettings.providers?.[provider])}
                         </MenuItem>
                       ))}
                     </Select>
@@ -2340,8 +2444,13 @@ const TableDataViewer = () => {
                           const hasMatch = Array.isArray(reconEntry?.candidate_ranking)
                             ? reconEntry.candidate_ranking.some((candidate) => candidate.match === true)
                             : false;
+                          const hasMatchSignal = Array.isArray(reconEntry?.candidate_ranking)
+                            ? reconEntry.candidate_ranking.some((candidate) => candidate?.match !== undefined && candidate?.match !== null)
+                            : false;
                           const reconConfidence = reconEntry?.final?.confidence_score;
-                          const providerTag = reconEntry?.provider === 'crocodile' ? 'Croc' : 'LL';
+                          const providerId = reconEntry?.provider || reconcileProvider;
+                          const providerMeta = reconcileSettings.providers?.[providerId];
+                          const providerTag = getProviderTag(providerId, providerMeta);
                           const reconTitle = reconLabel
                             ? `${reconLabel}${typeof reconConfidence === 'number'
                               ? ` (${Math.round(reconConfidence * 100)}%)`
@@ -2349,7 +2458,7 @@ const TableDataViewer = () => {
                             : '';
                           const isCellSelected = selectedCells.has(`${row.idRow}:${colIndex}`);
                           const isReconciled = Boolean(reconLabel);
-                          const isNil = reconEntry?.provider !== 'crocodile' && !reconLabel && hasCandidates && !hasMatch;
+                          const isNil = !reconLabel && hasCandidates && hasMatchSignal && !hasMatch;
                           const showCandidatesChip = !reconLabel && hasCandidates && !isNil;
                           return (
                         <TableCell

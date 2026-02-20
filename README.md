@@ -12,6 +12,8 @@ Koala UI is a React + FastAPI workspace to manage datasets, inspect tables, run 
 - Reconciliation with multiple providers:
   - Lion Linker
   - Crocodile
+  - ReFinED
+  - Wikidata Reconciler
 - Reconciliation scopes:
   - Single cell subset
   - Selected rows
@@ -71,6 +73,12 @@ Use the **Profile** page to configure credentials and service URLs per user:
 - Crocodile:
   - base URL
   - API key
+- ReFinED:
+  - base URL
+  - API key
+- Wikidata Reconciler:
+  - base URL
+  - API key (optional)
 - Moose:
   - base URL
   - API key
