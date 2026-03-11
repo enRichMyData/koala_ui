@@ -164,6 +164,14 @@ const parseOptionalNumber = (value) => {
   return null;
 };
 
+const sameNumberArray = (left = [], right = []) => {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (Number(left[i]) !== Number(right[i])) return false;
+  }
+  return true;
+};
+
 const getClassificationTypeDetails = (value, group) => {
   if (!value) return null;
 
@@ -276,6 +284,95 @@ const DEFAULT_SORT_PARAMS = {
   sortConfidenceColumn: null
 };
 
+const DEFAULT_RECON_PROVIDER = 'lion_linker';
+
+const PROVIDER_LABEL_OVERRIDES = {
+  lion_linker: 'Lion Linker',
+  crocodile: 'Crocodile',
+  refined: 'ReFinED',
+  wikidata: 'Wikidata Reconciler'
+};
+
+const getProviderLabel = (providerId, providerMeta = null) => {
+  if (providerMeta?.label) return providerMeta.label;
+  if (PROVIDER_LABEL_OVERRIDES[providerId]) return PROVIDER_LABEL_OVERRIDES[providerId];
+  if (!providerId) return 'Reconciler';
+  return providerId
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+};
+
+const getProviderTag = (providerId, providerMeta = null) => {
+  const label = getProviderLabel(providerId, providerMeta);
+  const parts = label.replace(/[^A-Za-z0-9 ]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 3).toUpperCase();
+  }
+  return 'REC';
+};
+
+const toFiniteNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatReconcileProgress = (progress) => {
+  if (!progress || typeof progress !== 'object') return '';
+
+  const totalCells = toFiniteNumber(progress.total_cells);
+  const processedCells = toFiniteNumber(progress.processed_cells);
+  const totalMentions = toFiniteNumber(progress.total_mentions);
+  const processedMentions = toFiniteNumber(progress.processed_mentions);
+  const percent = toFiniteNumber(progress.percent);
+  const clampedPercent = percent === null
+    ? null
+    : Math.max(0, Math.min(100, percent));
+  const percentLabel = clampedPercent === null
+    ? ''
+    : `${Math.round(clampedPercent)}%`;
+
+  if (totalCells !== null && totalCells > 0 && processedCells !== null) {
+    const done = Math.max(0, Math.min(Math.round(totalCells), Math.round(processedCells)));
+    const total = Math.round(totalCells);
+    return `${done}/${total} cells${percentLabel ? ` (${percentLabel})` : ''}`;
+  }
+  if (totalMentions !== null && totalMentions > 0 && processedMentions !== null) {
+    const done = Math.max(0, Math.min(Math.round(totalMentions), Math.round(processedMentions)));
+    const total = Math.round(totalMentions);
+    return `${done}/${total} mentions${percentLabel ? ` (${percentLabel})` : ''}`;
+  }
+  if (percentLabel) return percentLabel;
+  return '';
+};
+
+const formatReconcileRuntimeStatus = (statusValue, progress = null, providerId = null) => {
+  const normalized = String(statusValue || 'queued').toLowerCase();
+  const supportsClientProgress = String(providerId || '').toLowerCase() === 'wikidata';
+  if (!supportsClientProgress) {
+    return `Reconciliation ${normalized}...`;
+  }
+  const phase = String(progress?.phase || '').toLowerCase();
+  const progressLabel = formatReconcileProgress(progress);
+
+  let label = normalized;
+  if (phase === 'querying') {
+    label = 'querying Wikidata';
+  } else if (phase === 'applying') {
+    label = 'applying matches';
+  } else if (phase === 'completed') {
+    label = 'completed';
+  }
+
+  return progressLabel
+    ? `Reconciliation ${label}... ${progressLabel}`
+    : `Reconciliation ${label}...`;
+};
+
 const TableDataViewer = () => {
   const navigate = useNavigate();
   const { datasetName, tableName } = useParams();
@@ -329,18 +426,22 @@ const TableDataViewer = () => {
   const [reconcileStatus, setReconcileStatus] = useState(null);
   const [reconcileSubmitting, setReconcileSubmitting] = useState(false);
   const [reconcilePolling, setReconcilePolling] = useState(false);
-  const [reconcileProvider, setReconcileProvider] = useState('lion_linker');
+  const [reconcileProvider, setReconcileProvider] = useState(DEFAULT_RECON_PROVIDER);
   const [reconcileSettings, setReconcileSettings] = useState({
-    availableProviders: ['lion_linker'],
+    availableProviders: [DEFAULT_RECON_PROVIDER],
     llm: {
-      isConfigured: false
+      isConfigured: false,
+      missing: []
     },
-    lion: {
-      hasApiKey: false,
-      hasLamapiToken: false
-    },
-    crocodile: {
-      hasApiKey: false
+    providers: {
+      [DEFAULT_RECON_PROVIDER]: {
+        id: DEFAULT_RECON_PROVIDER,
+        label: getProviderLabel(DEFAULT_RECON_PROVIDER),
+        hasApiKey: false,
+        requiresApiKey: true,
+        usesSharedLlm: true,
+        missing: ['Lion Linker API key']
+      }
     }
   });
   const [reconcileColumnTypes, setReconcileColumnTypes] = useState(null);
@@ -439,15 +540,54 @@ const TableDataViewer = () => {
   }, [data]);
 
   useEffect(() => {
-    if (data?.header?.length) {
-      setReconcileColumns(data.header.map((_, idx) => idx));
-    }
-  }, [data?.header]);
+    const header = data?.header || [];
+    const classified = data?.classified_columns || {};
+    const neMap = classified?.NE || {};
+    const neIndices = Object.keys(neMap)
+      .map((key) => Number(key))
+      .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < header.length)
+      .sort((left, right) => left - right);
+
+    setReconcileColumns((prev) => {
+      if (neIndices.length === 0) {
+        return [];
+      }
+      const previous = Array.isArray(prev)
+        ? prev
+          .map((idx) => Number(idx))
+          .filter((idx) => Number.isInteger(idx) && neIndices.includes(idx))
+          .sort((left, right) => left - right)
+        : [];
+      const next = previous.length > 0 ? previous : neIndices;
+      return sameNumberArray(previous, next) ? prev : next;
+    });
+  }, [data?.header, data?.classified_columns]);
 
   useEffect(() => {
     setSelectedRows(new Set());
     setSelectedCells(new Set());
   }, [data?.rows, reconcileScope]);
+
+  useEffect(() => {
+    const header = data?.header || [];
+    const neColumns = data?.classified_columns?.NE || {};
+    const neSet = new Set(
+      Object.keys(neColumns)
+        .map((key) => Number(key))
+        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < header.length)
+    );
+    setSelectedCells((prev) => {
+      const next = new Set(
+        Array.from(prev).filter((entry) => {
+          const parts = String(entry).split(':');
+          if (parts.length !== 2) return false;
+          const colIdx = Number(parts[1]);
+          return Number.isInteger(colIdx) && neSet.has(colIdx);
+        })
+      );
+      return next.size === prev.size ? prev : next;
+    });
+  }, [data?.header, data?.classified_columns]);
 
   useEffect(() => {
     if (data?.classification_status === 'AUTO_PENDING') {
@@ -486,34 +626,73 @@ const TableDataViewer = () => {
         setLlmSettingsError(
           providerValid ? null : 'Saved LLM provider is not supported by this server.'
         );
-        const availableProviders = reconSettings?.available_providers || ['lion_linker'];
-        const lionSettings = reconSettings?.lion_linker || {
-          has_api_key: reconSettings?.has_api_key,
-          has_lamapi_token: reconSettings?.has_lamapi_token
-        };
-        const crocSettings = reconSettings?.crocodile || {
-          has_api_key: reconSettings?.crocodile_has_api_key
-        };
+        const availableProviders = Array.isArray(reconSettings?.available_providers) &&
+          reconSettings.available_providers.length > 0
+          ? reconSettings.available_providers
+          : [DEFAULT_RECON_PROVIDER];
         const sharedLlm = reconSettings?.llm || {};
         const llmConfigured = typeof sharedLlm?.is_configured === 'boolean'
           ? sharedLlm.is_configured
           : Boolean(settings?.is_configured);
+        const rawProviderMap = reconSettings?.reconciler_providers || reconSettings?.reconcilers || {};
+        const normalizedProviders = {};
+        availableProviders.forEach((providerId) => {
+          const providerPayload = rawProviderMap?.[providerId] || reconSettings?.[providerId] || {};
+          const hasApiKey = Boolean(
+            providerPayload?.has_api_key ||
+            (providerId === 'lion_linker' ? reconSettings?.has_api_key : false) ||
+            (providerId === 'crocodile' ? reconSettings?.crocodile_has_api_key : false) ||
+            (providerId === 'refined' ? reconSettings?.refined_has_api_key : false) ||
+            (providerId === 'wikidata' ? reconSettings?.wikidata_has_api_key : false)
+          );
+          const hasLamapiToken = Boolean(
+            providerPayload?.has_lamapi_token ||
+            (providerId === 'lion_linker' ? reconSettings?.has_lamapi_token : false)
+          );
+          const requiresApiKey = providerPayload?.requires_api_key !== undefined
+            ? Boolean(providerPayload.requires_api_key)
+            : providerId !== 'wikidata';
+          let missing = Array.isArray(providerPayload?.missing)
+            ? providerPayload.missing.filter(Boolean)
+            : [];
+          if (missing.length === 0 && providerId === 'lion_linker') {
+            missing = [];
+            if (!hasApiKey) missing.push('Lion Linker API key');
+            if (!hasLamapiToken) missing.push('Lamapi token');
+            if (!llmConfigured) missing.push('LLM provider/model/API key');
+          }
+          normalizedProviders[providerId] = {
+            id: providerId,
+            label: getProviderLabel(providerId, providerPayload),
+            hasApiKey,
+            hasLamapiToken,
+            requiresApiKey,
+            usesSharedLlm: Boolean(providerPayload?.uses_shared_llm || providerId === 'lion_linker'),
+            missing
+          };
+        });
+        if (!normalizedProviders[DEFAULT_RECON_PROVIDER]) {
+          normalizedProviders[DEFAULT_RECON_PROVIDER] = {
+            id: DEFAULT_RECON_PROVIDER,
+            label: getProviderLabel(DEFAULT_RECON_PROVIDER),
+            hasApiKey: false,
+            hasLamapiToken: false,
+            requiresApiKey: true,
+            usesSharedLlm: true,
+            missing: ['Lion Linker API key']
+          };
+        }
         setReconcileSettings({
           availableProviders,
           llm: {
-            isConfigured: llmConfigured
+            isConfigured: llmConfigured,
+            missing: Array.isArray(sharedLlm?.missing) ? sharedLlm.missing : []
           },
-          lion: {
-            hasApiKey: Boolean(lionSettings?.has_api_key),
-            hasLamapiToken: Boolean(lionSettings?.has_lamapi_token)
-          },
-          crocodile: {
-            hasApiKey: Boolean(crocSettings?.has_api_key)
-          }
+          providers: normalizedProviders
         });
         const defaultProvider = availableProviders.includes(reconSettings?.provider)
           ? reconSettings.provider
-          : (availableProviders[0] || 'lion_linker');
+          : (availableProviders[0] || DEFAULT_RECON_PROVIDER);
         setReconcileProvider(defaultProvider);
       } catch (err) {
         const storedProvider = localStorage.getItem('koala.llmProvider') || '';
@@ -527,19 +706,24 @@ const TableDataViewer = () => {
         setShowLlmApiKeyInput(true);
         setLlmSettingsError('Unable to load LLM settings from the profile.');
         setReconcileSettings({
-          availableProviders: ['lion_linker'],
+          availableProviders: [DEFAULT_RECON_PROVIDER],
           llm: {
-            isConfigured: false
+            isConfigured: false,
+            missing: []
           },
-          lion: {
-            hasApiKey: false,
-            hasLamapiToken: false
-          },
-          crocodile: {
-            hasApiKey: false
+          providers: {
+            [DEFAULT_RECON_PROVIDER]: {
+              id: DEFAULT_RECON_PROVIDER,
+              label: getProviderLabel(DEFAULT_RECON_PROVIDER),
+              hasApiKey: false,
+              hasLamapiToken: false,
+              requiresApiKey: true,
+              usesSharedLlm: true,
+              missing: ['Lion Linker API key']
+            }
           }
         });
-        setReconcileProvider('lion_linker');
+        setReconcileProvider(DEFAULT_RECON_PROVIDER);
       }
     };
     loadSettings();
@@ -632,6 +816,18 @@ const TableDataViewer = () => {
     const litColumns = classifiedColumns?.LIT || {};
     return Object.keys(neColumns).length > 0 || Object.keys(litColumns).length > 0;
   }, [data?.classified_columns]);
+
+  const neColumnIndexes = useMemo(() => {
+    const header = data?.header || [];
+    const classifiedColumns = data?.classified_columns || {};
+    const neColumns = classifiedColumns?.NE || {};
+    return Object.keys(neColumns)
+      .map((key) => Number(key))
+      .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < header.length)
+      .sort((left, right) => left - right);
+  }, [data?.header, data?.classified_columns]);
+
+  const neColumnIndexSet = useMemo(() => new Set(neColumnIndexes), [neColumnIndexes]);
 
   const handlePreviousPage = () => {
     if (prevCursor) {
@@ -840,6 +1036,10 @@ const TableDataViewer = () => {
   };
 
   const toggleCellSelection = (rowId, colIndex) => {
+    const neColumns = data?.classified_columns?.NE || {};
+    const isNeColumn = Object.prototype.hasOwnProperty.call(neColumns, colIndex) ||
+      Object.prototype.hasOwnProperty.call(neColumns, String(colIndex));
+    if (!isNeColumn) return;
     const key = `${rowId}:${colIndex}`;
     setSelectedCells(prev => {
       const next = new Set(prev);
@@ -858,6 +1058,9 @@ const TableDataViewer = () => {
   };
 
   const buildReconcilePayload = () => {
+    const selectedNeColumns = (reconcileColumns || [])
+      .map((idx) => Number(idx))
+      .filter((idx) => Number.isInteger(idx) && neColumnIndexSet.has(idx));
     const payload = {
       provider: reconcileProvider,
       scope: reconcileScope,
@@ -868,45 +1071,74 @@ const TableDataViewer = () => {
       const cells = Array.from(selectedCells).map((entry) => {
         const [row, col] = entry.split(':').map(Number);
         return { row, col };
-      });
+      }).filter((entry) => neColumnIndexSet.has(entry.col));
       payload.cells = cells;
     } else if (reconcileScope === 'rows') {
       payload.rows = Array.from(selectedRows);
-      payload.columns = reconcileColumns;
+      payload.columns = selectedNeColumns;
     } else if (reconcileScope === 'page') {
       payload.rows = (data?.rows || []).map((row) => row.idRow);
-      payload.columns = reconcileColumns;
+      payload.columns = selectedNeColumns;
     } else if (reconcileScope === 'table') {
-      payload.columns = reconcileColumns;
+      payload.columns = selectedNeColumns;
     }
     return payload;
   };
 
   const validateReconcileRequest = () => {
-    if (reconcileProvider === 'lion_linker') {
-      if (!reconcileSettings.lion.hasApiKey ||
-        !reconcileSettings.llm.isConfigured ||
-        !reconcileSettings.lion.hasLamapiToken) {
-        setReconcileStatus('Missing shared LLM, Lion Linker, or Lamapi credentials. Update your profile first.');
-        return false;
+    if (neColumnIndexes.length === 0) {
+      setReconcileStatus('No NE columns available. Set column types before running reconciliation.');
+      return false;
+    }
+    const providerConfig = reconcileSettings.providers?.[reconcileProvider] || null;
+    const providerLabel = getProviderLabel(reconcileProvider, providerConfig);
+    const missingItems = Array.isArray(providerConfig?.missing)
+      ? providerConfig.missing.filter(Boolean)
+      : [];
+    if (missingItems.length === 0 && providerConfig) {
+      if (providerConfig.requiresApiKey && !providerConfig.hasApiKey) {
+        missingItems.push(`${providerLabel} API key`);
       }
-    } else if (reconcileProvider === 'crocodile') {
-      if (!reconcileSettings.crocodile.hasApiKey) {
-        setReconcileStatus('Missing Crocodile API key. Update your profile first.');
-        return false;
+      if (providerConfig.usesSharedLlm && !reconcileSettings.llm.isConfigured) {
+        missingItems.push('LLM provider/model/API key');
       }
+      if (reconcileProvider === 'lion_linker' && !providerConfig.hasLamapiToken) {
+        missingItems.push('Lamapi token');
+      }
+    }
+    const uniqueMissing = [...new Set(missingItems)];
+    if (uniqueMissing.length > 0) {
+      setReconcileStatus(`Missing ${uniqueMissing.join(', ')}. Update your profile first.`);
+      return false;
     }
     if (reconcileScope === 'cell' && selectedCells.size === 0) {
       setReconcileStatus('Select at least one cell to reconcile.');
       return false;
     }
+    if (reconcileScope === 'cell') {
+      const selectedNeCells = Array.from(selectedCells).filter((entry) => {
+        const parts = String(entry).split(':');
+        if (parts.length !== 2) return false;
+        const colIdx = Number(parts[1]);
+        return Number.isInteger(colIdx) && neColumnIndexSet.has(colIdx);
+      });
+      if (selectedNeCells.length === 0) {
+        setReconcileStatus('Select at least one NE cell to reconcile.');
+        return false;
+      }
+    }
     if (reconcileScope === 'rows' && selectedRows.size === 0) {
       setReconcileStatus('Select at least one row to reconcile.');
       return false;
     }
-    if (reconcileScope !== 'cell' && reconcileColumns.length === 0) {
-      setReconcileStatus('Select at least one column to reconcile.');
-      return false;
+    if (reconcileScope !== 'cell') {
+      const selectedNeColumns = (reconcileColumns || [])
+        .map((idx) => Number(idx))
+        .filter((idx) => Number.isInteger(idx) && neColumnIndexSet.has(idx));
+      if (selectedNeColumns.length === 0) {
+        setReconcileStatus('Select at least one NE column to reconcile.');
+        return false;
+      }
     }
     return true;
   };
@@ -917,7 +1149,9 @@ const TableDataViewer = () => {
       const payload = buildReconcilePayload();
       const response = await createReconciliationJob(datasetName, tableName, payload);
       setReconcileJobId(response?.job_id || null);
-      setReconcileStatus(response?.detail || 'Reconciliation job queued.');
+      setReconcileStatus(
+        formatReconcileRuntimeStatus(response?.status || 'queued', response?.progress, reconcileProvider)
+      );
       setReconcilePolling(true);
     } catch (err) {
       setReconcileStatus(err?.response?.data?.detail || err?.message || 'Failed to start reconciliation.');
@@ -968,6 +1202,29 @@ const TableDataViewer = () => {
   };
 
   useEffect(() => {
+    const activeJob = data?.reconciliation?.active_job;
+    if (!activeJob) return;
+    const activeJobId = Number(activeJob?.job_id);
+    if (!Number.isInteger(activeJobId) || activeJobId <= 0) return;
+    const status = String(activeJob?.status || 'queued').toLowerCase();
+    const terminalStatuses = ['completed', 'succeeded', 'success', 'done', 'finished', 'failed', 'error', 'canceled', 'cancelled', 'sync_failed', 'timeout'];
+    if (terminalStatuses.includes(status)) return;
+
+    if (activeJob?.provider && activeJob.provider !== reconcileProvider) {
+      setReconcileProvider(activeJob.provider);
+    }
+    if (reconcileJobId !== activeJobId) {
+      setReconcileJobId(activeJobId);
+    }
+    if (!reconcilePolling) {
+      setReconcilePolling(true);
+      setReconcileStatus(
+        formatReconcileRuntimeStatus(status, activeJob?.progress, activeJob?.provider || reconcileProvider)
+      );
+    }
+  }, [data?.reconciliation?.active_job, reconcileJobId, reconcilePolling, reconcileProvider]);
+
+  useEffect(() => {
     if (!reconcilePolling || !reconcileJobId) return;
     let cancelled = false;
     const successStatuses = ['completed', 'succeeded', 'success', 'done', 'finished'];
@@ -976,7 +1233,7 @@ const TableDataViewer = () => {
       try {
         const status = await getReconciliationStatus(datasetName, tableName, reconcileJobId);
         if (cancelled) return;
-        const resolved = status?.status || 'queued';
+        const resolved = String(status?.status || 'queued').toLowerCase();
         if (successStatuses.includes(resolved) && status?.synced) {
           setReconcilePolling(false);
           setReconcileStatus('Reconciliation completed.');
@@ -992,7 +1249,9 @@ const TableDataViewer = () => {
           setReconcileJobId(null);
           return;
         }
-        setReconcileStatus(`Reconciliation ${resolved}...`);
+        setReconcileStatus(
+          formatReconcileRuntimeStatus(resolved, status?.progress, status?.provider || reconcileProvider)
+        );
       } catch (err) {
         if (!cancelled) {
           setReconcileStatus(err?.response?.data?.detail || 'Unable to check reconciliation status.');
@@ -1005,7 +1264,7 @@ const TableDataViewer = () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [reconcilePolling, reconcileJobId, datasetName, tableName, fetchTableData, fetchReconciliationColumnTypes]);
+  }, [reconcilePolling, reconcileJobId, datasetName, tableName, reconcileProvider, fetchTableData, fetchReconciliationColumnTypes]);
 
   useEffect(() => {
     if (!['PENDING', 'RUNNING'].includes(reconcileColumnTypesStatus)) return;
@@ -1329,10 +1588,10 @@ const TableDataViewer = () => {
 
   const candidateList = candidatePayload?.candidate_ranking || candidatePayload?.candidates || [];
   const hasCandidateMatch = candidateList.some((candidate) => candidate.match === true);
-  const candidateProvider = candidatePayload?.provider ||
-    candidateCellMeta?.provider ||
-    reconcileProvider;
-  const isNilCandidateSet = candidateProvider === 'lion_linker' && candidateList.length > 0 && !hasCandidateMatch;
+  const hasCandidateMatchSignal = candidateList.some(
+    (candidate) => candidate?.match !== undefined && candidate?.match !== null
+  );
+  const isNilCandidateSet = candidateList.length > 0 && hasCandidateMatchSignal && !hasCandidateMatch;
 
   const classified = data.classified_columns || { NE: {}, LIT: {} };
   const columnTypes = data.header.map((_, idx) =>
@@ -1432,12 +1691,30 @@ const TableDataViewer = () => {
           ? 'warning'
           : 'default';
   const columnTypeSampling = reconcileColumnTypes?.sampling || null;
-  const reconcileProviderLabel = reconcileProvider === 'crocodile' ? 'Crocodile' : 'Lion Linker';
-  const missingReconcileCredentials = reconcileProvider === 'crocodile'
-    ? !reconcileSettings.crocodile.hasApiKey
-    : (!reconcileSettings.lion.hasApiKey ||
-      !reconcileSettings.llm.isConfigured ||
-      !reconcileSettings.lion.hasLamapiToken);
+  const activeReconcileProvider = reconcileSettings.providers?.[reconcileProvider] || null;
+  const reconcileProviderLabel = getProviderLabel(reconcileProvider, activeReconcileProvider);
+  const providerMissingItems = Array.isArray(activeReconcileProvider?.missing)
+    ? activeReconcileProvider.missing.filter(Boolean)
+    : [];
+  const fallbackMissingItems = [];
+  if (providerMissingItems.length === 0 && activeReconcileProvider) {
+    if (activeReconcileProvider.requiresApiKey && !activeReconcileProvider.hasApiKey) {
+      fallbackMissingItems.push(`${reconcileProviderLabel} API key`);
+    }
+    if (activeReconcileProvider.usesSharedLlm && !reconcileSettings.llm.isConfigured) {
+      fallbackMissingItems.push('LLM provider/model/API key');
+    }
+    if (reconcileProvider === 'lion_linker' && !activeReconcileProvider.hasLamapiToken) {
+      fallbackMissingItems.push('Lamapi token');
+    }
+  }
+  const mergedMissingCredentials = providerMissingItems.length > 0
+    ? providerMissingItems
+    : fallbackMissingItems;
+  const missingReconcileCredentials = mergedMissingCredentials.length > 0;
+  const missingReconcileMessage = missingReconcileCredentials
+    ? `Missing ${[...new Set(mergedMissingCredentials)].join(', ')}. Update your profile to run reconciliation.`
+    : '';
 
   const showRowSelection = reconcileScope === 'rows';
   const showRowIndex = reconcileScope === 'rows' || reconcileScope === 'cell';
@@ -1689,7 +1966,7 @@ const TableDataViewer = () => {
                         handleReconcile();
                       }}
                       onFocus={(event) => event.stopPropagation()}
-                      disabled={reconcileSubmitting || loading}
+                      disabled={reconcileSubmitting || loading || neColumnIndexes.length === 0}
                       sx={compactIconButtonSx}
                     >
                       {reconcileSubmitting ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon fontSize="small" />}
@@ -1699,11 +1976,14 @@ const TableDataViewer = () => {
               </Box>
             </AccordionSummary>
             <AccordionDetails sx={{ px: 1, py: 0.75 }}>
+              {neColumnIndexes.length === 0 && (
+                <Alert severity="warning" sx={{ mb: 1 }}>
+                  No NE columns found. Set column types before running reconciliation.
+                </Alert>
+              )}
               {missingReconcileCredentials && (
                 <Alert severity="warning" sx={{ mb: 1 }}>
-                  {reconcileProvider === 'crocodile'
-                    ? 'Crocodile API key is missing. Update your profile to run reconciliation.'
-                    : 'Shared LLM, Lion Linker, or Lamapi credentials are missing. Update your profile to run reconciliation.'}
+                  {missingReconcileMessage}
                 </Alert>
               )}
 
@@ -1716,9 +1996,9 @@ const TableDataViewer = () => {
                       value={reconcileProvider}
                       onChange={(e) => setReconcileProvider(e.target.value)}
                     >
-                      {(reconcileSettings.availableProviders || ['lion_linker']).map((provider) => (
+                      {(reconcileSettings.availableProviders || [DEFAULT_RECON_PROVIDER]).map((provider) => (
                         <MenuItem key={provider} value={provider}>
-                          {provider === 'crocodile' ? 'Crocodile' : 'Lion Linker'}
+                          {getProviderLabel(provider, reconcileSettings.providers?.[provider])}
                         </MenuItem>
                       ))}
                     </Select>
@@ -1740,29 +2020,34 @@ const TableDataViewer = () => {
                   </FormControl>
                 </Grid>
                 <Grid item xs={12} md={4}>
-                  <FormControl fullWidth size="small" disabled={reconcileScope === 'cell'}>
-                    <InputLabel>Columns</InputLabel>
+                  <FormControl fullWidth size="small" disabled={reconcileScope === 'cell' || neColumnIndexes.length === 0}>
+                    <InputLabel>NE Columns</InputLabel>
                     <Select
-                      label="Columns"
+                      label="NE Columns"
                       multiple
                       value={reconcileColumns}
                       onChange={(event) => {
                         const value = event.target.value;
-                        const parsed = (Array.isArray(value) ? value : [value]).map((entry) => Number(entry));
+                        const parsed = (Array.isArray(value) ? value : [value])
+                          .map((entry) => Number(entry))
+                          .filter((idx) => Number.isInteger(idx) && neColumnIndexSet.has(idx));
                         setReconcileColumns(parsed);
                       }}
                       renderValue={(selected) => {
                         if (!selected?.length) return 'No columns';
-                        if (selected.length === (data?.header || []).length) return 'All columns';
+                        if (selected.length === neColumnIndexes.length) return 'All NE columns';
                         return `${selected.length} columns`;
                       }}
                     >
-                      {(data?.header || []).map((header, idx) => (
+                      {neColumnIndexes.map((idx) => {
+                        const header = data?.header?.[idx] || `Column ${idx}`;
+                        return (
                         <MenuItem key={`${header}-${idx}`} value={idx}>
                           <Checkbox checked={reconcileColumns.includes(idx)} />
-                          <Typography variant="body2">{header}</Typography>
+                          <Typography variant="body2">{header} ({idx})</Typography>
                         </MenuItem>
-                      ))}
+                      );
+                      })}
                     </Select>
                   </FormControl>
                 </Grid>
@@ -1782,7 +2067,7 @@ const TableDataViewer = () => {
               <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
                 <FormHelperText sx={{ m: 0 }}>
                   {reconcileScope === 'cell'
-                    ? 'Columns are derived from selected cells.'
+                    ? 'Columns are derived from selected NE cells.'
                     : 'Link columns must be NE columns; Koala maps row/column indexes back automatically.'}
                 </FormHelperText>
                 {(reconcileScope === 'cell' || reconcileScope === 'rows') && (
@@ -2340,16 +2625,22 @@ const TableDataViewer = () => {
                           const hasMatch = Array.isArray(reconEntry?.candidate_ranking)
                             ? reconEntry.candidate_ranking.some((candidate) => candidate.match === true)
                             : false;
+                          const hasMatchSignal = Array.isArray(reconEntry?.candidate_ranking)
+                            ? reconEntry.candidate_ranking.some((candidate) => candidate?.match !== undefined && candidate?.match !== null)
+                            : false;
                           const reconConfidence = reconEntry?.final?.confidence_score;
-                          const providerTag = reconEntry?.provider === 'crocodile' ? 'Croc' : 'LL';
+                          const providerId = reconEntry?.provider || reconcileProvider;
+                          const providerMeta = reconcileSettings.providers?.[providerId];
+                          const providerTag = getProviderTag(providerId, providerMeta);
                           const reconTitle = reconLabel
                             ? `${reconLabel}${typeof reconConfidence === 'number'
                               ? ` (${Math.round(reconConfidence * 100)}%)`
                               : ''}`
                             : '';
+                          const isNeColumn = neColumnIndexSet.has(colIndex);
                           const isCellSelected = selectedCells.has(`${row.idRow}:${colIndex}`);
                           const isReconciled = Boolean(reconLabel);
-                          const isNil = reconEntry?.provider !== 'crocodile' && !reconLabel && hasCandidates && !hasMatch;
+                          const isNil = !reconLabel && hasCandidates && hasMatchSignal && !hasMatch;
                           const showCandidatesChip = !reconLabel && hasCandidates && !isNil;
                           return (
                         <TableCell
@@ -2359,7 +2650,7 @@ const TableDataViewer = () => {
                             maxWidth: 320,
                             verticalAlign: 'top',
                             padding: compactTable ? '6px 10px' : '8px 12px',
-                            cursor: reconcileScope === 'cell' ? 'pointer' : 'default',
+                            cursor: reconcileScope === 'cell' && isNeColumn ? 'pointer' : 'default',
                             bgcolor: isCellSelected
                               ? '#e8f0fe'
                               : isReconciled
@@ -2368,7 +2659,7 @@ const TableDataViewer = () => {
                             borderBottom: isCellSelected ? '2px solid #90caf9' : undefined
                           }}
                           onClick={() => {
-                            if (reconcileScope === 'cell') {
+                            if (reconcileScope === 'cell' && isNeColumn) {
                               toggleCellSelection(row.idRow, colIndex);
                             }
                           }}

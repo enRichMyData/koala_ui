@@ -40,6 +40,7 @@ import tempfile
 import uuid
 from io import StringIO
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 
 # Initialize FastAPI app
@@ -225,9 +226,11 @@ class ReconciliationJobDB(Base):
     selected_rows = Column(JSONB, default=list)
     selected_columns = Column(JSONB, default=list)
     selected_cells = Column(JSONB, default=list)
+    top_k = Column(Integer, nullable=True)
     row_map = Column(JSONB, default=list)
     col_map = Column(JSONB, default=list)
     synced_at = Column(DateTime, nullable=True)
+    progress = Column(JSONB, default=dict)
     error = Column(JSONB, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -473,24 +476,6 @@ def normalize_optional_value(value: Optional[Any]) -> Optional[str]:
     return cleaned
 
 
-RECONCILIATION_PROVIDERS = {"lion_linker", "crocodile"}
-PROFILE_SERVICE_PROVIDERS = {"lion_linker", "crocodile", "moose"}
-
-
-def normalize_reconciliation_provider(value: Optional[str]) -> str:
-    provider = normalize_optional_value(value) or "lion_linker"
-    if provider not in RECONCILIATION_PROVIDERS:
-        raise HTTPException(status_code=400, detail="Unsupported reconciliation provider.")
-    return provider
-
-
-def normalize_profile_service_provider(value: Optional[str]) -> str:
-    provider = normalize_optional_value(value) or "lion_linker"
-    if provider not in PROFILE_SERVICE_PROVIDERS:
-        raise HTTPException(status_code=400, detail="Unsupported profile service provider.")
-    return provider
-
-
 def parse_csv_env(value: Optional[str]) -> List[str]:
     if not value:
         return []
@@ -553,6 +538,147 @@ CROCODILE_DEFAULT_BASE_URL = "https://crocodile.zooverse.dev"
 CROCODILE_REQUEST_TIMEOUT_SECONDS = 30
 CROCODILE_POLL_INTERVAL_SECONDS = 2
 CROCODILE_POLL_TIMEOUT_SECONDS = 300
+
+REFINED_DEFAULT_BASE_URL = "https://refined.zooverse.dev"
+REFINED_REQUEST_TIMEOUT_SECONDS = 30
+REFINED_POLL_INTERVAL_SECONDS = 2
+REFINED_POLL_TIMEOUT_SECONDS = 300
+
+WIKIDATA_DEFAULT_BASE_URL = "https://wikidata.reconci.link/en"
+WIKIDATA_REQUEST_TIMEOUT_SECONDS = 30
+
+DEFAULT_RECONCILIATION_PROVIDER = "lion_linker"
+
+RECONCILIATION_PROVIDER_DEFINITIONS: List[Dict[str, Any]] = [
+    {
+        "id": "lion_linker",
+        "label": "Lion Linker",
+        "description": "Entity linker powered by shared LLM + Lamapi retrieval.",
+        "default_base_url": LION_DEFAULT_BASE_URL,
+        "base_url_env": "LION_LINKER_BASE_URL",
+        "api_key_env": "LION_LINKER_API_KEY",
+        "requires_api_key": True,
+        "uses_shared_llm": True,
+        "supports_top_k": True,
+        "supports_async_jobs": True,
+        "extra_fields": [
+            {
+                "key": "lamapi_endpoint",
+                "label": "Lamapi endpoint",
+                "type": "text",
+                "required": True,
+                "placeholder": "https://lamapi.hel.sintef.cloud/lookup/entity-retrieval"
+            },
+            {
+                "key": "lamapi_kg",
+                "label": "Lamapi KG",
+                "type": "text",
+                "required": False,
+                "placeholder": "wikidata"
+            },
+            {
+                "key": "lamapi_num_candidates",
+                "label": "Lamapi candidates",
+                "type": "number",
+                "required": False,
+                "min": 1,
+                "max": 100
+            },
+            {
+                "key": "lamapi_token",
+                "label": "Lamapi token",
+                "type": "password",
+                "required": True,
+                "sensitive": True
+            }
+        ]
+    },
+    {
+        "id": "crocodile",
+        "label": "Crocodile",
+        "description": "Asynchronous reconciler with candidate ranking.",
+        "default_base_url": CROCODILE_DEFAULT_BASE_URL,
+        "base_url_env": "CROCODILE_BASE_URL",
+        "api_key_env": "CROCODILE_API_KEY",
+        "requires_api_key": True,
+        "uses_shared_llm": False,
+        "supports_top_k": True,
+        "supports_async_jobs": True,
+        "extra_fields": []
+    },
+    {
+        "id": "refined",
+        "label": "ReFinED",
+        "description": "ReFinED entity linking API with background job processing.",
+        "default_base_url": REFINED_DEFAULT_BASE_URL,
+        "base_url_env": "REFINED_BASE_URL",
+        "api_key_env": "REFINED_API_KEY",
+        "requires_api_key": True,
+        "uses_shared_llm": False,
+        "supports_top_k": True,
+        "supports_async_jobs": True,
+        "extra_fields": []
+    },
+    {
+        "id": "wikidata",
+        "label": "Wikidata Reconciler",
+        "description": "Public OpenRefine-compatible Wikidata reconciliation endpoint.",
+        "default_base_url": WIKIDATA_DEFAULT_BASE_URL,
+        "base_url_env": "WIKIDATA_RECON_BASE_URL",
+        "api_key_env": "WIKIDATA_RECON_API_KEY",
+        "requires_api_key": False,
+        "uses_shared_llm": False,
+        "supports_top_k": True,
+        "supports_async_jobs": False,
+        "extra_fields": []
+    }
+]
+RECONCILIATION_PROVIDER_CONFIG = {
+    entry["id"]: entry
+    for entry in RECONCILIATION_PROVIDER_DEFINITIONS
+}
+PROFILE_SERVICE_DEFINITIONS: List[Dict[str, Any]] = [
+    *RECONCILIATION_PROVIDER_DEFINITIONS,
+    {
+        "id": "moose",
+        "label": "Moose",
+        "description": "Column auto-identification and DPV annotation service.",
+        "default_base_url": "https://moose.zooverse.dev",
+        "base_url_env": "MOOSE_BASE_URL",
+        "api_key_env": "MOOSE_API_KEY",
+        "requires_api_key": True,
+        "uses_shared_llm": True,
+        "supports_top_k": False,
+        "supports_async_jobs": True,
+        "extra_fields": []
+    }
+]
+PROFILE_SERVICE_CONFIG = {entry["id"]: entry for entry in PROFILE_SERVICE_DEFINITIONS}
+RECONCILIATION_PROVIDERS = set(RECONCILIATION_PROVIDER_CONFIG.keys())
+PROFILE_SERVICE_PROVIDERS = set(PROFILE_SERVICE_CONFIG.keys())
+
+
+def normalize_reconciliation_provider(value: Optional[str]) -> str:
+    provider = normalize_optional_value(value) or DEFAULT_RECONCILIATION_PROVIDER
+    if provider not in RECONCILIATION_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported reconciliation provider.")
+    return provider
+
+
+def normalize_profile_service_provider(value: Optional[str]) -> str:
+    provider = normalize_optional_value(value) or DEFAULT_RECONCILIATION_PROVIDER
+    if provider not in PROFILE_SERVICE_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported profile service provider.")
+    return provider
+
+
+def get_reconciliation_provider_definition(provider: str) -> Dict[str, Any]:
+    return RECONCILIATION_PROVIDER_CONFIG.get(provider, {})
+
+
+def get_reconciliation_provider_order() -> List[str]:
+    return [entry["id"] for entry in RECONCILIATION_PROVIDER_DEFINITIONS]
+
 
 RECON_COLUMN_TYPES_SAMPLE_DEFAULT = 5000
 RECON_COLUMN_TYPES_SAMPLE_MAX = 50000
@@ -629,20 +755,47 @@ def resolve_service_api_key(
     return api_key
 
 
+def load_profile_service_base_config(
+    db: Session,
+    user_email: str,
+    service: str
+) -> Dict[str, Any]:
+    service_definition = PROFILE_SERVICE_CONFIG.get(service)
+    if not service_definition:
+        raise HTTPException(status_code=500, detail=f"Unknown service provider '{service}'.")
+
+    credentials = get_user_service_credentials(db, user_email, service)
+    base_url = resolve_service_base_url(
+        credentials,
+        service_definition["base_url_env"],
+        service_definition["default_base_url"]
+    )
+    api_key = resolve_service_api_key(credentials, service_definition["api_key_env"])
+    requires_api_key = bool(service_definition.get("requires_api_key"))
+    missing: List[str] = []
+    if requires_api_key and not api_key:
+        missing.append(f"{service_definition['label']} API key")
+
+    return {
+        "service": service,
+        "label": service_definition["label"],
+        "base_url": base_url,
+        "api_key": api_key,
+        "requires_api_key": requires_api_key,
+        "uses_shared_llm": bool(service_definition.get("uses_shared_llm")),
+        "missing": missing
+    }
+
+
 def load_moose_service_config(
     db: Session,
     user_email: str
 ) -> Dict[str, Any]:
-    credentials = get_user_service_credentials(db, user_email, "moose")
-    base_url = resolve_service_base_url(credentials, "MOOSE_BASE_URL", "https://moose.zooverse.dev")
-    api_key = resolve_service_api_key(credentials, "MOOSE_API_KEY")
-    missing = []
-    if not api_key:
-        missing.append("Moose API key")
+    config = load_profile_service_base_config(db, user_email, "moose")
     return {
-        "base_url": base_url,
-        "api_key": api_key,
-        "missing": missing
+        "base_url": config["base_url"],
+        "api_key": config["api_key"],
+        "missing": config["missing"]
     }
 
 
@@ -701,9 +854,7 @@ def load_lion_config(
     user_settings: Optional[UserLLMSettings] = None,
     require_llm: bool = False
 ) -> Dict[str, Any]:
-    credentials = get_user_service_credentials(db, user_email, "lion_linker")
-    base_url = resolve_service_base_url(credentials, "LION_LINKER_BASE_URL", LION_DEFAULT_BASE_URL)
-    api_key = resolve_service_api_key(credentials, "LION_LINKER_API_KEY")
+    service_config = load_profile_service_base_config(db, user_email, "lion_linker")
     llm_config = {
         "provider": None,
         "model": None,
@@ -714,15 +865,13 @@ def load_lion_config(
     }
     if require_llm:
         llm_config = load_llm_config(user_settings=user_settings)
-    missing: List[str] = []
-    if not api_key:
-        missing.append("Lion Linker API key")
+    missing: List[str] = list(service_config["missing"])
     if require_llm:
         missing.extend(llm_config["missing"])
 
     return {
-        "base_url": base_url,
-        "api_key": api_key,
+        "base_url": service_config["base_url"],
+        "api_key": service_config["api_key"],
         "llm_provider": llm_config["provider"],
         "llm_model": llm_config["model"],
         "llm_api_key": llm_config["api_key"],
@@ -778,21 +927,43 @@ def load_crocodile_config(
     db: Session,
     user_email: str
 ) -> Dict[str, Any]:
-    credentials = get_user_service_credentials(db, user_email, "crocodile")
-    base_url = resolve_service_base_url(credentials, "CROCODILE_BASE_URL", CROCODILE_DEFAULT_BASE_URL)
-    api_key = resolve_service_api_key(credentials, "CROCODILE_API_KEY")
-
-    missing = []
-    if not api_key:
-        missing.append("Crocodile API key")
+    service_config = load_profile_service_base_config(db, user_email, "crocodile")
 
     return {
-        "base_url": base_url,
-        "api_key": api_key,
+        "base_url": service_config["base_url"],
+        "api_key": service_config["api_key"],
         "request_timeout": CROCODILE_REQUEST_TIMEOUT_SECONDS,
         "poll_interval": CROCODILE_POLL_INTERVAL_SECONDS,
         "poll_timeout": CROCODILE_POLL_TIMEOUT_SECONDS,
-        "missing": missing
+        "missing": service_config["missing"]
+    }
+
+
+def load_refined_config(
+    db: Session,
+    user_email: str
+) -> Dict[str, Any]:
+    service_config = load_profile_service_base_config(db, user_email, "refined")
+    return {
+        "base_url": service_config["base_url"],
+        "api_key": service_config["api_key"],
+        "request_timeout": REFINED_REQUEST_TIMEOUT_SECONDS,
+        "poll_interval": REFINED_POLL_INTERVAL_SECONDS,
+        "poll_timeout": REFINED_POLL_TIMEOUT_SECONDS,
+        "missing": service_config["missing"]
+    }
+
+
+def load_wikidata_config(
+    db: Session,
+    user_email: str
+) -> Dict[str, Any]:
+    service_config = load_profile_service_base_config(db, user_email, "wikidata")
+    return {
+        "base_url": service_config["base_url"],
+        "api_key": service_config["api_key"],
+        "request_timeout": WIKIDATA_REQUEST_TIMEOUT_SECONDS,
+        "missing": service_config["missing"]
     }
 
 
@@ -813,6 +984,20 @@ def build_crocodile_headers(config: Dict[str, Any]) -> Dict[str, str]:
         "Accept": "application/json",
         "X-API-Key": config["api_key"]
     }
+
+
+def build_refined_headers(config: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "X-API-Key": config["api_key"]
+    }
+
+
+def build_wikidata_headers(config: Dict[str, Any]) -> Dict[str, str]:
+    headers = {"Accept": "application/json"}
+    if config.get("api_key"):
+        headers["X-API-Key"] = config["api_key"]
+    return headers
 
 
 def create_lion_job(config: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -879,10 +1064,102 @@ def get_crocodile_job_results(
     return response.json()
 
 
+def create_refined_job(config: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    url = f"{config['base_url']}/jobs"
+    with httpx.Client(timeout=config["request_timeout"]) as client:
+        response = client.post(url, json=payload, headers=build_refined_headers(config))
+    response.raise_for_status()
+    return response.json()
+
+
+def get_refined_job_status(config: Dict[str, Any], job_id: str) -> Dict[str, Any]:
+    url = f"{config['base_url']}/jobs/{job_id}"
+    with httpx.Client(timeout=config["request_timeout"]) as client:
+        response = client.get(url, headers=build_refined_headers(config))
+    response.raise_for_status()
+    return response.json()
+
+
+def get_refined_job_results(
+    config: Dict[str, Any],
+    job_id: str,
+    cursor: Optional[str] = None,
+    limit: int = 200
+) -> Dict[str, Any]:
+    url = f"{config['base_url']}/jobs/{job_id}/results"
+    params: Dict[str, Any] = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    with httpx.Client(timeout=config["request_timeout"]) as client:
+        response = client.get(url, headers=build_refined_headers(config), params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+def reconcile_wikidata_query(
+    config: Dict[str, Any],
+    query: str,
+    limit: int = 5
+) -> List[Dict[str, Any]]:
+    mention = normalize_optional_value(query)
+    if not mention:
+        return []
+
+    encoded_query = json.dumps(
+        {"q0": {"query": mention, "limit": max(1, min(int(limit or 5), 100))}},
+        separators=(",", ":")
+    )
+    url = f"{config['base_url']}/api"
+    with httpx.Client(timeout=config["request_timeout"]) as client:
+        response = client.get(
+            url,
+            params={"queries": encoded_query},
+            headers=build_wikidata_headers(config)
+        )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        return []
+    item = payload.get("q0")
+    if not isinstance(item, dict):
+        return []
+    results = item.get("result")
+    if not isinstance(results, list):
+        return []
+    candidates: List[Dict[str, Any]] = []
+    for rank, candidate in enumerate(results, start=1):
+        if not isinstance(candidate, dict):
+            continue
+        types = candidate.get("type")
+        if not isinstance(types, list):
+            types = []
+
+        raw_score = parse_score_value(candidate.get("score"))
+        normalized_score = None
+        if raw_score is not None:
+            normalized_score = raw_score
+            if normalized_score > 1:
+                normalized_score = normalized_score / 100.0
+            normalized_score = max(0.0, min(normalized_score, 1.0))
+
+        candidates.append({
+            "rank": rank,
+            "id": candidate.get("id"),
+            "name": candidate.get("name"),
+            "score": normalized_score,
+            "confidence_score": normalized_score,
+            "description": candidate.get("description"),
+            "types": types,
+            "match": rank == 1,
+            "metadata": {
+                "raw_score": raw_score,
+                "features": candidate.get("features") if isinstance(candidate.get("features"), list) else []
+            }
+        })
+    return candidates
+
+
 def serialize_reconciliation_settings(db: Session, user_email: str) -> Dict[str, Any]:
-    lion_credentials = get_user_service_credentials(db, user_email, "lion_linker")
-    crocodile_credentials = get_user_service_credentials(db, user_email, "crocodile")
-    moose_credentials = get_user_service_credentials(db, user_email, "moose")
     llm_settings = get_user_llm_settings(db, user_email)
     try:
         llm_config = load_llm_config(user_settings=llm_settings)
@@ -908,60 +1185,124 @@ def serialize_reconciliation_settings(db: Session, user_email: str) -> Dict[str,
             "is_configured": False,
             "missing": missing
         }
-    retriever_config = load_lion_retriever_config(db, user_email)
-    lion_base_url = resolve_service_base_url(lion_credentials, "LION_LINKER_BASE_URL", LION_DEFAULT_BASE_URL)
-    crocodile_base_url = resolve_service_base_url(crocodile_credentials, "CROCODILE_BASE_URL", CROCODILE_DEFAULT_BASE_URL)
-    moose_base_url = resolve_service_base_url(moose_credentials, "MOOSE_BASE_URL", "https://moose.zooverse.dev")
-    lion_api_key = resolve_service_api_key(lion_credentials, "LION_LINKER_API_KEY")
-    crocodile_api_key = resolve_service_api_key(crocodile_credentials, "CROCODILE_API_KEY")
-    moose_api_key = resolve_service_api_key(moose_credentials, "MOOSE_API_KEY")
+
+    def dedupe(values: List[str]) -> List[str]:
+        seen: Set[str] = set()
+        out: List[str] = []
+        for value in values:
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            out.append(value)
+        return out
+
+    llm_missing_labels: List[str] = []
+    for item in llm_config.get("missing") or []:
+        if item == "LLM_PROVIDER":
+            llm_missing_labels.append("LLM provider")
+        elif item == "LLM_MODEL":
+            llm_missing_labels.append("LLM model")
+        elif item == "LLM_API_KEY":
+            llm_missing_labels.append("LLM API key")
+        else:
+            llm_missing_labels.append(str(item))
+
     llm_payload = {
         "provider": llm_config["provider"],
         "model": llm_config["model"],
         "endpoint": llm_config["endpoint"],
         "has_api_key": bool(llm_config["api_key"]),
         "requires_api_key": bool(llm_config["requires_api_key"]),
-        "is_configured": bool(llm_config["is_configured"])
+        "is_configured": bool(llm_config["is_configured"]),
+        "missing": llm_missing_labels
     }
 
-    lion_payload = {
-        "base_url": lion_base_url,
-        "has_api_key": bool(lion_api_key),
-        "has_lamapi_token": bool(retriever_config.get("token")),
-        "lamapi_endpoint": retriever_config.get("endpoint"),
-        "lamapi_kg": retriever_config.get("kg"),
-        "lamapi_num_candidates": retriever_config.get("num_candidates"),
-        "uses_shared_llm": True
-    }
+    available_providers = get_reconciliation_provider_order()
+    reconciler_payloads: Dict[str, Dict[str, Any]] = {}
+    retriever_config = load_lion_retriever_config(db, user_email)
+    for provider_id in available_providers:
+        provider_definition = get_reconciliation_provider_definition(provider_id)
+        provider_config = load_profile_service_base_config(db, user_email, provider_id)
+        missing: List[str] = list(provider_config["missing"])
+        payload: Dict[str, Any] = {
+            "id": provider_id,
+            "label": provider_definition.get("label") or provider_id,
+            "description": provider_definition.get("description") or "",
+            "base_url": provider_config["base_url"],
+            "requires_api_key": bool(provider_config["requires_api_key"]),
+            "has_api_key": bool(provider_config["api_key"]),
+            "uses_shared_llm": bool(provider_config["uses_shared_llm"]),
+            "supports_top_k": bool(provider_definition.get("supports_top_k", True)),
+            "supports_async_jobs": bool(provider_definition.get("supports_async_jobs", True)),
+            "fields": provider_definition.get("extra_fields") or [],
+            "field_values": {},
+            "missing": [],
+            "is_ready": False
+        }
+        if provider_id == "lion_linker":
+            payload.update({
+                "has_lamapi_token": bool(retriever_config.get("token")),
+                "lamapi_endpoint": retriever_config.get("endpoint"),
+                "lamapi_kg": retriever_config.get("kg"),
+                "lamapi_num_candidates": retriever_config.get("num_candidates"),
+                "uses_shared_llm": True,
+                "field_values": {
+                    "lamapi_endpoint": retriever_config.get("endpoint"),
+                    "lamapi_kg": retriever_config.get("kg"),
+                    "lamapi_num_candidates": retriever_config.get("num_candidates"),
+                    "lamapi_token": {
+                        "has_value": bool(retriever_config.get("token"))
+                    }
+                }
+            })
+            missing.extend(retriever_config.get("missing") or [])
+            missing.extend(llm_payload.get("missing") or [])
+        payload["missing"] = dedupe(missing)
+        payload["is_ready"] = len(payload["missing"]) == 0
+        reconciler_payloads[provider_id] = payload
 
-    crocodile_payload = {
-        "base_url": crocodile_base_url,
-        "has_api_key": bool(crocodile_api_key)
-    }
-
+    moose_config = load_profile_service_base_config(db, user_email, "moose")
+    moose_missing = dedupe(list(moose_config["missing"]) + list(llm_payload.get("missing") or []))
     moose_payload = {
-        "base_url": moose_base_url,
-        "has_api_key": bool(moose_api_key),
-        "uses_shared_llm": True
+        "base_url": moose_config["base_url"],
+        "has_api_key": bool(moose_config["api_key"]),
+        "requires_api_key": bool(moose_config["requires_api_key"]),
+        "uses_shared_llm": True,
+        "missing": moose_missing,
+        "is_ready": len(moose_missing) == 0
     }
+
+    lion_payload = reconciler_payloads.get("lion_linker", {})
+    crocodile_payload = reconciler_payloads.get("crocodile", {})
+    refined_payload = reconciler_payloads.get("refined", {})
+    wikidata_payload = reconciler_payloads.get("wikidata", {})
 
     return {
-        "provider": "lion_linker",
-        "available_providers": ["lion_linker", "crocodile"],
-        "lion_base_url": lion_base_url,
-        "crocodile_base_url": crocodile_base_url,
-        "moose_base_url": moose_base_url,
-        "has_api_key": lion_payload["has_api_key"],
+        "provider": DEFAULT_RECONCILIATION_PROVIDER,
+        "available_providers": available_providers,
+        "reconciler_provider_order": available_providers,
+        "reconciler_providers": reconciler_payloads,
+        "reconcilers": reconciler_payloads,
+        "lion_base_url": lion_payload.get("base_url"),
+        "crocodile_base_url": crocodile_payload.get("base_url"),
+        "refined_base_url": refined_payload.get("base_url"),
+        "wikidata_base_url": wikidata_payload.get("base_url"),
+        "moose_base_url": moose_payload["base_url"],
+        "has_api_key": bool(lion_payload.get("has_api_key")),
         "has_llm_api_key": llm_payload["has_api_key"],
-        "has_lamapi_token": lion_payload["has_lamapi_token"],
-        "lamapi_endpoint": lion_payload["lamapi_endpoint"],
-        "lamapi_kg": lion_payload["lamapi_kg"],
-        "lamapi_num_candidates": lion_payload["lamapi_num_candidates"],
-        "crocodile_has_api_key": crocodile_payload["has_api_key"],
+        "has_lamapi_token": bool(lion_payload.get("has_lamapi_token")),
+        "lamapi_endpoint": lion_payload.get("lamapi_endpoint"),
+        "lamapi_kg": lion_payload.get("lamapi_kg"),
+        "lamapi_num_candidates": lion_payload.get("lamapi_num_candidates"),
+        "crocodile_has_api_key": bool(crocodile_payload.get("has_api_key")),
+        "refined_has_api_key": bool(refined_payload.get("has_api_key")),
+        "wikidata_has_api_key": bool(wikidata_payload.get("has_api_key")),
         "moose_has_api_key": moose_payload["has_api_key"],
         "llm": llm_payload,
         "lion_linker": lion_payload,
         "crocodile": crocodile_payload,
+        "refined": refined_payload,
+        "wikidata": wikidata_payload,
         "moose": moose_payload
     }
 
@@ -1666,6 +2007,10 @@ def compute_candidate_weight(evidence: Dict[str, Any], provider: str) -> float:
         provider_weight = 1.0
     elif provider == "crocodile":
         provider_weight = 0.98
+    elif provider == "refined":
+        provider_weight = 0.99
+    elif provider == "wikidata":
+        provider_weight = 0.97
     return max(0.01, min(weight * provider_weight, 1.5))
 
 
@@ -1944,6 +2289,87 @@ def sync_lion_results(
     db.commit()
 
 
+def sync_refined_results(
+    db: Session,
+    job: ReconciliationJobDB,
+    config: Dict[str, Any]
+) -> None:
+    touched_rows: Set[int] = set()
+    cursor = None
+    while True:
+        payload = get_refined_job_results(config, job.external_job_id, cursor=cursor, limit=200)
+        results = payload.get("results") or []
+        for entry in results:
+            row_idx = entry.get("row")
+            col_idx = entry.get("col")
+            mapped_row = map_reconciliation_row(job, row_idx)
+            mapped_col = map_reconciliation_col(job, col_idx)
+            if mapped_row is None or mapped_col is None:
+                continue
+            touched_rows.add(mapped_row)
+            cell = (
+                db.query(ReconciliationCellDB)
+                .filter(
+                    ReconciliationCellDB.table_id == job.table_id,
+                    ReconciliationCellDB.row_id == mapped_row,
+                    ReconciliationCellDB.col_idx == mapped_col,
+                    ReconciliationCellDB.provider == job.provider
+                )
+                .first()
+            )
+            if not cell:
+                cell = ReconciliationCellDB(
+                    table_id=job.table_id,
+                    row_id=mapped_row,
+                    col_idx=mapped_col,
+                    provider=job.provider
+                )
+                db.add(cell)
+            candidate_ranking = entry.get("candidate_ranking") or []
+            final_value = entry.get("final") or {}
+            if not final_value and candidate_ranking:
+                winning = next(
+                    (candidate for candidate in candidate_ranking if candidate.get("match") is True),
+                    None
+                )
+                if winning:
+                    final_value = {
+                        "id": winning.get("id"),
+                        "name": winning.get("name"),
+                        "types": winning.get("types"),
+                        "description": winning.get("description"),
+                        "confidence_label": winning.get("confidence_label"),
+                        "confidence_score": winning.get("confidence_score") or winning.get("score"),
+                        "match": winning.get("match")
+                    }
+            cell.job_id = job.id
+            cell.external_job_id = job.external_job_id
+            cell.mention = entry.get("mention")
+            cell.cell_id = entry.get("cell_id")
+            cell.final = final_value
+            cell.score = extract_reconciliation_cell_score(candidate_ranking, final_value)
+            cell.candidate_ranking = candidate_ranking
+            cell.explanation = entry.get("explanation")
+            cell.updated_at = datetime.utcnow()
+        db.commit()
+        cursor = payload.get("next_cursor")
+        if not cursor:
+            break
+
+    table = db.query(TableDB).filter(TableDB.id == job.table_id).first()
+    if table and touched_rows:
+        recompute_row_reconciliation_scores(
+            db,
+            table,
+            provider=job.provider,
+            row_ids=list(touched_rows)
+        )
+    mark_reconciliation_column_types_stale(db, job.table_id)
+    job.synced_at = datetime.utcnow()
+    job.updated_at = datetime.utcnow()
+    db.commit()
+
+
 def sync_crocodile_results(
     db: Session,
     job: ReconciliationJobDB,
@@ -2089,6 +2515,297 @@ def sync_crocodile_results(
     db.commit()
 
 
+def sync_wikidata_results(
+    db: Session,
+    table: TableDB,
+    job: ReconciliationJobDB,
+    config: Dict[str, Any],
+    top_k: int = 5
+) -> None:
+    touched_rows: Set[int] = set()
+
+    def persist_progress(
+        phase: str,
+        *,
+        processed_mentions: Optional[int] = None,
+        total_mentions: Optional[int] = None,
+        processed_cells: Optional[int] = None,
+        total_cells: Optional[int] = None,
+        failed_mentions: Optional[int] = None,
+        last_error: Optional[str] = None,
+        force: bool = False
+    ) -> None:
+        previous = dict(job.progress or {})
+        next_progress = dict(previous)
+        next_progress["phase"] = phase
+        if processed_mentions is not None:
+            next_progress["processed_mentions"] = max(0, int(processed_mentions))
+        if total_mentions is not None:
+            next_progress["total_mentions"] = max(0, int(total_mentions))
+        if processed_cells is not None:
+            next_progress["processed_cells"] = max(0, int(processed_cells))
+        if total_cells is not None:
+            next_progress["total_cells"] = max(0, int(total_cells))
+        if failed_mentions is not None:
+            next_progress["failed_mentions"] = max(0, int(failed_mentions))
+        if last_error:
+            next_progress["last_error"] = str(last_error)
+        elif failed_mentions == 0:
+            next_progress.pop("last_error", None)
+
+        percent: Optional[float] = None
+        cells_total = next_progress.get("total_cells")
+        cells_done = next_progress.get("processed_cells")
+        mentions_total = next_progress.get("total_mentions")
+        mentions_done = next_progress.get("processed_mentions")
+        if isinstance(cells_total, int) and cells_total > 0 and isinstance(cells_done, int):
+            percent = max(0.0, min(100.0, (float(cells_done) / float(cells_total)) * 100.0))
+        elif isinstance(mentions_total, int) and mentions_total > 0 and isinstance(mentions_done, int):
+            percent = max(0.0, min(100.0, (float(mentions_done) / float(mentions_total)) * 100.0))
+        elif phase in {"completed", "done", "succeeded", "success", "finished"}:
+            percent = 100.0
+        elif phase in {"queued", "preparing"}:
+            percent = 0.0
+        if percent is not None:
+            next_progress["percent"] = round(percent, 2)
+
+        if force or next_progress != previous:
+            job.progress = next_progress
+            job.updated_at = datetime.utcnow()
+            db.commit()
+
+    row_ids = [int(value) for value in (job.row_map or []) if isinstance(value, int) or str(value).isdigit()]
+    selected_columns = [
+        int(value)
+        for value in (job.selected_columns or [])
+        if isinstance(value, int) or str(value).isdigit()
+    ]
+    if not row_ids or not selected_columns:
+        persist_progress(
+            "completed",
+            processed_mentions=0,
+            total_mentions=0,
+            processed_cells=0,
+            total_cells=0,
+            failed_mentions=0,
+            force=True
+        )
+        job.synced_at = datetime.utcnow()
+        job.updated_at = datetime.utcnow()
+        db.commit()
+        return
+
+    selected_cells = {
+        (int(item.get("row")), int(item.get("col")))
+        for item in (job.selected_cells or [])
+        if isinstance(item, dict)
+        and item.get("row") is not None
+        and item.get("col") is not None
+        and (isinstance(item.get("row"), int) or str(item.get("row")).isdigit())
+        and (isinstance(item.get("col"), int) or str(item.get("col")).isdigit())
+    }
+    has_cell_filter = len(selected_cells) > 0
+
+    rows = (
+        db.query(RowDB)
+        .filter(RowDB.table_id == table.id, RowDB.id_row.in_(row_ids))
+        .order_by(RowDB.id_row.asc())
+        .all()
+    )
+
+    target_cells: List[tuple] = []
+    for row in rows:
+        data = row.data or []
+        for col_idx in selected_columns:
+            if col_idx < 0 or col_idx >= len(table.header or []):
+                continue
+            if has_cell_filter and (row.id_row, col_idx) not in selected_cells:
+                continue
+            mention = normalize_optional_value(data[col_idx] if col_idx < len(data) else "")
+            if not mention:
+                continue
+            target_cells.append((row.id_row, col_idx, mention))
+
+    total_cells = len(target_cells)
+    if total_cells == 0:
+        persist_progress(
+            "completed",
+            processed_mentions=0,
+            total_mentions=0,
+            processed_cells=0,
+            total_cells=0,
+            failed_mentions=0,
+            force=True
+        )
+        mark_reconciliation_column_types_stale(db, job.table_id)
+        job.synced_at = datetime.utcnow()
+        job.updated_at = datetime.utcnow()
+        db.commit()
+        return
+
+    unique_mentions = sorted({mention for _, _, mention in target_cells})
+    total_mentions = len(unique_mentions)
+    mention_cache: Dict[str, List[Dict[str, Any]]] = {}
+    failed_mentions = 0
+    last_error: Optional[str] = None
+    persist_progress(
+        "querying",
+        processed_mentions=0,
+        total_mentions=total_mentions,
+        processed_cells=0,
+        total_cells=total_cells,
+        failed_mentions=0,
+        force=True
+    )
+
+    if total_mentions > 0:
+        max_workers = min(16, max(1, total_mentions))
+        mention_update_stride = max(1, total_mentions // 20)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_mention = {
+                executor.submit(reconcile_wikidata_query, config, mention, top_k): mention
+                for mention in unique_mentions
+            }
+            processed_mentions = 0
+            for future in as_completed(future_to_mention):
+                mention = future_to_mention[future]
+                try:
+                    mention_cache[mention] = future.result() or []
+                except Exception as exc:
+                    failed_mentions += 1
+                    last_error = str(exc)
+                    mention_cache[mention] = []
+                    logger.warning("Wikidata query failed for mention '%s': %s", mention, exc)
+                processed_mentions += 1
+                if processed_mentions == total_mentions or processed_mentions % mention_update_stride == 0:
+                    persist_progress(
+                        "querying",
+                        processed_mentions=processed_mentions,
+                        total_mentions=total_mentions,
+                        processed_cells=0,
+                        total_cells=total_cells,
+                        failed_mentions=failed_mentions,
+                        last_error=last_error
+                    )
+
+    persist_progress(
+        "applying",
+        processed_mentions=total_mentions,
+        total_mentions=total_mentions,
+        processed_cells=0,
+        total_cells=total_cells,
+        failed_mentions=failed_mentions,
+        last_error=last_error
+    )
+
+    scoped_rows = sorted({row_id for row_id, _, _ in target_cells})
+    scoped_cols = sorted({col_idx for _, col_idx, _ in target_cells})
+    existing_cells: Dict[tuple, ReconciliationCellDB] = {}
+    if scoped_rows and scoped_cols:
+        existing = (
+            db.query(ReconciliationCellDB)
+            .filter(
+                ReconciliationCellDB.table_id == job.table_id,
+                ReconciliationCellDB.provider == job.provider,
+                ReconciliationCellDB.row_id.in_(scoped_rows),
+                ReconciliationCellDB.col_idx.in_(scoped_cols)
+            )
+            .all()
+        )
+        existing_cells = {(cell.row_id, cell.col_idx): cell for cell in existing}
+
+    processed_cells = 0
+    pending_since_commit = 0
+    cell_update_stride = max(1, total_cells // 20)
+    for row_id, col_idx, mention in target_cells:
+        candidate_ranking = mention_cache.get(mention) or []
+        final_value: Dict[str, Any] = {}
+        if candidate_ranking:
+            winning = candidate_ranking[0]
+            final_value = {
+                "id": winning.get("id"),
+                "name": winning.get("name"),
+                "types": winning.get("types"),
+                "description": winning.get("description"),
+                "confidence_score": winning.get("confidence_score") or winning.get("score"),
+                "match": True
+            }
+
+        cell = existing_cells.get((row_id, col_idx))
+        if not cell:
+            cell = ReconciliationCellDB(
+                table_id=job.table_id,
+                row_id=row_id,
+                col_idx=col_idx,
+                provider=job.provider
+            )
+            db.add(cell)
+            existing_cells[(row_id, col_idx)] = cell
+
+        cell.job_id = job.id
+        cell.external_job_id = job.external_job_id
+        cell.mention = mention
+        cell.cell_id = f"{row_id}:{col_idx}"
+        cell.final = final_value
+        cell.score = extract_reconciliation_cell_score(candidate_ranking, final_value)
+        cell.candidate_ranking = candidate_ranking
+        cell.explanation = None
+        cell.updated_at = datetime.utcnow()
+
+        touched_rows.add(row_id)
+        processed_cells += 1
+        pending_since_commit += 1
+
+        if pending_since_commit >= 200:
+            db.commit()
+            pending_since_commit = 0
+
+        if processed_cells == total_cells or processed_cells % cell_update_stride == 0:
+            if pending_since_commit > 0:
+                db.commit()
+                pending_since_commit = 0
+            persist_progress(
+                "applying",
+                processed_mentions=total_mentions,
+                total_mentions=total_mentions,
+                processed_cells=processed_cells,
+                total_cells=total_cells,
+                failed_mentions=failed_mentions,
+                last_error=last_error
+            )
+
+    if pending_since_commit > 0:
+        db.commit()
+
+    if table and touched_rows:
+        recompute_row_reconciliation_scores(
+            db,
+            table,
+            provider=job.provider,
+            row_ids=list(touched_rows)
+        )
+    mark_reconciliation_column_types_stale(db, job.table_id)
+
+    final_progress = dict(job.progress or {})
+    final_progress.update({
+        "phase": "completed",
+        "processed_mentions": total_mentions,
+        "total_mentions": total_mentions,
+        "processed_cells": total_cells,
+        "total_cells": total_cells,
+        "failed_mentions": failed_mentions,
+        "percent": 100.0
+    })
+    if failed_mentions > 0 and last_error:
+        final_progress["last_error"] = last_error
+    elif failed_mentions == 0:
+        final_progress.pop("last_error", None)
+    job.progress = final_progress
+    job.synced_at = datetime.utcnow()
+    job.updated_at = datetime.utcnow()
+    db.commit()
+
+
 def process_reconciliation_sync(job_id: int) -> None:
     db = SessionLocal()
     try:
@@ -2104,7 +2821,7 @@ def process_reconciliation_sync(job_id: int) -> None:
         if not dataset:
             logger.warning("Dataset not found for reconciliation sync %s.", job_id)
             return
-        provider = job.provider or "lion_linker"
+        provider = job.provider or DEFAULT_RECONCILIATION_PROVIDER
         if provider == "lion_linker":
             config = load_lion_config(db, dataset.owner_email)
             if config["missing"]:
@@ -2123,6 +2840,31 @@ def process_reconciliation_sync(job_id: int) -> None:
                 db.commit()
                 return
             sync_crocodile_results(db, job, config)
+        elif provider == "refined":
+            config = load_refined_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing ReFinED configuration", "missing": config["missing"]}
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                return
+            sync_refined_results(db, job, config)
+        elif provider == "wikidata":
+            config = load_wikidata_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing Wikidata Reconciler configuration", "missing": config["missing"]}
+                progress = dict(job.progress or {})
+                progress["phase"] = "failed"
+                progress["last_error"] = "Missing Wikidata Reconciler configuration"
+                job.progress = progress
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                return
+            sync_wikidata_results(db, table, job, config, top_k=job.top_k or 5)
+            job.status = "completed"
+            job.updated_at = datetime.utcnow()
+            db.commit()
         else:
             job.status = "error"
             job.error = {"detail": f"Unsupported reconciliation provider '{provider}'."}
@@ -2160,7 +2902,7 @@ def process_reconciliation_job(job_id: int) -> None:
             logger.warning("Dataset not found for reconciliation job %s.", job_id)
             return
 
-        provider = job.provider or "lion_linker"
+        provider = job.provider or DEFAULT_RECONCILIATION_PROVIDER
         if provider == "lion_linker":
             config = load_lion_config(db, dataset.owner_email)
             if config["missing"]:
@@ -2239,6 +2981,84 @@ def process_reconciliation_job(job_id: int) -> None:
             job.error = {"detail": "Reconciliation job timed out."}
             job.updated_at = datetime.utcnow()
             db.commit()
+            return
+
+        if provider == "refined":
+            config = load_refined_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing ReFinED configuration", "missing": config["missing"]}
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                return
+
+            success_statuses = {"done", "completed", "succeeded", "success", "finished"}
+            failure_statuses = {"failed", "error", "canceled", "cancelled"}
+            deadline = time.time() + config["poll_timeout"]
+            while time.time() < deadline:
+                payload = get_refined_job_status(config, job.external_job_id)
+                status = (payload.get("status") or "").lower()
+                if status:
+                    job.status = status
+                    job.updated_at = datetime.utcnow()
+                    db.commit()
+                if status in success_statuses:
+                    try:
+                        sync_refined_results(db, job, config)
+                        job.status = "completed"
+                        job.updated_at = datetime.utcnow()
+                        db.commit()
+                    except Exception as exc:
+                        job.status = "sync_failed"
+                        job.error = {"detail": str(exc)}
+                        job.updated_at = datetime.utcnow()
+                        db.commit()
+                    return
+                if status in failure_statuses:
+                    job.error = payload.get("error") or {"detail": f"Job ended with status '{status}'."}
+                    job.updated_at = datetime.utcnow()
+                    db.commit()
+                    return
+                time.sleep(config["poll_interval"])
+            job.status = "timeout"
+            job.error = {"detail": "Reconciliation job timed out."}
+            job.updated_at = datetime.utcnow()
+            db.commit()
+            return
+
+        if provider == "wikidata":
+            config = load_wikidata_config(db, dataset.owner_email)
+            if config["missing"]:
+                job.status = "error"
+                job.error = {"detail": "Missing Wikidata Reconciler configuration", "missing": config["missing"]}
+                progress = dict(job.progress or {})
+                progress["phase"] = "failed"
+                progress["last_error"] = "Missing Wikidata Reconciler configuration"
+                job.progress = progress
+                job.updated_at = datetime.utcnow()
+                db.commit()
+                return
+            job.status = "running"
+            progress = dict(job.progress or {})
+            progress["phase"] = "querying"
+            progress["percent"] = 0.0
+            job.progress = progress
+            job.updated_at = datetime.utcnow()
+            db.commit()
+            try:
+                sync_wikidata_results(db, table, job, config, top_k=job.top_k or 5)
+                job.status = "completed"
+                job.updated_at = datetime.utcnow()
+                db.commit()
+            except Exception as exc:
+                job.status = "sync_failed"
+                job.error = {"detail": str(exc)}
+                progress = dict(job.progress or {})
+                progress["phase"] = "failed"
+                progress["last_error"] = str(exc)
+                job.progress = progress
+                job.updated_at = datetime.utcnow()
+                db.commit()
             return
 
         job.status = "error"
@@ -2356,6 +3176,26 @@ def build_reconciliation_inline_table(
         "header": selected_header,
         "rows": inline_rows
     }
+
+
+def build_reconciliation_object_rows(
+    header: List[str],
+    rows: List[RowDB],
+    selected_columns: List[int],
+    cell_whitelist: Optional[Set[tuple]] = None
+) -> List[Dict[str, Any]]:
+    selected_header = [header[idx] for idx in selected_columns]
+    object_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        row_payload: Dict[str, Any] = {}
+        data = row.data or []
+        for selected_idx, col_idx in enumerate(selected_columns):
+            value = data[col_idx] if col_idx < len(data) else ""
+            if cell_whitelist is not None and (row.id_row, col_idx) not in cell_whitelist:
+                value = ""
+            row_payload[selected_header[selected_idx]] = value
+        object_rows.append(row_payload)
+    return object_rows
 
 
 def build_reconciliation_csv_bytes(
@@ -2995,6 +3835,24 @@ def ensure_table_rows_schema():
                 "ON table_rows (table_id, reconciliation_score)"
             )
         )
+
+
+@app.on_event("startup")
+def ensure_reconciliation_jobs_schema():
+    inspector = inspect(engine)
+    if "reconciliation_jobs" not in inspector.get_table_names():
+        return
+    existing_columns = {col["name"] for col in inspector.get_columns("reconciliation_jobs")}
+    columns_to_add = {
+        "top_k": "INTEGER",
+        "progress": "JSONB"
+    }
+    for column, ddl in columns_to_add.items():
+        if column not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f"ALTER TABLE reconciliation_jobs ADD COLUMN IF NOT EXISTS {column} {ddl}")
+                )
 
 
 @app.on_event("startup")
@@ -3884,6 +4742,54 @@ def get_table_data(
                 "updated_at": cell.updated_at.isoformat() if cell.updated_at else None
             }
 
+    terminal_job_statuses = {
+        "completed",
+        "succeeded",
+        "success",
+        "done",
+        "finished",
+        "failed",
+        "error",
+        "canceled",
+        "cancelled",
+        "sync_failed",
+        "timeout"
+    }
+    active_job_query = (
+        db.query(ReconciliationJobDB)
+        .filter(ReconciliationJobDB.table_id == table.id)
+    )
+    if provider_filter:
+        active_job_query = active_job_query.filter(ReconciliationJobDB.provider == provider_filter)
+    active_jobs = (
+        active_job_query
+        .order_by(ReconciliationJobDB.updated_at.desc().nulls_last(), ReconciliationJobDB.id.desc())
+        .limit(20)
+        .all()
+    )
+    active_job = next(
+        (
+            job
+            for job in active_jobs
+            if (job.status or "").lower() not in terminal_job_statuses
+        ),
+        None
+    )
+    active_job_payload = None
+    if active_job:
+        active_job_payload = {
+            "job_id": active_job.id,
+            "external_job_id": active_job.external_job_id,
+            "provider": active_job.provider,
+            "status": active_job.status,
+            "scope": active_job.scope,
+            "top_k": active_job.top_k,
+            "progress": active_job.progress or {},
+            "synced": bool(active_job.synced_at),
+            "created_at": active_job.created_at.isoformat() if active_job.created_at else None,
+            "updated_at": active_job.updated_at.isoformat() if active_job.updated_at else None
+        }
+
     response_payload = {
         "data": {
             "dataset_name": dataset_name,
@@ -3914,6 +4820,7 @@ def get_table_data(
                 "provider": provider_filter or "all",
                 "type_summary": reconciliation_type_summary,
                 "score_range": reconciliation_score_range,
+                "active_job": active_job_payload,
                 "filters": {
                     "include_ne_types": include_ne_filtered,
                     "exclude_ne_types": exclude_ne_filtered,
@@ -4438,6 +5345,37 @@ def reconcile_table(
     else:
         raise HTTPException(status_code=400, detail="Invalid reconciliation scope.")
 
+    classified = table.classified_columns or {}
+    ne_entries = classified.get("NE", {}) if isinstance(classified, dict) else {}
+    ne_indices: Set[int] = set()
+    if isinstance(ne_entries, dict):
+        for key in ne_entries.keys():
+            try:
+                ne_indices.add(int(key))
+            except (TypeError, ValueError):
+                continue
+    ne_selected_columns = [idx for idx in selected_columns if idx in ne_indices]
+    if not ne_selected_columns:
+        raise HTTPException(
+            status_code=400,
+            detail="No NE columns selected for reconciliation. Classify columns first."
+        )
+    selected_columns = sorted(set(ne_selected_columns))
+    if scope == "cell":
+        if cell_whitelist is not None:
+            cell_whitelist = {cell for cell in cell_whitelist if cell[1] in selected_columns}
+        selected_cells_payload = [entry for entry in selected_cells_payload if entry.get("col") in selected_columns]
+        selected_rows = sorted({
+            int(entry.get("row"))
+            for entry in selected_cells_payload
+            if entry.get("row") is not None
+        })
+        if not selected_rows:
+            raise HTTPException(
+                status_code=400,
+                detail="No NE cells selected for reconciliation. Select cells in NE columns only."
+            )
+
     rows_query = (
         db.query(RowDB)
         .filter(RowDB.table_id == table.id)
@@ -4458,25 +5396,17 @@ def reconcile_table(
         "table": inline_table
     }
     row_map = [row.id_row for row in rows]
+    link_columns = [header[idx] for idx in selected_columns]
+    resolved_top_k = payload.top_k if payload.top_k is not None else 5
+    try:
+        resolved_top_k = int(resolved_top_k)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="top_k must be an integer between 1 and 100.")
+    if resolved_top_k < 1 or resolved_top_k > 100:
+        raise HTTPException(status_code=400, detail="top_k must be between 1 and 100.")
 
-    classified = table.classified_columns or {}
-    ne_entries = classified.get("NE", {}) if isinstance(classified, dict) else {}
-    ne_indices: Set[int] = set()
-    if isinstance(ne_entries, dict):
-        for key in ne_entries.keys():
-            try:
-                ne_indices.add(int(key))
-            except (TypeError, ValueError):
-                continue
-    ne_selected_columns = [idx for idx in selected_columns if idx in ne_indices]
-    if not ne_selected_columns:
-        raise HTTPException(
-            status_code=400,
-            detail="No NE columns selected for reconciliation. Classify columns first."
-        )
-    link_columns = [header[idx] for idx in ne_selected_columns]
-    job_payload: Dict[str, Any]
-    job_response: Dict[str, Any]
+    external_job_id: Optional[str] = None
+    status = "queued"
 
     if provider == "lion_linker":
         user_llm_settings = get_user_llm_settings(db, current_user["email"])
@@ -4511,7 +5441,7 @@ def reconcile_table(
         job_payload = {
             "input": input_payload,
             "link_columns": link_columns,
-            "top_k": payload.top_k,
+            "top_k": resolved_top_k,
             "execution": "async",
             "config": {
                 "lion": lion_config,
@@ -4523,7 +5453,9 @@ def reconcile_table(
             job_response = create_lion_job(config, job_payload)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Unable to create Lion Linker job: {exc}")
-    else:
+        external_job_id = job_response.get("job_id")
+        status = (job_response.get("status") or "queued").lower()
+    elif provider == "crocodile":
         config = load_crocodile_config(db, current_user["email"])
         if config["missing"]:
             missing = ", ".join(config["missing"])
@@ -4533,19 +5465,57 @@ def reconcile_table(
             "header": inline_table.get("header") or [],
             "rows": inline_table.get("rows") or [],
             "link_columns": link_columns,
+            "top_k": resolved_top_k,
             "config": {}
         }
-        if payload.top_k is not None:
-            job_payload["top_k"] = payload.top_k
         try:
             job_response = create_crocodile_job(config, job_payload)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Unable to create Crocodile job: {exc}")
+        external_job_id = job_response.get("job_id")
+        status = (job_response.get("status") or "queued").lower()
+    elif provider == "refined":
+        config = load_refined_config(db, current_user["email"])
+        if config["missing"]:
+            missing = ", ".join(config["missing"])
+            raise HTTPException(status_code=500, detail=f"Missing ReFinED configuration: {missing}")
+        object_rows = build_reconciliation_object_rows(header, rows, selected_columns, cell_whitelist)
+        job_payload = {
+            "mode": "inline",
+            "header": inline_table.get("header") or [],
+            "rows": object_rows,
+            "link_columns": link_columns,
+            "table_name": f"{dataset_name}.{table_name}",
+            "top_k": resolved_top_k
+        }
+        try:
+            job_response = create_refined_job(config, job_payload)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to create ReFinED job: {exc}")
+        external_job_id = job_response.get("job_id")
+        status = (job_response.get("status") or "queued").lower()
+    elif provider == "wikidata":
+        config = load_wikidata_config(db, current_user["email"])
+        if config["missing"]:
+            missing = ", ".join(config["missing"])
+            raise HTTPException(status_code=500, detail=f"Missing Wikidata Reconciler configuration: {missing}")
+        external_job_id = uuid.uuid4().hex
+        status = "queued"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported reconciliation provider '{provider}'.")
 
-    external_job_id = job_response.get("job_id")
     if not external_job_id:
         raise HTTPException(status_code=502, detail=f"{provider} did not return a job_id.")
-    status = (job_response.get("status") or "queued").lower()
+
+    initial_progress = {
+        "phase": "queued",
+        "processed_mentions": 0,
+        "total_mentions": 0,
+        "processed_cells": 0,
+        "total_cells": 0,
+        "failed_mentions": 0,
+        "percent": 0.0
+    } if provider == "wikidata" else {}
 
     job = ReconciliationJobDB(
         table_id=table.id,
@@ -4553,11 +5523,13 @@ def reconcile_table(
         external_job_id=external_job_id,
         status=status,
         scope=scope,
+        top_k=resolved_top_k,
         selected_rows=selected_rows or [],
         selected_columns=selected_columns or [],
         selected_cells=selected_cells_payload,
         row_map=row_map,
         col_map=selected_columns,
+        progress=initial_progress,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow()
     )
@@ -4571,6 +5543,8 @@ def reconcile_table(
         "job_id": job.id,
         "external_job_id": external_job_id,
         "status": status,
+        "top_k": job.top_k,
+        "progress": job.progress or {},
         "detail": "Reconciliation job queued."
     }
 
@@ -4601,6 +5575,8 @@ def get_reconciliation_status(
         "external_job_id": job.external_job_id,
         "provider": job.provider,
         "status": job.status,
+        "top_k": job.top_k,
+        "progress": job.progress or {},
         "synced": bool(job.synced_at),
         "error": job.error
     }

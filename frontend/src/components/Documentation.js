@@ -42,6 +42,12 @@ const Documentation = () => {
                     <ListItemText primary="Configure Crocodile URL and API key." />
                   </ListItem>
                   <ListItem disableGutters>
+                    <ListItemText primary="Configure ReFinED URL and API key." />
+                  </ListItem>
+                  <ListItem disableGutters>
+                    <ListItemText primary="Configure Wikidata Reconciler URL (API key optional)." />
+                  </ListItem>
+                  <ListItem disableGutters>
                     <ListItemText primary="Configure Moose URL and API key." />
                   </ListItem>
                   <ListItem disableGutters>
@@ -58,7 +64,7 @@ const Documentation = () => {
                 <Typography variant="h6" sx={{ mb: 1 }}>2) Run reconciliation</Typography>
                 <List dense disablePadding>
                   <ListItem disableGutters>
-                    <ListItemText primary="Choose provider: Lion Linker or Crocodile." />
+                    <ListItemText primary="Choose any configured provider (Lion Linker, Crocodile, ReFinED, Wikidata Reconciler, etc.)." />
                   </ListItem>
                   <ListItem disableGutters>
                     <ListItemText primary="Choose scope: selected cells, selected rows, current page, or whole table." />
